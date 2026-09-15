@@ -169,6 +169,9 @@ static void* kFirstResponderObserverContext = &kFirstResponderObserverContext;
 	titlebarView.translatesAutoresizingMaskIntoConstraints = NO;
 
 	_accessoryViewController = [[NSTitlebarAccessoryViewController alloc] init];
+	// AppKit otherwise forces the accessory to its standard 36pt height on macOS 26+,
+	// squashing the search field / scope bar layout.
+	_accessoryViewController.automaticallyAdjustsSize = NO;
 	_accessoryViewController.view = titlebarView;
 	[_accessoryViewController.view setFrameSize:titlebarView.fittingSize];
 	[self.window addTitlebarAccessoryViewController:_accessoryViewController];
