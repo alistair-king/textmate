@@ -97,18 +97,22 @@ endfunction()
 function(textmate_embed APP_TARGET DEP_TARGET LOCATION)
   cmake_parse_arguments(_EMB "DIRECTORY" "" "" ${ARGN})
   add_dependencies(${APP_TARGET} ${DEP_TARGET})
+  set(_dest_dir "$<TARGET_BUNDLE_DIR:${APP_TARGET}>/Contents/${LOCATION}")
   if(_EMB_DIRECTORY)
     # Use rsync to preserve the bundle directory name (cmake copy_directory
-    # copies contents, not the directory itself)
+    # copies contents, not the directory itself). rsync does not create
+    # intermediate directories, so create the destination first.
     add_custom_command(TARGET ${APP_TARGET} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_dest_dir}/"
       COMMAND rsync -a
         "$<TARGET_BUNDLE_DIR:${DEP_TARGET}>"
-        "$<TARGET_BUNDLE_DIR:${APP_TARGET}>/Contents/${LOCATION}/")
+        "${_dest_dir}/")
   else()
     add_custom_command(TARGET ${APP_TARGET} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_dest_dir}/"
       COMMAND ${CMAKE_COMMAND} -E copy
         "$<TARGET_FILE:${DEP_TARGET}>"
-        "$<TARGET_BUNDLE_DIR:${APP_TARGET}>/Contents/${LOCATION}/$<TARGET_FILE_NAME:${DEP_TARGET}>")
+        "${_dest_dir}/$<TARGET_FILE_NAME:${DEP_TARGET}>")
   endif()
 endfunction()
 
