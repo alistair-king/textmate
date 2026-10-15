@@ -150,9 +150,8 @@ NSString* const kUserDefaultsScrollPastEndKey      = @"scrollPastEnd";
 		value = self.title;
 	} else if([attribute isEqualToString:NSAccessibilityURLAttribute]) {
 		value = self.URL;
-	} else {
-		@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Getting accessibility attribute not supported: %@", attribute] userInfo:nil];
 	}
+	// Unknown attributes (queried by newer AX clients) yield nil instead of throwing, which would abort().
 
 	return value;
 }
@@ -167,7 +166,8 @@ NSString* const kUserDefaultsScrollPastEndKey      = @"scrollPastEnd";
 - (void)accessibilitySetValue:(id)value forAttribute:(NSString*)attribute
 {
 	if([[self myAccessibilityAttributeNames] containsObject:attribute])
-		@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Setting accessibility attribute not supported: %@", attribute] userInfo:nil];
+		return; // these attributes are read-only; ignore instead of throwing, which would abort()
+
 	[super accessibilitySetValue:value forAttribute:attribute];
 }
 
@@ -178,7 +178,8 @@ NSString* const kUserDefaultsScrollPastEndKey      = @"scrollPastEnd";
 
 - (id)accessibilityAttributeValue:(NSString*)attribute forParameter:(id)parameter
 {
-	@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Accessibility parameterized attribute not supported: %@", attribute] userInfo:nil];
+	// No parameterized attributes are supported; return nil instead of throwing, which would abort().
+	return nil;
 }
 
 - (NSArray*)accessibilityActionNames
@@ -204,10 +205,7 @@ NSString* const kUserDefaultsScrollPastEndKey      = @"scrollPastEnd";
 	{
 		// TODO
 	}
-	else
-	{
-		@throw [NSException exceptionWithName:NSAccessibilityException reason:[NSString stringWithFormat:@"Accessibility action not supported: %@", action] userInfo:nil];
-	}
+	// Unsupported actions are ignored rather than throwing, which would abort().
 }
 
 - (id)accessibilityHitTest:(NSPoint)point
