@@ -1,4 +1,5 @@
 #import "AIPanelViewController.h"
+#import "OakSwiftUI-Swift.h"
 
 @interface AIPanelSplitView : NSSplitView
 @property (nonatomic) BOOL trackingDivider;
@@ -15,6 +16,7 @@
 
 @interface AIPanelViewController () <NSSplitViewDelegate>
 @property (nonatomic) AIPanelSplitView* splitView;
+@property (nonatomic) OakTerminalPanelController* terminalController;
 @property (nonatomic) NSView* contentView;
 @property (nonatomic) NSView* panelView;
 @property (nonatomic) BOOL adjustingLayout;
@@ -50,6 +52,22 @@
 	}
 	return self;
 }
+
+- (void)startTerminalInDirectory:(NSString*)directory
+{
+	if(!_terminalController)
+	{
+		_terminalController = [[OakTerminalPanelController alloc] init];
+		[_panelView removeFromSuperview];
+		_panelView = _terminalController.view;
+		[self rebuildLayout];
+	}
+	[_terminalController startSessionInDirectory:directory ?: NSHomeDirectory()];
+}
+
+- (void)focusTerminal { [_terminalController focusTerminal]; }
+- (BOOL)confirmTerminalClose { return !_terminalController || [_terminalController confirmClose]; }
+- (void)stopTerminal { [_terminalController stopSession]; }
 
 - (void)setPanelVisible:(BOOL)visible
 {

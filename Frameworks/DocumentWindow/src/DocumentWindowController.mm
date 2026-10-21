@@ -331,6 +331,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 - (void)windowWillClose:(NSNotification*)aNotification
 {
+	[self.aiPanelController stopTerminal];
 	if((([self.window styleMask] & NSWindowStyleMaskFullScreen) != NSWindowStyleMaskFullScreen) && !self.window.isZoomed)
 		[NSUserDefaults.standardUserDefaults setObject:NSStringFromRect([self windowFrame]) forKey:@"DocumentControllerWindowFrame"];
 
@@ -624,6 +625,9 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 - (BOOL)windowShouldClose:(id)sender
 {
+	if(![self.aiPanelController confirmTerminalClose])
+		return NO;
+
 	if(!self.htmlOutputInWindow && _htmlOutputView.isRunningCommand)
 	{
 		[_htmlOutputView stopLoadingWithUserInteraction:YES completionHandler:^(BOOL didStop){
@@ -728,6 +732,12 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 + (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender
 {
+	for(DocumentWindowController* controller in SortedControllers())
+	{
+		if(![controller.aiPanelController confirmTerminalClose])
+			return NSTerminateCancel;
+	}
+
 	NSMutableArray<DocumentWindowController*>* controllers = [NSMutableArray array];
 	NSMutableArray<OakDocument*>* documents = [NSMutableArray array];
 	for(DocumentWindowController* controller in SortedControllers())
@@ -1892,6 +1902,11 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	   ![(NSView*)responder isDescendantOf:self.layoutView])
 		[self.window makeFirstResponder:self.textView];
 	self.aiPanelController.panelVisible = !self.aiPanelController.panelVisible;
+	if(self.aiPanelController.panelVisible)
+	{
+		[self.aiPanelController startTerminalInDirectory:self.projectPath ?: self.defaultProjectPath ?: [self.selectedDocument.path stringByDeletingLastPathComponent]];
+		[self.aiPanelController focusTerminal];
+	}
 	[self updateAIPanelButton];
 	[[self class] scheduleSessionBackup:self];
 }
@@ -2561,6 +2576,8 @@ static NSUInteger DisableSessionSavingCount = 0;
 
 	self.defaultProjectPath = project[@"projectPath"];
 	self.projectPath        = project[@"projectPath"];
+	if(self.aiPanelController.panelVisible)
+		[self.aiPanelController startTerminalInDirectory:self.projectPath];
 	self.fileBrowserHistory = project[@"archivedFileBrowserState"] ?: project[@"fileBrowserState"];
 	self.fileBrowserVisible = [project[@"fileBrowserVisible"] boolValue];
 
