@@ -6,6 +6,7 @@ import SwiftTerm
 @MainActor
 private final class TerminalContainer: NSView {
     weak var terminal: NSView?
+    weak var controller: OakTerminalPanelController?
     override func layout() {
         super.layout()
         terminal?.frame = NSRect(x: 0, y: 0, width: max(32, bounds.width), height: max(32, bounds.height))
@@ -13,6 +14,20 @@ private final class TerminalContainer: NSView {
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         needsLayout = true
         layoutSubtreeIfNeeded()
+    }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // The window walks the whole view hierarchy with key equivalents, so only
+        // clear when the terminal panel actually owns the focus.
+        guard let window,
+              let responder = window.firstResponder as? NSView,
+              responder.isDescendant(of: self),
+              controller?.terminal != nil,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
+              event.charactersIgnoringModifiers == "k" else {
+            return super.performKeyEquivalent(with: event)
+        }
+        controller?.clearTerminal()
+        return true
     }
 }
 
@@ -46,6 +61,7 @@ private final class TerminalContainer: NSView {
         let container = TerminalContainer(frame: NSRect(x: 0, y: 0, width: 320, height: 220))
         container.wantsLayer = true
         container.layer?.masksToBounds = true
+        container.controller = self
         view = container
         restartButton.target = self
         restartButton.action = #selector(restartShell)
@@ -98,6 +114,14 @@ private final class TerminalContainer: NSView {
 
     @objc public func focusTerminal() {
         view.window?.makeFirstResponder(terminal ?? restartButton)
+    }
+
+    /// Clears the display and scrollback, then has the shell redraw its prompt.
+    @objc public func clearTerminal() {
+        guard let terminal else { return }
+        terminal.feed(text: "\u{1b}[2J\u{1b}[3J")
+        // Only the shell can reprint its prompt; Ctrl+L asks it to redraw at the top.
+        terminal.send(txt: "\u{0c}")
     }
 
     @objc public var hasRunningWork: Bool {

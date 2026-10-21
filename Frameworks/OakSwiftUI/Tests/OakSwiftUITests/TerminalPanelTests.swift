@@ -5,6 +5,33 @@ import Darwin
 @testable import OakSwiftUI
 
 @MainActor
+@Test func clearShortcutRequiresTerminalFocus() async throws {
+    _ = NSApplication.shared
+    let controller = OakTerminalPanelController()
+    controller.startSession(inDirectory: NSTemporaryDirectory())
+    defer { controller.stopSession() }
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: .titled, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView?.addSubview(controller.view)
+    controller.view.frame = window.contentView!.bounds
+    let terminal = try #require(controller.terminal)
+
+    func commandK() throws -> Bool {
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "k", charactersIgnoringModifiers: "k", isARepeat: false, keyCode: 40))
+        return controller.view.performKeyEquivalent(with: event)
+    }
+
+    window.makeFirstResponder(terminal)
+    #expect(try commandK())
+    let otherView = NSView(frame: .zero)
+    window.contentView?.addSubview(otherView)
+    window.makeFirstResponder(otherView)
+    #expect(try !commandK())
+    controller.stopSession()
+    #expect(try !commandK())
+}
+
+@MainActor
 @Test func terminalSessionLifecycleAndResize() async throws {
     _ = NSApplication.shared
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("TextMate terminal test \(UUID().uuidString)")
