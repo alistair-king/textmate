@@ -18,6 +18,8 @@
 @property (nonatomic) NSView* contentView;
 @property (nonatomic) NSView* panelView;
 @property (nonatomic) BOOL adjustingLayout;
+@property (nonatomic) NSLayoutConstraint* minimumWidthConstraint;
+@property (nonatomic) NSLayoutConstraint* minimumHeightConstraint;
 @end
 
 @implementation AIPanelViewController
@@ -33,6 +35,9 @@
 		_splitView.dividerStyle = NSSplitViewDividerStyleThin;
 		_splitView.delegate = self;
 		self.view = _splitView;
+		_minimumWidthConstraint = [_splitView.widthAnchor constraintGreaterThanOrEqualToConstant:0];
+		_minimumHeightConstraint = [_splitView.heightAnchor constraintGreaterThanOrEqualToConstant:0];
+		[NSLayoutConstraint activateConstraints:@[ _minimumWidthConstraint, _minimumHeightConstraint ]];
 
 		NSBox* panel = [[NSBox alloc] initWithFrame:NSZeroRect];
 		panel.boxType = NSBoxCustom;
@@ -98,8 +103,18 @@
 
 - (void)layoutPanels
 {
+	if(_adjustingLayout)
+		return;
 	_adjustingLayout = YES;
+	NSSize minimum = _contentView.fittingSize;
+	CGFloat divider = _panelVisible ? _splitView.dividerThickness : 0;
+	// Expose the existing layout's required minimum to the window's layout engine.
+	_minimumWidthConstraint.constant = minimum.width + (_splitView.isVertical ? divider : 0);
+	_minimumHeightConstraint.constant = minimum.height + (_splitView.isVertical ? 0 : divider);
 	NSRect bounds = _splitView.bounds;
+	// A resize can reach this delegate before Auto Layout applies the new minimum.
+	bounds.size.width = MAX(bounds.size.width, _minimumWidthConstraint.constant);
+	bounds.size.height = MAX(bounds.size.height, _minimumHeightConstraint.constant);
 	if(!_panelVisible)
 		_contentView.frame = bounds;
 	else
@@ -107,7 +122,7 @@
 		BOOL vertical = _splitView.isVertical;
 		CGFloat available = MAX(0, (vertical ? NSWidth(bounds) : NSHeight(bounds)) - _splitView.dividerThickness);
 		// Preserve the preferred size when a small window temporarily compresses the panel.
-		CGFloat contentMinimum = vertical ? 240 : 120;
+		CGFloat contentMinimum = vertical ? MAX(240, minimum.width) : MAX(120, minimum.height);
 		CGFloat size = MIN(vertical ? _panelWidth : _panelHeight, MAX(0, available - contentMinimum));
 		CGFloat firstSize = [_panelPosition isEqualToString:@"left"] ? size : available - size;
 		NSRect first = bounds, second = bounds;
@@ -138,7 +153,9 @@
 {
 	CGFloat available = MAX(0, (splitView.isVertical ? NSWidth(splitView.bounds) : NSHeight(splitView.bounds)) - splitView.dividerThickness);
 	CGFloat panelMinimum = MIN(splitView.isVertical ? 120 : 100, available / 2);
-	CGFloat contentMinimum = MIN(splitView.isVertical ? 240 : 120, available / 2);
+	NSSize minimum = _contentView.fittingSize;
+	CGFloat contentMinimum = MIN(splitView.isVertical ? MAX(240, minimum.width) : MAX(120, minimum.height), available);
+	panelMinimum = MIN(panelMinimum, MAX(0, available - contentMinimum));
 	BOOL panelFirst = [_panelPosition isEqualToString:@"left"];
 	return MAX(panelFirst ? panelMinimum : contentMinimum, MIN(position, available - (panelFirst ? contentMinimum : panelMinimum)));
 }

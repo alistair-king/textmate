@@ -2,6 +2,7 @@
 #import "../src/AIPanelViewController.h"
 void test_ai_panel_layout ()
 {
+	dispatch_sync(dispatch_get_main_queue(), ^{
 	@autoreleasepool {
   NSView* content = [[NSView alloc] initWithFrame:NSZeroRect];
   AIPanelViewController* controller = [[AIPanelViewController alloc] initWithContentView:content];
@@ -35,4 +36,40 @@ void test_ai_panel_layout ()
   controller.panelPosition = @"invalid";
   OAK_ASSERT([controller.panelPosition isEqualToString:@"bottom"]);
  }
+	});
+}
+
+void test_ai_panel_constrained_resize ()
+{
+	dispatch_sync(dispatch_get_main_queue(), ^{
+		@autoreleasepool
+		{
+ [NSApplication sharedApplication];
+ NSView* content = [[NSView alloc] initWithFrame:NSMakeRect(0,0,1000,700)];
+ NSView* child = [[NSView alloc] initWithFrame:NSZeroRect];
+ child.translatesAutoresizingMaskIntoConstraints = NO;
+ [content addSubview:child];
+ [NSLayoutConstraint activateConstraints:@[[child.widthAnchor constraintGreaterThanOrEqualToConstant:460], [child.heightAnchor constraintGreaterThanOrEqualToConstant:180], [child.leftAnchor constraintEqualToAnchor:content.leftAnchor], [child.rightAnchor constraintEqualToAnchor:content.rightAnchor], [child.topAnchor constraintEqualToAnchor:content.topAnchor], [child.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]]];
+ AIPanelViewController* c = [[AIPanelViewController alloc] initWithContentView:content];
+ NSSplitView* split = (NSSplitView*)c.view;
+ split.frame = NSMakeRect(0,0,1000,700);
+ NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1000,700) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+ window.releasedWhenClosed = NO;
+ split.translatesAutoresizingMaskIntoConstraints = NO;
+ [window.contentView addSubview:split];
+ [NSLayoutConstraint activateConstraints:@[[split.leftAnchor constraintEqualToAnchor:window.contentView.leftAnchor], [split.rightAnchor constraintEqualToAnchor:window.contentView.rightAnchor], [split.topAnchor constraintEqualToAnchor:window.contentView.topAnchor], [split.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor]]];
+ c.panelVisible = YES;
+ for(NSString* position in @[@"right", @"left", @"bottom"]) {
+  c.panelPosition = position;
+  for(int i=1000;i>=470;--i) {
+   [window setContentSize:NSMakeSize(i,300)];
+   [window.contentView layoutSubtreeIfNeeded];
+   [split layoutSubtreeIfNeeded];
+   OAK_ASSERT(NSWidth(content.frame)>=460);
+   OAK_ASSERT(NSHeight(content.frame)>=180);
+  }
+ }
+
+		}
+	});
 }
