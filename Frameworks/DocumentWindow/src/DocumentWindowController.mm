@@ -1913,6 +1913,11 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 	self.terminalPanelButton.accessibilityLabel = visible ? @"Hide Terminal Panel" : @"Show Terminal Panel";
 }
 
+- (NSString*)terminalStartDirectory
+{
+	return self.projectPath ?: self.defaultProjectPath ?: self.fileBrowser.path ?: [self.selectedDocument.path stringByDeletingLastPathComponent];
+}
+
 - (IBAction)toggleTerminalPanel:(id)sender
 {
 	NSResponder* responder = self.window.firstResponder;
@@ -1923,7 +1928,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 	self.terminalPanelController.panelVisible = !self.terminalPanelController.panelVisible;
 	if(self.terminalPanelController.panelVisible)
 	{
-		[self.terminalPanelController startTerminalInDirectory:self.projectPath ?: self.defaultProjectPath ?: [self.selectedDocument.path stringByDeletingLastPathComponent]];
+		[self.terminalPanelController startTerminalInDirectory:self.terminalStartDirectory];
 		[self updateTerminalTheme];
 		[self.terminalPanelController focusTerminal];
 	}
@@ -2598,8 +2603,6 @@ static NSUInteger DisableSessionSavingCount = 0;
 
 	self.defaultProjectPath = project[@"projectPath"];
 	self.projectPath        = project[@"projectPath"];
-	if(self.terminalPanelController.panelVisible)
-		[self.terminalPanelController startTerminalInDirectory:self.projectPath];
 	self.fileBrowserHistory = project[@"archivedFileBrowserState"] ?: project[@"fileBrowserState"];
 	self.fileBrowserVisible = [project[@"fileBrowserVisible"] boolValue];
 
@@ -2642,6 +2645,10 @@ static NSUInteger DisableSessionSavingCount = 0;
 	self.selectedTabIndex = selectedTabIndex;
 
 	[self openAndSelectDocument:documents[selectedTabIndex] activate:YES];
+
+	// Start the shell once the project/document context exists, so it opens in the window's folder.
+	if(self.terminalPanelController.panelVisible)
+		[self.terminalPanelController startTerminalInDirectory:self.terminalStartDirectory];
 }
 
 - (NSDictionary*)sessionInfoIncludingUntitledDocuments:(BOOL)includeUntitled
