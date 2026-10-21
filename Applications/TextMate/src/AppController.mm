@@ -242,8 +242,8 @@ BOOL HasDocumentWindow (NSArray* windows)
 					}
 				},
 				{ @"Show File Browser",      @selector(toggleFileBrowser:),    @"d", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
-				{ @"Show AI Panel", @selector(toggleAIPanel:), @"a", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
-				{ @"AI Panel Position", .submenu = {
+				{ @"Show Terminal Panel", @selector(toggleAIPanel:), @"a", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
+				{ @"Terminal Panel Position", .submenu = {
 					{ @"Left", @selector(takeAIPanelPositionFrom:), .representedObject = @"left" },
 					{ @"Right", @selector(takeAIPanelPositionFrom:), .representedObject = @"right" },
 					{ @"Bottom", @selector(takeAIPanelPositionFrom:), .representedObject = @"bottom" },

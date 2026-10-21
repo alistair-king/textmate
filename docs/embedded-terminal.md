@@ -1,6 +1,6 @@
 # Embedded terminal
 
-Show the panel using the AI title-bar button, View → Show AI Panel, or Control–Option–Command–A. Choose its edge under View → AI Panel Position. The panel now contains a SwiftTerm terminal.
+Show the panel using the Terminal title-bar button, View → Show Terminal Panel, or Control–Option–Command–A. Choose its edge under View → Terminal Panel Position. The panel now contains a SwiftTerm terminal.
 
 Each window starts one login shell on first use, using the account's configured shell. It starts in the project folder, the current document's folder, or the home folder when neither is available. Opening another document does not change an existing shell's directory.
 

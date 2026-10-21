@@ -213,11 +213,11 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		self.aiPanelController = [[AIPanelViewController alloc] initWithContentView:self.layoutView];
 		NSTitlebarAccessoryViewController* aiAccessory = [[NSTitlebarAccessoryViewController alloc] init];
 		aiAccessory.layoutAttribute = NSLayoutAttributeRight;
-		self.aiPanelButton = [NSButton buttonWithTitle:@"AI" target:self action:@selector(toggleAIPanel:)];
+		self.aiPanelButton = [NSButton buttonWithTitle:@"Terminal" target:self action:@selector(toggleAIPanel:)];
 		self.aiPanelButton.buttonType = NSButtonTypePushOnPushOff;
-		self.aiPanelButton.frame = NSMakeRect(0, 0, 44, 24);
-		self.aiPanelButton.toolTip = @"Show AI Panel (⌃⌥⌘A)";
-		self.aiPanelButton.accessibilityLabel = @"Show AI Panel";
+		self.aiPanelButton.frame = NSMakeRect(0, 0, 90, 24);
+		self.aiPanelButton.toolTip = @"Show Terminal Panel (⌃⌥⌘A)";
+		self.aiPanelButton.accessibilityLabel = @"Show Terminal Panel";
 		aiAccessory.view = self.aiPanelButton;
 		[self.window addTitlebarAccessoryViewController:aiAccessory];
 
@@ -1901,8 +1901,8 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 {
 	BOOL visible = self.aiPanelController.panelVisible;
 	self.aiPanelButton.state = visible ? NSControlStateValueOn : NSControlStateValueOff;
-	self.aiPanelButton.toolTip = visible ? @"Hide AI Panel (⌃⌥⌘A)" : @"Show AI Panel (⌃⌥⌘A)";
-	self.aiPanelButton.accessibilityLabel = visible ? @"Hide AI Panel" : @"Show AI Panel";
+	self.aiPanelButton.toolTip = visible ? @"Hide Terminal Panel (⌃⌥⌘A)" : @"Show Terminal Panel (⌃⌥⌘A)";
+	self.aiPanelButton.accessibilityLabel = visible ? @"Hide Terminal Panel" : @"Show Terminal Panel";
 }
 
 - (IBAction)toggleAIPanel:(id)sender
@@ -2325,7 +2325,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 	BOOL active = YES;
 	if([menuItem action] == @selector(toggleAIPanel:))
-		[menuItem setTitle:self.aiPanelController.panelVisible ? @"Hide AI Panel" : @"Show AI Panel"];
+		[menuItem setTitle:self.aiPanelController.panelVisible ? @"Hide Terminal Panel" : @"Show Terminal Panel"];
 	else if([menuItem action] == @selector(takeAIPanelPositionFrom:))
 		menuItem.state = [self.aiPanelController.panelPosition isEqual:menuItem.representedObject] ? NSControlStateValueOn : NSControlStateValueOff;
 	else if([menuItem action] == @selector(toggleFileBrowser:))
