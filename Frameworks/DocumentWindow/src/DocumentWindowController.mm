@@ -1,5 +1,6 @@
 #import "DocumentWindowController.h"
 #import "ProjectLayoutView.h"
+#import "AIPanelViewController.h"
 #import "SelectGrammarViewController.h"
 #import "OakRunCommandWindowController.h"
 #import <document/OakDocument.h>
@@ -88,6 +89,8 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 }
 @property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
 @property (nonatomic) ProjectLayoutView*          layoutView;
+@property (nonatomic) AIPanelViewController* aiPanelController;
+@property (nonatomic) NSButton* aiPanelButton;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -207,11 +210,22 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		_titlebarViewController.fullScreenMinHeight = NSHeight(self.tabBarView.frame);
 		[self.window addTitlebarAccessoryViewController:_titlebarViewController];
 
-		OakAddAutoLayoutViewsToSuperview(@[ self.layoutView ], self.window.contentView);
+		self.aiPanelController = [[AIPanelViewController alloc] initWithContentView:self.layoutView];
+		NSTitlebarAccessoryViewController* aiAccessory = [[NSTitlebarAccessoryViewController alloc] init];
+		aiAccessory.layoutAttribute = NSLayoutAttributeRight;
+		self.aiPanelButton = [NSButton buttonWithTitle:@"AI" target:self action:@selector(toggleAIPanel:)];
+		self.aiPanelButton.buttonType = NSButtonTypePushOnPushOff;
+		self.aiPanelButton.frame = NSMakeRect(0, 0, 44, 24);
+		self.aiPanelButton.toolTip = @"Show AI Panel (⌃⌥⌘A)";
+		self.aiPanelButton.accessibilityLabel = @"Show AI Panel";
+		aiAccessory.view = self.aiPanelButton;
+		[self.window addTitlebarAccessoryViewController:aiAccessory];
+
+		OakAddAutoLayoutViewsToSuperview(@[ self.aiPanelController.view ], self.window.contentView);
 		self.window.initialFirstResponder = self.textView;
 
-		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view": self.layoutView }]];
-		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view": self.layoutView }]];
+		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view": self.aiPanelController.view }]];
+		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view": self.aiPanelController.view }]];
 
 		_arrayController = [[NSArrayController alloc] init];
 		[_arrayController bind:NSContentBinding toObject:self withKeyPath:@"documents" options:nil];
@@ -1873,6 +1887,32 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	[[self class] scheduleSessionBackup:self];
 }
 
+- (void)updateAIPanelButton
+{
+	BOOL visible = self.aiPanelController.panelVisible;
+	self.aiPanelButton.state = visible ? NSControlStateValueOn : NSControlStateValueOff;
+	self.aiPanelButton.toolTip = visible ? @"Hide AI Panel (⌃⌥⌘A)" : @"Show AI Panel (⌃⌥⌘A)";
+	self.aiPanelButton.accessibilityLabel = visible ? @"Hide AI Panel" : @"Show AI Panel";
+}
+
+- (IBAction)toggleAIPanel:(id)sender
+{
+	NSResponder* responder = self.window.firstResponder;
+	if(self.aiPanelController.panelVisible && [responder isKindOfClass:NSView.class] &&
+	   [(NSView*)responder isDescendantOf:self.aiPanelController.view] &&
+	   ![(NSView*)responder isDescendantOf:self.layoutView])
+		[self.window makeFirstResponder:self.textView];
+	self.aiPanelController.panelVisible = !self.aiPanelController.panelVisible;
+	[self updateAIPanelButton];
+	[[self class] scheduleSessionBackup:self];
+}
+
+- (IBAction)takeAIPanelPositionFrom:(NSMenuItem*)sender
+{
+	self.aiPanelController.panelPosition = sender.representedObject;
+	[[self class] scheduleSessionBackup:self];
+}
+
 - (IBAction)toggleFileBrowser:(id)sender    { self.fileBrowserVisible = !self.fileBrowserVisible; }
 
 - (id)fileBrowserHistory                    { return self.fileBrowser.sessionState ?: _fileBrowserHistory; }
@@ -2269,7 +2309,11 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	};
 
 	BOOL active = YES;
-	if([menuItem action] == @selector(toggleFileBrowser:))
+	if([menuItem action] == @selector(toggleAIPanel:))
+		[menuItem setTitle:self.aiPanelController.panelVisible ? @"Hide AI Panel" : @"Show AI Panel"];
+	else if([menuItem action] == @selector(takeAIPanelPositionFrom:))
+		menuItem.state = [self.aiPanelController.panelPosition isEqual:menuItem.representedObject] ? NSControlStateValueOn : NSControlStateValueOff;
+	else if([menuItem action] == @selector(toggleFileBrowser:))
 		[menuItem setTitle:self.fileBrowserVisible ? @"Hide File Browser" : @"Show File Browser"];
 	else if([menuItem action] == @selector(toggleHTMLOutput:))
 	{
@@ -2531,6 +2575,14 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(NSString* htmlOutputSize = project[@"htmlOutputSize"])
 		self.htmlOutputSize = NSSizeFromString(htmlOutputSize);
 
+	self.aiPanelController.panelPosition = project[@"aiPanelPosition"] ?: @"right";
+	if(NSNumber* width = project[@"aiPanelWidth"])
+		self.aiPanelController.panelWidth = width.doubleValue;
+	if(NSNumber* height = project[@"aiPanelHeight"])
+		self.aiPanelController.panelHeight = height.doubleValue;
+	self.aiPanelController.panelVisible = [project[@"aiPanelVisible"] boolValue];
+	[self updateAIPanelButton];
+
 	self.defaultProjectPath = project[@"projectPath"];
 	self.projectPath        = project[@"projectPath"];
 	self.fileBrowserHistory = project[@"archivedFileBrowserState"] ?: project[@"fileBrowserState"];
@@ -2594,6 +2646,10 @@ static NSUInteger DisableSessionSavingCount = 0;
 		res[@"windowFrame"] = [self.window stringWithSavedFrame];
 
 	res[@"miniaturized"]       = @([self.window isMiniaturized]);
+	res[@"aiPanelVisible"] = @(self.aiPanelController.panelVisible);
+	res[@"aiPanelPosition"] = self.aiPanelController.panelPosition;
+	res[@"aiPanelWidth"] = @(self.aiPanelController.panelWidth);
+	res[@"aiPanelHeight"] = @(self.aiPanelController.panelHeight);
 	res[@"htmlOutputSize"]     = NSStringFromSize(self.htmlOutputSize);
 	res[@"fileBrowserVisible"] = @(self.fileBrowserVisible);
 	res[@"fileBrowserWidth"]   = @(self.fileBrowserWidth);
@@ -2637,7 +2693,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(controllers.count == 1)
 	{
 		DocumentWindowController* controller = controllers.firstObject;
-		if(!controller.projectPath && !controller.fileBrowserVisible && controller.documents.count == 1 && is_disposable(controller.selectedDocument))
+		if(!controller.projectPath && !controller.fileBrowserVisible && !controller.aiPanelController.panelVisible && controller.documents.count == 1 && is_disposable(controller.selectedDocument))
 			controllers = nil;
 	}
 
