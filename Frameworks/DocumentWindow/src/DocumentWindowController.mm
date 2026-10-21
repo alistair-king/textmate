@@ -1,6 +1,6 @@
 #import "DocumentWindowController.h"
 #import "ProjectLayoutView.h"
-#import "AIPanelViewController.h"
+#import "TerminalPanelViewController.h"
 #import "SelectGrammarViewController.h"
 #import "OakRunCommandWindowController.h"
 #import <document/OakDocument.h>
@@ -89,8 +89,8 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 }
 @property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
 @property (nonatomic) ProjectLayoutView*          layoutView;
-@property (nonatomic) AIPanelViewController* aiPanelController;
-@property (nonatomic) NSButton* aiPanelButton;
+@property (nonatomic) TerminalPanelViewController* terminalPanelController;
+@property (nonatomic) NSButton* terminalPanelButton;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -210,22 +210,22 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 		_titlebarViewController.fullScreenMinHeight = NSHeight(self.tabBarView.frame);
 		[self.window addTitlebarAccessoryViewController:_titlebarViewController];
 
-		self.aiPanelController = [[AIPanelViewController alloc] initWithContentView:self.layoutView];
-		NSTitlebarAccessoryViewController* aiAccessory = [[NSTitlebarAccessoryViewController alloc] init];
-		aiAccessory.layoutAttribute = NSLayoutAttributeRight;
-		self.aiPanelButton = [NSButton buttonWithTitle:@"Terminal" target:self action:@selector(toggleAIPanel:)];
-		self.aiPanelButton.buttonType = NSButtonTypePushOnPushOff;
-		self.aiPanelButton.frame = NSMakeRect(0, 0, 90, 24);
-		self.aiPanelButton.toolTip = @"Show Terminal Panel (⌃⌥⌘A)";
-		self.aiPanelButton.accessibilityLabel = @"Show Terminal Panel";
-		aiAccessory.view = self.aiPanelButton;
-		[self.window addTitlebarAccessoryViewController:aiAccessory];
+		self.terminalPanelController = [[TerminalPanelViewController alloc] initWithContentView:self.layoutView];
+		NSTitlebarAccessoryViewController* terminalAccessory = [[NSTitlebarAccessoryViewController alloc] init];
+		terminalAccessory.layoutAttribute = NSLayoutAttributeRight;
+		self.terminalPanelButton = [NSButton buttonWithTitle:@"Terminal" target:self action:@selector(toggleTerminalPanel:)];
+		self.terminalPanelButton.buttonType = NSButtonTypePushOnPushOff;
+		self.terminalPanelButton.frame = NSMakeRect(0, 0, 90, 24);
+		self.terminalPanelButton.toolTip = @"Show Terminal Panel (⌃⌥⌘A)";
+		self.terminalPanelButton.accessibilityLabel = @"Show Terminal Panel";
+		terminalAccessory.view = self.terminalPanelButton;
+		[self.window addTitlebarAccessoryViewController:terminalAccessory];
 
-		OakAddAutoLayoutViewsToSuperview(@[ self.aiPanelController.view ], self.window.contentView);
+		OakAddAutoLayoutViewsToSuperview(@[ self.terminalPanelController.view ], self.window.contentView);
 		self.window.initialFirstResponder = self.textView;
 
-		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view": self.aiPanelController.view }]];
-		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view": self.aiPanelController.view }]];
+		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view": self.terminalPanelController.view }]];
+		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view": self.terminalPanelController.view }]];
 
 		_arrayController = [[NSArrayController alloc] init];
 		[_arrayController bind:NSContentBinding toObject:self withKeyPath:@"documents" options:nil];
@@ -329,7 +329,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 
 - (void)windowWillClose:(NSNotification*)aNotification
 {
-	[self.aiPanelController stopTerminal];
+	[self.terminalPanelController stopTerminal];
 	if((([self.window styleMask] & NSWindowStyleMaskFullScreen) != NSWindowStyleMaskFullScreen) && !self.window.isZoomed)
 		[NSUserDefaults.standardUserDefaults setObject:NSStringFromRect([self windowFrame]) forKey:@"DocumentControllerWindowFrame"];
 
@@ -627,7 +627,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 
 - (BOOL)windowShouldClose:(id)sender
 {
-	if(![self.aiPanelController confirmTerminalClose])
+	if(![self.terminalPanelController confirmTerminalClose])
 		return NO;
 
 	if(!self.htmlOutputInWindow && _htmlOutputView.isRunningCommand)
@@ -736,7 +736,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 {
 	for(DocumentWindowController* controller in SortedControllers())
 	{
-		if(![controller.aiPanelController confirmTerminalClose])
+		if(![controller.terminalPanelController confirmTerminalClose])
 			return NSTerminateCancel;
 	}
 
@@ -1909,42 +1909,42 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 	{
 		auto const& styles = theme->styles_for_scope(scope::scope_t(to_s(self.selectedDocument.fileType ?: @"")));
 		NSColor* foreground = [NSColor colorWithCGColor:styles.foreground() ?: theme->foreground()];
-		[self.aiPanelController applyTerminalBackground:[NSColor colorWithCGColor:theme->background(to_s(self.selectedDocument.fileType ?: @""))]
+		[self.terminalPanelController applyTerminalBackground:[NSColor colorWithCGColor:theme->background(to_s(self.selectedDocument.fileType ?: @""))]
 			foreground:foreground
 			caret:styles.caret() ? [NSColor colorWithCGColor:styles.caret()] : foreground
 			selection:styles.selection() ? [NSColor colorWithCGColor:styles.selection()] : NSColor.selectedTextBackgroundColor];
 	}
 }
 
-- (void)updateAIPanelButton
+- (void)updateTerminalPanelButton
 {
-	BOOL visible = self.aiPanelController.panelVisible;
-	self.aiPanelButton.state = visible ? NSControlStateValueOn : NSControlStateValueOff;
-	self.aiPanelButton.toolTip = visible ? @"Hide Terminal Panel (⌃⌥⌘A)" : @"Show Terminal Panel (⌃⌥⌘A)";
-	self.aiPanelButton.accessibilityLabel = visible ? @"Hide Terminal Panel" : @"Show Terminal Panel";
+	BOOL visible = self.terminalPanelController.panelVisible;
+	self.terminalPanelButton.state = visible ? NSControlStateValueOn : NSControlStateValueOff;
+	self.terminalPanelButton.toolTip = visible ? @"Hide Terminal Panel (⌃⌥⌘A)" : @"Show Terminal Panel (⌃⌥⌘A)";
+	self.terminalPanelButton.accessibilityLabel = visible ? @"Hide Terminal Panel" : @"Show Terminal Panel";
 }
 
-- (IBAction)toggleAIPanel:(id)sender
+- (IBAction)toggleTerminalPanel:(id)sender
 {
 	NSResponder* responder = self.window.firstResponder;
-	if(self.aiPanelController.panelVisible && [responder isKindOfClass:NSView.class] &&
-	   [(NSView*)responder isDescendantOf:self.aiPanelController.view] &&
+	if(self.terminalPanelController.panelVisible && [responder isKindOfClass:NSView.class] &&
+	   [(NSView*)responder isDescendantOf:self.terminalPanelController.view] &&
 	   ![(NSView*)responder isDescendantOf:self.layoutView])
 		[self.window makeFirstResponder:self.textView];
-	self.aiPanelController.panelVisible = !self.aiPanelController.panelVisible;
-	if(self.aiPanelController.panelVisible)
+	self.terminalPanelController.panelVisible = !self.terminalPanelController.panelVisible;
+	if(self.terminalPanelController.panelVisible)
 	{
-		[self.aiPanelController startTerminalInDirectory:self.projectPath ?: self.defaultProjectPath ?: [self.selectedDocument.path stringByDeletingLastPathComponent]];
+		[self.terminalPanelController startTerminalInDirectory:self.projectPath ?: self.defaultProjectPath ?: [self.selectedDocument.path stringByDeletingLastPathComponent]];
 		[self updateTerminalTheme];
-		[self.aiPanelController focusTerminal];
+		[self.terminalPanelController focusTerminal];
 	}
-	[self updateAIPanelButton];
+	[self updateTerminalPanelButton];
 	[[self class] scheduleSessionBackup:self];
 }
 
-- (IBAction)takeAIPanelPositionFrom:(NSMenuItem*)sender
+- (IBAction)takeTerminalPanelPositionFrom:(NSMenuItem*)sender
 {
-	self.aiPanelController.panelPosition = sender.representedObject;
+	self.terminalPanelController.panelPosition = sender.representedObject;
 	[[self class] scheduleSessionBackup:self];
 }
 
@@ -2344,10 +2344,10 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 	};
 
 	BOOL active = YES;
-	if([menuItem action] == @selector(toggleAIPanel:))
-		[menuItem setTitle:self.aiPanelController.panelVisible ? @"Hide Terminal Panel" : @"Show Terminal Panel"];
-	else if([menuItem action] == @selector(takeAIPanelPositionFrom:))
-		menuItem.state = [self.aiPanelController.panelPosition isEqual:menuItem.representedObject] ? NSControlStateValueOn : NSControlStateValueOff;
+	if([menuItem action] == @selector(toggleTerminalPanel:))
+		[menuItem setTitle:self.terminalPanelController.panelVisible ? @"Hide Terminal Panel" : @"Show Terminal Panel"];
+	else if([menuItem action] == @selector(takeTerminalPanelPositionFrom:))
+		menuItem.state = [self.terminalPanelController.panelPosition isEqual:menuItem.representedObject] ? NSControlStateValueOn : NSControlStateValueOff;
 	else if([menuItem action] == @selector(toggleFileBrowser:))
 		[menuItem setTitle:self.fileBrowserVisible ? @"Hide File Browser" : @"Show File Browser"];
 	else if([menuItem action] == @selector(toggleHTMLOutput:))
@@ -2610,18 +2610,18 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(NSString* htmlOutputSize = project[@"htmlOutputSize"])
 		self.htmlOutputSize = NSSizeFromString(htmlOutputSize);
 
-	self.aiPanelController.panelPosition = project[@"aiPanelPosition"] ?: @"right";
-	if(NSNumber* width = project[@"aiPanelWidth"])
-		self.aiPanelController.panelWidth = width.doubleValue;
-	if(NSNumber* height = project[@"aiPanelHeight"])
-		self.aiPanelController.panelHeight = height.doubleValue;
-	self.aiPanelController.panelVisible = [project[@"aiPanelVisible"] boolValue];
-	[self updateAIPanelButton];
+	self.terminalPanelController.panelPosition = project[@"terminalPanelPosition"] ?: @"right";
+	if(NSNumber* width = project[@"terminalPanelWidth"])
+		self.terminalPanelController.panelWidth = width.doubleValue;
+	if(NSNumber* height = project[@"terminalPanelHeight"])
+		self.terminalPanelController.panelHeight = height.doubleValue;
+	self.terminalPanelController.panelVisible = [project[@"terminalPanelVisible"] boolValue];
+	[self updateTerminalPanelButton];
 
 	self.defaultProjectPath = project[@"projectPath"];
 	self.projectPath        = project[@"projectPath"];
-	if(self.aiPanelController.panelVisible)
-		[self.aiPanelController startTerminalInDirectory:self.projectPath];
+	if(self.terminalPanelController.panelVisible)
+		[self.terminalPanelController startTerminalInDirectory:self.projectPath];
 	self.fileBrowserHistory = project[@"archivedFileBrowserState"] ?: project[@"fileBrowserState"];
 	self.fileBrowserVisible = [project[@"fileBrowserVisible"] boolValue];
 
@@ -2683,10 +2683,10 @@ static NSUInteger DisableSessionSavingCount = 0;
 		res[@"windowFrame"] = [self.window stringWithSavedFrame];
 
 	res[@"miniaturized"]       = @([self.window isMiniaturized]);
-	res[@"aiPanelVisible"] = @(self.aiPanelController.panelVisible);
-	res[@"aiPanelPosition"] = self.aiPanelController.panelPosition;
-	res[@"aiPanelWidth"] = @(self.aiPanelController.panelWidth);
-	res[@"aiPanelHeight"] = @(self.aiPanelController.panelHeight);
+	res[@"terminalPanelVisible"] = @(self.terminalPanelController.panelVisible);
+	res[@"terminalPanelPosition"] = self.terminalPanelController.panelPosition;
+	res[@"terminalPanelWidth"] = @(self.terminalPanelController.panelWidth);
+	res[@"terminalPanelHeight"] = @(self.terminalPanelController.panelHeight);
 	res[@"htmlOutputSize"]     = NSStringFromSize(self.htmlOutputSize);
 	res[@"fileBrowserVisible"] = @(self.fileBrowserVisible);
 	res[@"fileBrowserWidth"]   = @(self.fileBrowserWidth);
@@ -2730,7 +2730,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(controllers.count == 1)
 	{
 		DocumentWindowController* controller = controllers.firstObject;
-		if(!controller.projectPath && !controller.fileBrowserVisible && !controller.aiPanelController.panelVisible && controller.documents.count == 1 && is_disposable(controller.selectedDocument))
+		if(!controller.projectPath && !controller.fileBrowserVisible && !controller.terminalPanelController.panelVisible && controller.documents.count == 1 && is_disposable(controller.selectedDocument))
 			controllers = nil;
 	}
 

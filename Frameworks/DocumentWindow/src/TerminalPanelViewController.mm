@@ -1,11 +1,11 @@
-#import "AIPanelViewController.h"
+#import "TerminalPanelViewController.h"
 #import "OakSwiftUI-Swift.h"
 
-@interface AIPanelSplitView : NSSplitView
+@interface TerminalPanelSplitView : NSSplitView
 @property (nonatomic) BOOL trackingDivider;
 @end
 
-@implementation AIPanelSplitView
+@implementation TerminalPanelSplitView
 - (void)mouseDown:(NSEvent*)event
 {
 	self.trackingDivider = YES;
@@ -14,8 +14,8 @@
 }
 @end
 
-@interface AIPanelViewController () <NSSplitViewDelegate>
-@property (nonatomic) AIPanelSplitView* splitView;
+@interface TerminalPanelViewController () <NSSplitViewDelegate>
+@property (nonatomic) TerminalPanelSplitView* splitView;
 @property (nonatomic) OakTerminalPanelController* terminalController;
 @property (nonatomic) NSArray<NSColor*>* terminalColors;
 @property (nonatomic) NSView* contentView;
@@ -25,7 +25,7 @@
 @property (nonatomic) NSLayoutConstraint* minimumHeightConstraint;
 @end
 
-@implementation AIPanelViewController
+@implementation TerminalPanelViewController
 - (instancetype)initWithContentView:(NSView*)contentView
 {
 	if(self = [super initWithNibName:nil bundle:nil])
@@ -34,7 +34,7 @@
 		_panelPosition = @"right";
 		_panelWidth = 320;
 		_panelHeight = 220;
-		_splitView = [[AIPanelSplitView alloc] initWithFrame:NSZeroRect];
+		_splitView = [[TerminalPanelSplitView alloc] initWithFrame:NSZeroRect];
 		_splitView.dividerStyle = NSSplitViewDividerStyleThin;
 		_splitView.delegate = self;
 		self.view = _splitView;

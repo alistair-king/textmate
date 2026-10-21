@@ -1,11 +1,11 @@
 #import <Cocoa/Cocoa.h>
-#import "../src/AIPanelViewController.h"
-void test_ai_panel_layout ()
+#import "../src/TerminalPanelViewController.h"
+void test_terminal_panel_layout ()
 {
 	dispatch_sync(dispatch_get_main_queue(), ^{
 	@autoreleasepool {
   NSView* content = [[NSView alloc] initWithFrame:NSZeroRect];
-  AIPanelViewController* controller = [[AIPanelViewController alloc] initWithContentView:content];
+  TerminalPanelViewController* controller = [[TerminalPanelViewController alloc] initWithContentView:content];
   NSSplitView* split = (NSSplitView*)controller.view;
   split.frame = NSMakeRect(0, 0, 1000, 700);
   [split adjustSubviews];
@@ -39,7 +39,7 @@ void test_ai_panel_layout ()
 	});
 }
 
-void test_ai_panel_constrained_resize ()
+void test_terminal_panel_constrained_resize ()
 {
 	dispatch_sync(dispatch_get_main_queue(), ^{
 		@autoreleasepool
@@ -50,7 +50,7 @@ void test_ai_panel_constrained_resize ()
  child.translatesAutoresizingMaskIntoConstraints = NO;
  [content addSubview:child];
  [NSLayoutConstraint activateConstraints:@[[child.widthAnchor constraintGreaterThanOrEqualToConstant:460], [child.heightAnchor constraintGreaterThanOrEqualToConstant:180], [child.leftAnchor constraintEqualToAnchor:content.leftAnchor], [child.rightAnchor constraintEqualToAnchor:content.rightAnchor], [child.topAnchor constraintEqualToAnchor:content.topAnchor], [child.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]]];
- AIPanelViewController* c = [[AIPanelViewController alloc] initWithContentView:content];
+ TerminalPanelViewController* c = [[TerminalPanelViewController alloc] initWithContentView:content];
  NSSplitView* split = (NSSplitView*)c.view;
  split.frame = NSMakeRect(0,0,1000,700);
  NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1000,700) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
