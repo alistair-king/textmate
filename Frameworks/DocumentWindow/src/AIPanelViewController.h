@@ -6,5 +6,9 @@
 @property (nonatomic, copy) NSString* panelPosition; // left, right, bottom
 @property (nonatomic) CGFloat panelWidth;
 @property (nonatomic) CGFloat panelHeight;
+- (void)startTerminalInDirectory:(NSString*)directory;
+- (void)focusTerminal;
+- (BOOL)confirmTerminalClose;
+- (void)stopTerminal;
 - (instancetype)initWithContentView:(NSView*)contentView;
 @end

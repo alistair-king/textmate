@@ -59,8 +59,11 @@ void test_ai_panel_constrained_resize ()
  [window.contentView addSubview:split];
  [NSLayoutConstraint activateConstraints:@[[split.leftAnchor constraintEqualToAnchor:window.contentView.leftAnchor], [split.rightAnchor constraintEqualToAnchor:window.contentView.rightAnchor], [split.topAnchor constraintEqualToAnchor:window.contentView.topAnchor], [split.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor]]];
  c.panelVisible = YES;
+ [c startTerminalInDirectory:NSTemporaryDirectory()];
  for(NSString* position in @[@"right", @"left", @"bottom"]) {
   c.panelPosition = position;
+  c.panelVisible = NO;
+  c.panelVisible = YES;
   for(int i=1000;i>=470;--i) {
    [window setContentSize:NSMakeSize(i,300)];
    [window.contentView layoutSubtreeIfNeeded];
@@ -69,6 +72,7 @@ void test_ai_panel_constrained_resize ()
    OAK_ASSERT(NSHeight(content.frame)>=180);
   }
  }
+ [c stopTerminal];
 
 		}
 	});
