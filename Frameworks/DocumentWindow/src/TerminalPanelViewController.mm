@@ -1,6 +1,10 @@
 #import "TerminalPanelViewController.h"
 #import "OakSwiftUI-Swift.h"
 
+NSString* const kUserDefaultsTerminalPanelPlacementKey = @"terminalPanelPlacement";
+NSString* const kUserDefaultsTerminalPanelWidthKey     = @"terminalPanelWidth";
+NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
+
 @interface TerminalPanelSplitView : NSSplitView
 @property (nonatomic) BOOL trackingDivider;
 @end
@@ -26,14 +30,24 @@
 @end
 
 @implementation TerminalPanelViewController
++ (void)initialize
+{
+	[NSUserDefaults.standardUserDefaults registerDefaults:@{
+		kUserDefaultsTerminalPanelPlacementKey: @"right",
+		kUserDefaultsTerminalPanelWidthKey:     @320,
+		kUserDefaultsTerminalPanelHeightKey:    @220,
+	}];
+}
+
 - (instancetype)initWithContentView:(NSView*)contentView
 {
 	if(self = [super initWithNibName:nil bundle:nil])
 	{
 		_contentView = contentView;
-		_panelPosition = @"right";
-		_panelWidth = 320;
-		_panelHeight = 220;
+		NSString* placement = [NSUserDefaults.standardUserDefaults stringForKey:kUserDefaultsTerminalPanelPlacementKey];
+		_panelPosition = [@[@"left", @"right", @"bottom"] containsObject:placement] ? placement : @"right";
+		_panelWidth    = MAX(120, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelWidthKey]);
+		_panelHeight   = MAX(100, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelHeightKey]);
 		_splitView = [[TerminalPanelSplitView alloc] initWithFrame:NSZeroRect];
 		_splitView.dividerStyle = NSSplitViewDividerStyleThin;
 		_splitView.delegate = self;
@@ -192,9 +206,15 @@
 	if(!_adjustingLayout && _panelVisible && _splitView.trackingDivider)
 	{
 		if(_splitView.isVertical)
+		{
 			_panelWidth = NSWidth(_panelView.frame);
+			[NSUserDefaults.standardUserDefaults setDouble:_panelWidth forKey:kUserDefaultsTerminalPanelWidthKey];
+		}
 		else
+		{
 			_panelHeight = NSHeight(_panelView.frame);
+			[NSUserDefaults.standardUserDefaults setDouble:_panelHeight forKey:kUserDefaultsTerminalPanelHeightKey];
+		}
 	}
 }
 @end

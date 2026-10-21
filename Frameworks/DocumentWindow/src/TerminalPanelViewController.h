@@ -1,5 +1,10 @@
 #import <Cocoa/Cocoa.h>
 
+// Last-used panel geometry, shared by all windows like the file browser's placement/width.
+extern NSString* const kUserDefaultsTerminalPanelPlacementKey;
+extern NSString* const kUserDefaultsTerminalPanelWidthKey;
+extern NSString* const kUserDefaultsTerminalPanelHeightKey;
+
 // Hosts the existing project layout alongside an independently docked terminal panel.
 @interface TerminalPanelViewController : NSViewController
 @property (nonatomic) BOOL panelVisible;

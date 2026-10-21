@@ -1934,6 +1934,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 - (IBAction)takeTerminalPanelPositionFrom:(NSMenuItem*)sender
 {
 	self.terminalPanelController.panelPosition = sender.representedObject;
+	[NSUserDefaults.standardUserDefaults setObject:self.terminalPanelController.panelPosition forKey:kUserDefaultsTerminalPanelPlacementKey];
 	[[self class] scheduleSessionBackup:self];
 }
 
@@ -2586,7 +2587,8 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(NSString* htmlOutputSize = project[@"htmlOutputSize"])
 		self.htmlOutputSize = NSSizeFromString(htmlOutputSize);
 
-	self.terminalPanelController.panelPosition = project[@"terminalPanelPosition"] ?: @"right";
+	if(NSString* position = project[@"terminalPanelPosition"])
+		self.terminalPanelController.panelPosition = position;
 	if(NSNumber* width = project[@"terminalPanelWidth"])
 		self.terminalPanelController.panelWidth = width.doubleValue;
 	if(NSNumber* height = project[@"terminalPanelHeight"])
