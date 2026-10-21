@@ -8,6 +8,7 @@
 @property (nonatomic) CGFloat panelHeight;
 - (void)startTerminalInDirectory:(NSString*)directory;
 - (void)focusTerminal;
+- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection;
 - (BOOL)confirmTerminalClose;
 - (void)stopTerminal;
 - (instancetype)initWithContentView:(NSView*)contentView;

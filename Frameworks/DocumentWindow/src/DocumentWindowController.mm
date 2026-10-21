@@ -168,7 +168,7 @@ namespace
 	}
 }
 
-static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
+static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDocument.fileType", @"selectedDocument", @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
 
 @implementation DocumentWindowController
 + (KVDB*)sharedProjectStateDB
@@ -795,6 +795,12 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 - (void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)anObject change:(NSDictionary*)change context:(void*)context
 {
+	if([keyPath isEqualToString:@"textView.themeUUID"] || [keyPath isEqualToString:@"selectedDocument.fileType"] || [keyPath isEqualToString:@"selectedDocument"])
+	{
+		// Theme notifications can arrive while OakTextView is replacing its document view.
+		dispatch_async(dispatch_get_main_queue(), ^{ [self updateTerminalTheme]; });
+	}
+
 	OakDocument* document = self.selectedDocument;
 	if([keyPath isEqualToString:@"selectedDocument.path"] || [keyPath isEqualToString:@"selectedDocument.displayName"])
 	{
@@ -1897,6 +1903,19 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	[[self class] scheduleSessionBackup:self];
 }
 
+- (void)updateTerminalTheme
+{
+	if(theme_ptr theme = self.textView.theme)
+	{
+		auto const& styles = theme->styles_for_scope(scope::scope_t(to_s(self.selectedDocument.fileType ?: @"")));
+		NSColor* foreground = [NSColor colorWithCGColor:styles.foreground() ?: theme->foreground()];
+		[self.aiPanelController applyTerminalBackground:[NSColor colorWithCGColor:theme->background(to_s(self.selectedDocument.fileType ?: @""))]
+			foreground:foreground
+			caret:styles.caret() ? [NSColor colorWithCGColor:styles.caret()] : foreground
+			selection:styles.selection() ? [NSColor colorWithCGColor:styles.selection()] : NSColor.selectedTextBackgroundColor];
+	}
+}
+
 - (void)updateAIPanelButton
 {
 	BOOL visible = self.aiPanelController.panelVisible;
@@ -1916,6 +1935,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	if(self.aiPanelController.panelVisible)
 	{
 		[self.aiPanelController startTerminalInDirectory:self.projectPath ?: self.defaultProjectPath ?: [self.selectedDocument.path stringByDeletingLastPathComponent]];
+		[self updateTerminalTheme];
 		[self.aiPanelController focusTerminal];
 	}
 	[self updateAIPanelButton];

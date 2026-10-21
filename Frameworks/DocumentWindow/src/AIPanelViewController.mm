@@ -17,6 +17,7 @@
 @interface AIPanelViewController () <NSSplitViewDelegate>
 @property (nonatomic) AIPanelSplitView* splitView;
 @property (nonatomic) OakTerminalPanelController* terminalController;
+@property (nonatomic) NSArray<NSColor*>* terminalColors;
 @property (nonatomic) NSView* contentView;
 @property (nonatomic) NSView* panelView;
 @property (nonatomic) BOOL adjustingLayout;
@@ -62,7 +63,15 @@
 		_panelView = _terminalController.view;
 		[self rebuildLayout];
 	}
+	if(_terminalColors)
+		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3]];
 	[_terminalController startSessionInDirectory:directory ?: NSHomeDirectory()];
+}
+
+- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection
+{
+	self.terminalColors = @[ background, foreground, caret, selection ];
+	[_terminalController applyThemeWithBackground:background foreground:foreground caret:caret selection:selection];
 }
 
 - (void)focusTerminal { [_terminalController focusTerminal]; }

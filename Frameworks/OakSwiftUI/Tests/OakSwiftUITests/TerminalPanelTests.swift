@@ -11,9 +11,19 @@ import Darwin
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
     let controller = OakTerminalPanelController()
+    controller.applyTheme(background: .black, foreground: .white, caret: .green, selection: .blue)
     controller.startSession(inDirectory: folder.path)
     defer { controller.stopSession() }
     let terminal = try #require(controller.terminal)
+    #expect(terminal.nativeBackgroundColor == .black)
+    #expect(terminal.nativeForegroundColor == .white)
+    #expect(terminal.caretColor == .green)
+    #expect(terminal.selectedTextBackgroundColor == .blue)
+    controller.applyTheme(background: .white, foreground: .black, caret: .red, selection: .yellow)
+    #expect(terminal.nativeBackgroundColor == .white)
+    #expect(terminal.nativeForegroundColor == .black)
+    #expect(terminal.caretColor == .red)
+    #expect(terminal.selectedTextBackgroundColor == .yellow)
     let pid = terminal.process.shellPid
     #expect(pid > 0)
 
@@ -63,6 +73,10 @@ import Darwin
     #expect(!controller.hasRunningWork)
     restart.performClick(nil)
     let restartedTerminal = try #require(controller.terminal)
+    #expect(restartedTerminal.nativeBackgroundColor == .white)
+    #expect(restartedTerminal.nativeForegroundColor == .black)
+    #expect(restartedTerminal.caretColor == .red)
+    #expect(restartedTerminal.selectedTextBackgroundColor == .yellow)
     let restartedPID = restartedTerminal.process.shellPid
     #expect(restartedPID > 0 && restartedPID != pid)
     restartedTerminal.send(txt: "sleep 30 & echo ready > work.txt\n")
