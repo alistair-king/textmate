@@ -21,6 +21,25 @@ private final class TerminalContainer: NSView {
     private(set) var terminal: LocalProcessTerminalView?
     private var directory = NSHomeDirectory()
     private var started = false
+    private var themeColors: (background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor)?
+
+    @objc public func applyTheme(background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor) {
+        themeColors = (background, foreground, caret, selection)
+        updateTerminalColors()
+    }
+
+    private func updateTerminalColors() {
+        guard let colors = themeColors else { return }
+        if isViewLoaded { view.layer?.backgroundColor = colors.background.cgColor }
+        guard let terminal else { return }
+        terminal.nativeBackgroundColor = colors.background
+        terminal.nativeForegroundColor = colors.foreground
+        terminal.caretColor = colors.caret
+        terminal.caretTextColor = colors.background
+        terminal.selectedTextBackgroundColor = colors.selection
+        terminal.selectedTextForegroundColor = colors.foreground
+        terminal.needsDisplay = true
+    }
     private let restartButton = NSButton(title: "Restart Shell", target: nil, action: nil)
 
     public override func loadView() {
@@ -55,6 +74,7 @@ private final class TerminalContainer: NSView {
         terminal.processDelegate = self
         terminal.setAccessibilityLabel("Terminal")
         self.terminal = terminal
+        updateTerminalColors()
         (view as? TerminalContainer)?.terminal = terminal
         view.addSubview(terminal, positioned: .below, relativeTo: restartButton)
         restartButton.isHidden = true
