@@ -46,7 +46,7 @@
 		panel.borderWidth = 0;
 		panel.fillColor = NSColor.windowBackgroundColor;
 		panel.contentViewMargins = NSZeroSize;
-		panel.accessibilityLabel = @"AI Panel";
+		panel.accessibilityLabel = @"Terminal Panel";
 		_panelView = panel;
 		[self rebuildLayout];
 	}
