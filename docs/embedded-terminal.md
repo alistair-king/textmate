@@ -12,4 +12,4 @@ Closing a window or quitting checks for foreground or background child processes
 
 SwiftTerm 1.99.1 is pinned in Frameworks/OakSwiftUI/Package.swift and Package.resolved. It requires Swift 6.2 or later. `make debug` and `make release` build the Swift component before the application. The first build downloads Swift package dependencies. TerminalThirdPartyLicenses.txt is included in the application resources.
 
-The terminal bridge is OakTerminalPanelController. AIPanelViewController owns the bridge independently of its position/visibility, and DocumentWindowController supplies the initial directory and handles close/quit checks.
+The terminal bridge is OakTerminalPanelController. TerminalPanelViewController owns the bridge independently of its position/visibility, and DocumentWindowController supplies the initial directory and handles close/quit checks.

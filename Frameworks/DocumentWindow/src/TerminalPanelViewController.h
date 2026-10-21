@@ -1,7 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
 // Hosts the existing project layout alongside an independently docked terminal panel.
-@interface AIPanelViewController : NSViewController
+@interface TerminalPanelViewController : NSViewController
 @property (nonatomic) BOOL panelVisible;
 @property (nonatomic, copy) NSString* panelPosition; // left, right, bottom
 @property (nonatomic) CGFloat panelWidth;

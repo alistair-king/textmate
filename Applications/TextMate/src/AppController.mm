@@ -240,11 +240,11 @@ BOOL HasDocumentWindow (NSArray* windows)
 					}
 				},
 				{ @"Show File Browser",      @selector(toggleFileBrowser:),    @"d", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
-				{ @"Show Terminal Panel", @selector(toggleAIPanel:), @"a", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
+				{ @"Show Terminal Panel", @selector(toggleTerminalPanel:), @"a", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
 				{ @"Terminal Panel Position", .submenu = {
-					{ @"Left", @selector(takeAIPanelPositionFrom:), .representedObject = @"left" },
-					{ @"Right", @selector(takeAIPanelPositionFrom:), .representedObject = @"right" },
-					{ @"Bottom", @selector(takeAIPanelPositionFrom:), .representedObject = @"bottom" },
+					{ @"Left", @selector(takeTerminalPanelPositionFrom:), .representedObject = @"left" },
+					{ @"Right", @selector(takeTerminalPanelPositionFrom:), .representedObject = @"right" },
+					{ @"Bottom", @selector(takeTerminalPanelPositionFrom:), .representedObject = @"bottom" },
 				} },
 				{ @"Show HTML Output",       @selector(toggleHTMLOutput:),     @"h", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
 				{ @"Show Line Numbers",      @selector(toggleLineNumbers:),    @"l", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption },
