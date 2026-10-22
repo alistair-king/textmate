@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <OakTabBarView/OakTabBarView.h>
 #import "../src/TerminalPanelViewController.h"
 void test_terminal_panel_layout ()
 {
@@ -60,6 +61,14 @@ void test_terminal_panel_constrained_resize ()
  [NSLayoutConstraint activateConstraints:@[[split.leftAnchor constraintEqualToAnchor:window.contentView.leftAnchor], [split.rightAnchor constraintEqualToAnchor:window.contentView.rightAnchor], [split.topAnchor constraintEqualToAnchor:window.contentView.topAnchor], [split.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor]]];
  c.panelVisible = YES;
  [c startTerminalInDirectory:NSTemporaryDirectory()];
+ OakTabBarView* bar = [[c valueForKey:@"terminalTabBarController"] valueForKey:@"tabBar"];
+ OAK_ASSERT([bar isKindOfClass:OakTabBarView.class]);
+ OAK_ASSERT([bar.dataSource numberOfRowsInTabBarView:bar] == 1);
+ NSUUID* firstSession = [bar.dataSource tabBarView:bar UUIDForIndex:0];
+ [bar.delegate tabBarViewDidDoubleClick:bar];
+ OAK_ASSERT([bar.dataSource numberOfRowsInTabBarView:bar] == 2);
+ OAK_ASSERT([bar.delegate performDropOfTabItem:firstSession fromTabBar:bar index:0 toTabBar:bar index:2 operation:NSDragOperationMove]);
+ OAK_ASSERT([[bar.dataSource tabBarView:bar UUIDForIndex:1] isEqual:firstSession]);
  for(NSString* position in @[@"right", @"left", @"bottom"]) {
   c.panelPosition = position;
   c.panelVisible = NO;
