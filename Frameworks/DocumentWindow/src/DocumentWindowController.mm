@@ -90,7 +90,6 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
 @property (nonatomic) ProjectLayoutView*          layoutView;
 @property (nonatomic) TerminalPanelViewController* terminalPanelController;
-@property (nonatomic) NSButton* terminalPanelButton;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -230,19 +229,9 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 			destination.terminalPanelController.panelVisible = YES;
 			[destination.terminalPanelController takeTerminalSession:identifier fromPanel:source.terminalPanelController];
 			[destination updateTerminalTheme];
-			[destination updateTerminalPanelButton];
 			[destination showWindow:nil];
 			[destination.terminalPanelController focusTerminal];
 		};
-		NSTitlebarAccessoryViewController* terminalAccessory = [[NSTitlebarAccessoryViewController alloc] init];
-		terminalAccessory.layoutAttribute = NSLayoutAttributeRight;
-		self.terminalPanelButton = [NSButton buttonWithTitle:@"Terminal" target:self action:@selector(toggleTerminalPanel:)];
-		self.terminalPanelButton.buttonType = NSButtonTypePushOnPushOff;
-		self.terminalPanelButton.frame = NSMakeRect(0, 0, 90, 24);
-		self.terminalPanelButton.toolTip = @"Show Terminal Panel (⌘`)";
-		self.terminalPanelButton.accessibilityLabel = @"Show Terminal Panel";
-		terminalAccessory.view = self.terminalPanelButton;
-		[self.window addTitlebarAccessoryViewController:terminalAccessory];
 
 		OakAddAutoLayoutViewsToSuperview(@[ self.terminalPanelController.view ], self.window.contentView);
 		self.window.initialFirstResponder = self.textView;
@@ -1944,14 +1933,6 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	}
 }
 
-- (void)updateTerminalPanelButton
-{
-	BOOL visible = self.terminalPanelController.panelVisible;
-	self.terminalPanelButton.state = visible ? NSControlStateValueOn : NSControlStateValueOff;
-	self.terminalPanelButton.toolTip = visible ? @"Hide Terminal Panel (⌘`)" : @"Show Terminal Panel (⌘`)";
-	self.terminalPanelButton.accessibilityLabel = visible ? @"Hide Terminal Panel" : @"Show Terminal Panel";
-}
-
 - (NSString*)terminalStartDirectory
 {
 	// An explicitly opened project takes precedence over an older inferred document/startup folder.
@@ -1972,7 +1953,6 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 		[self updateTerminalTheme];
 		[self.terminalPanelController focusTerminal];
 	}
-	[self updateTerminalPanelButton];
 	[[self class] scheduleSessionBackup:self];
 }
 
@@ -2652,7 +2632,6 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(NSNumber* height = project[@"terminalPanelHeight"])
 		self.terminalPanelController.panelHeight = height.doubleValue;
 	self.terminalPanelController.panelVisible = [project[@"terminalPanelVisible"] boolValue];
-	[self updateTerminalPanelButton];
 
 	self.defaultProjectPath = project[@"projectPath"];
 	self.projectPath        = project[@"projectPath"];
