@@ -213,6 +213,24 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 		[self.window addTitlebarAccessoryViewController:_titlebarViewController];
 
 		self.terminalPanelController = [[TerminalPanelViewController alloc] initWithContentView:self.layoutView];
+		__weak DocumentWindowController* terminalOwner = self;
+		self.terminalPanelController.terminalDirectoryProvider = ^{
+			return terminalOwner.terminalStartDirectory ?: NSHomeDirectory();
+		};
+		self.terminalPanelController.detachSessionHandler = ^(NSUUID* identifier){
+			DocumentWindowController* source = terminalOwner;
+			if(!source) return;
+			DocumentWindowController* destination = [[DocumentWindowController alloc] init];
+			destination.defaultProjectPath = source.terminalStartDirectory;
+			destination.documents = @[ [OakDocumentController.sharedInstance untitledDocument] ];
+			[destination openAndSelectDocument:destination.documents.firstObject activate:YES];
+			destination.terminalPanelController.panelVisible = YES;
+			[destination.terminalPanelController takeTerminalSession:identifier fromPanel:source.terminalPanelController];
+			[destination updateTerminalTheme];
+			[destination updateTerminalPanelButton];
+			[destination showWindow:nil];
+			[destination.terminalPanelController focusTerminal];
+		};
 		NSTitlebarAccessoryViewController* terminalAccessory = [[NSTitlebarAccessoryViewController alloc] init];
 		terminalAccessory.layoutAttribute = NSLayoutAttributeRight;
 		self.terminalPanelButton = [NSButton buttonWithTitle:@"Terminal" target:self action:@selector(toggleTerminalPanel:)];
@@ -1915,7 +1933,8 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 
 - (NSString*)terminalStartDirectory
 {
-	return self.projectPath ?: self.defaultProjectPath ?: self.fileBrowser.path ?: [self.selectedDocument.path stringByDeletingLastPathComponent];
+	// An explicitly opened project takes precedence over an older inferred document/startup folder.
+	return self.defaultProjectPath ?: self.projectPath ?: self.fileBrowser.path ?: [self.selectedDocument.path stringByDeletingLastPathComponent];
 }
 
 - (IBAction)toggleTerminalPanel:(id)sender

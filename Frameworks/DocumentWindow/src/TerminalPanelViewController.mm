@@ -1,4 +1,5 @@
 #import "TerminalPanelViewController.h"
+#import "TerminalTabBarController.h"
 #import "OakSwiftUI-Swift.h"
 
 NSString* const kUserDefaultsTerminalPanelPlacementKey = @"terminalPanelPlacement";
@@ -21,6 +22,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 @interface TerminalPanelViewController () <NSSplitViewDelegate>
 @property (nonatomic) TerminalPanelSplitView* splitView;
 @property (nonatomic) OakTerminalPanelController* terminalController;
+@property (nonatomic) TerminalTabBarController* terminalTabBarController;
 @property (nonatomic) NSArray<NSColor*>* terminalColors;
 @property (nonatomic) NSView* contentView;
 @property (nonatomic) NSView* panelView;
@@ -68,18 +70,35 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	return self;
 }
 
-- (void)startTerminalInDirectory:(NSString*)directory
+- (void)prepareTerminalController
 {
 	if(!_terminalController)
 	{
 		_terminalController = [[OakTerminalPanelController alloc] init];
+		_terminalTabBarController = [[TerminalTabBarController alloc] initWithTerminalController:_terminalController];
+		__weak TerminalPanelViewController* weakSelf = self;
+		_terminalTabBarController.detachSessionHandler = ^(NSUUID* identifier){
+			if(weakSelf.detachSessionHandler) weakSelf.detachSessionHandler(identifier);
+		};
+		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
 		[_panelView removeFromSuperview];
 		_panelView = _terminalController.view;
 		[self rebuildLayout];
 	}
 	if(_terminalColors)
 		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3]];
+}
+
+- (void)startTerminalInDirectory:(NSString*)directory
+{
+	[self prepareTerminalController];
 	[_terminalController startSessionInDirectory:directory ?: NSHomeDirectory()];
+}
+
+- (void)takeTerminalSession:(NSUUID*)identifier fromPanel:(TerminalPanelViewController*)source
+{
+	[self prepareTerminalController];
+	[source.terminalController transferSessionWithIdentifier:identifier to:self.terminalController at:self.terminalController.sessionIdentifiers.count];
 }
 
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection
