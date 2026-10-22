@@ -13,10 +13,10 @@ private final class TerminalContainer: NSView {
     override func layout() {
         super.layout()
         let barHeight: CGFloat = min(23, bounds.height)
-        tabBar?.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
-        emptyLabel.frame = NSRect(x: 8, y: max(0, (bounds.height - barHeight) / 2 - 10), width: max(0, bounds.width - 16), height: 20)
+        tabBar?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: barHeight)
+        emptyLabel.frame = NSRect(x: 8, y: barHeight + max(0, (bounds.height - barHeight) / 2 - 10), width: max(0, bounds.width - 16), height: 20)
         let padding: CGFloat = 6
-        terminal?.frame = NSRect(x: padding, y: padding, width: max(32, bounds.width - 2 * padding), height: max(32, bounds.height - barHeight - 2 * padding))
+        terminal?.frame = NSRect(x: padding, y: barHeight + padding, width: max(32, bounds.width - 2 * padding), height: max(32, bounds.height - barHeight - 2 * padding))
     }
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         needsLayout = true
