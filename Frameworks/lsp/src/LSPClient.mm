@@ -146,7 +146,12 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 	BOOL _documentDiagnosticProvider;
 	BOOL _diagnosticInterFileDependencies;
 	NSString* _diagnosticIdentifier;
+	NSMutableSet<NSString*>* _diagnosticOpenURIs;
 	NSMutableDictionary<NSString*, NSNumber*>* _diagnosticGenerations;
+	NSMutableDictionary<NSString*, NSNumber*>* _diagnosticInFlightIds;
+	NSMutableSet<NSString*>* _diagnosticPendingURIs;
+	BOOL _diagnosticRefreshAll;
+	NSTimer* _diagnosticDebounceTimer;
 	NSUInteger _nextDiagnosticGeneration;
 	NSArray<NSString*>* _executeCommands;
 	NSString* _workingDirectory;
@@ -167,6 +172,9 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 - (void)openDocument:(OakDocument*)document languageId:(NSString*)languageId retryCount:(int)retryCount;
 - (void)scheduleDiagnosticsForURI:(NSString*)uri;
 - (void)scheduleAllDiagnostics;
+- (void)fireDiagnosticPull;
+- (void)resetDiagnosticState;
+- (void)armDiagnosticDebounceTimer;
 @end
 
 @implementation LSPClient
@@ -204,7 +212,10 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 		_responseCallbacks      = [NSMutableDictionary new];
 		_requestMethods         = [NSMutableDictionary new];
 		_indexingProgressTokens = [NSMutableSet new];
-		_diagnosticGenerations = [NSMutableDictionary new];
+		_diagnosticOpenURIs     = [NSMutableSet new];
+		_diagnosticGenerations  = [NSMutableDictionary new];
+		_diagnosticInFlightIds  = [NSMutableDictionary new];
+		_diagnosticPendingURIs  = [NSMutableSet new];
 
 		_stdinPipe  = [NSPipe pipe];
 		_stdoutPipe = [NSPipe pipe];
@@ -261,6 +272,7 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 				[strongSelf->_indexingProgressTokens removeAllObjects];
 				[strongSelf teardownFileWatcher];
 				[strongSelf->_fileWatchRegistrations removeAllObjects];
+				[strongSelf resetDiagnosticState];
 				[strongSelf cancelPendingCallbacks];
 				if([strongSelf->_delegate respondsToSelector:@selector(lspClientDidTerminate:)])
 					[strongSelf->_delegate lspClientDidTerminate:strongSelf];
@@ -847,8 +859,8 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 				callback(nil);
 			}
 
-			// RequestCancelled (-32800) and ContentModified (-32801) are expected, don't toast
-			if(errCode != -32800 && errCode != -32801)
+			// RequestCancelled (-32800), ContentModified (-32801), ServerCancelled (-32802) are expected, don't toast
+			if(errCode != -32800 && errCode != -32801 && errCode != -32802)
 			{
 				std::string errMsg = err.value("message", std::string("unknown error"));
 				[[NSNotificationCenter defaultCenter] postNotificationName:LSPShowMessageNotification object:self userInfo:@{
@@ -1040,39 +1052,119 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 
 - (void)scheduleAllDiagnostics
 {
-	for(NSString* uri in _diagnosticGenerations.allKeys)
-		[self scheduleDiagnosticsForURI:uri];
+	NSAssert(NSThread.isMainThread, @"scheduleAllDiagnostics must run on the main thread");
+	if(!_initialized || !_documentDiagnosticProvider || !self.running)
+		return;
+
+	_diagnosticRefreshAll = YES;
+
+	[self armDiagnosticDebounceTimer];
 }
 
 - (void)scheduleDiagnosticsForURI:(NSString*)uri
 {
-	if(!_initialized || !_documentDiagnosticProvider)
+	NSAssert(NSThread.isMainThread, @"scheduleDiagnosticsForURI: must run on the main thread");
+	if(!_initialized || !_documentDiagnosticProvider || !self.running)
 		return;
 
-	// Each edit invalidates older requests, including across close/reopen cycles.
-	NSNumber* generation = @(++_nextDiagnosticGeneration);
-	_diagnosticGenerations[uri] = generation;
+	[_diagnosticPendingURIs addObject:uri];
+	if(_diagnosticInterFileDependencies)
+		_diagnosticRefreshAll = YES;
+
+	[self armDiagnosticDebounceTimer];
+}
+
+- (void)armDiagnosticDebounceTimer
+{
+	if(_diagnosticDebounceTimer && _diagnosticDebounceTimer.isValid)
+	{
+		[_diagnosticDebounceTimer setFireDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
+		return;
+	}
+
 	__weak LSPClient* weakSelf = self;
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+	_diagnosticDebounceTimer = [NSTimer timerWithTimeInterval:0.25 repeats:NO block:^(NSTimer* timer) {
 		LSPClient* client = weakSelf;
-		if(!client || !client.initialized || !client.running || ![client->_diagnosticGenerations[uri] isEqual:generation])
+		if(!client)
 			return;
+		[client fireDiagnosticPull];
+	}];
+	[NSRunLoop.mainRunLoop addTimer:_diagnosticDebounceTimer forMode:NSRunLoopCommonModes];
+}
+
+// Timer callback: coalesces all scheduling between debounce fires into one pull set.
+- (void)fireDiagnosticPull
+{
+	NSAssert(NSThread.isMainThread, @"fireDiagnosticPull must run on the main thread");
+	if(!_initialized || !_documentDiagnosticProvider || !self.running)
+		return;
+
+	NSMutableSet<NSString*>* pullURIs = [_diagnosticPendingURIs mutableCopy];
+	if(_diagnosticRefreshAll)
+		[pullURIs unionSet:_diagnosticOpenURIs];
+	[_diagnosticPendingURIs removeAllObjects];
+	_diagnosticRefreshAll = NO;
+
+	__weak LSPClient* weakSelf = self;
+	for(NSString* uri in pullURIs)
+	{
+		if(![_diagnosticOpenURIs containsObject:uri])
+			continue;
+
+		NSNumber* inFlight = _diagnosticInFlightIds[uri];
+		if(inFlight)
+		{
+			[self cancelRequest:inFlight.intValue];
+			[_diagnosticInFlightIds removeObjectForKey:uri];
+		}
+
+		// Each pull bumps the generation; a superseded response is dropped.
+		NSNumber* generation = @(++_nextDiagnosticGeneration);
+		_diagnosticGenerations[uri] = generation;
 
 		json params = {{"textDocument", {{"uri", uri.UTF8String}}}};
-		if(client->_diagnosticIdentifier)
-			params["identifier"] = client->_diagnosticIdentifier.UTF8String;
-		// Omit previousResultId to request a full report, including an empty
-		// report that clears errors after the user fixes them.
-		[client sendRequest:@"textDocument/diagnostic" params:params callback:^(id result){
+		if(_diagnosticIdentifier)
+			params["identifier"] = _diagnosticIdentifier.UTF8String;
+
+		__block int reqId = -1;
+		reqId = [self sendRequest:@"textDocument/diagnostic" params:params callback:^(id result){
 			LSPClient* client = weakSelf;
-			if(!client || !client.initialized || ![client->_diagnosticGenerations[uri] isEqual:generation])
+			if(!client)
 				return;
-			if(![result isKindOfClass:NSDictionary.class] || ![result[@"kind"] isEqual:@"full"] || ![result[@"items"] isKindOfClass:NSArray.class])
+
+			// Only clear our own entry; a stale callback must not clear a newer request.
+			if([client->_diagnosticInFlightIds[uri] isEqual:@(reqId)])
+				[client->_diagnosticInFlightIds removeObjectForKey:uri];
+			if(!client.initialized || ![client->_diagnosticGenerations[uri] isEqual:generation])
 				return;
-			json diagnostics = {{"uri", uri.UTF8String}, {"diagnostics", [client convertToJSON:result[@"items"]]}};
-			[client handleDiagnostics:diagnostics];
+			if(![result isKindOfClass:NSDictionary.class])
+				return;
+
+			NSString* kind = result[@"kind"];
+			if([kind isEqual:@"full"] && [result[@"items"] isKindOfClass:NSArray.class])
+			{
+				json diagnostics = {{"uri", uri.UTF8String}, {"diagnostics", [client convertToJSON:result[@"items"]]}};
+				[client handleDiagnostics:diagnostics];
+			}
+			else if([kind isEqual:@"unchanged"])
+			{
+				// Intentional no-op: an unchanged report means the current marks are still valid.
+			}
 		}];
-	});
+		_diagnosticInFlightIds[uri] = @(reqId);
+	}
+}
+
+- (void)resetDiagnosticState
+{
+	NSAssert(NSThread.isMainThread, @"resetDiagnosticState must run on the main thread");
+	[_diagnosticDebounceTimer invalidate];
+	_diagnosticDebounceTimer = nil;
+	[_diagnosticOpenURIs removeAllObjects];
+	[_diagnosticPendingURIs removeAllObjects];
+	[_diagnosticGenerations removeAllObjects];
+	[_diagnosticInFlightIds removeAllObjects];
+	_diagnosticRefreshAll = NO;
 }
 
 - (void)sendInitialize
@@ -1147,6 +1239,7 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 
 - (void)openDocument:(OakDocument*)document languageId:(NSString*)languageId retryCount:(int)retryCount
 {
+	NSAssert(NSThread.isMainThread, @"openDocument:languageId:retryCount: must run on the main thread");
 	if(!_initialized)
 	{
 		if(retryCount >= 5)
@@ -1181,6 +1274,7 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 		}}
 	};
 	[self sendNotification:@"textDocument/didOpen" params:params];
+	[_diagnosticOpenURIs addObject:fileURL.absoluteString];
 	[self scheduleDiagnosticsForURI:fileURL.absoluteString];
 	if(_diagnosticInterFileDependencies)
 		[self scheduleAllDiagnostics];
@@ -1193,6 +1287,7 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 
 - (void)documentDidChange:(OakDocument*)document version:(int)version
 {
+	NSAssert(NSThread.isMainThread, @"documentDidChange:version: must run on the main thread");
 	NSString* path = document.path;
 	if(!path)
 		return;
@@ -1221,6 +1316,7 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 
 - (void)documentDidSave:(OakDocument*)document
 {
+	NSAssert(NSThread.isMainThread, @"documentDidSave: must run on the main thread");
 	NSString* path = document.path;
 	if(!path)
 		return;
@@ -1241,6 +1337,7 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 
 - (void)closeDocument:(OakDocument*)document
 {
+	NSAssert(NSThread.isMainThread, @"closeDocument: must run on the main thread");
 	NSString* path = document.path;
 	if(!path)
 		return;
@@ -1254,7 +1351,19 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 		}}
 	};
 	[self sendNotification:@"textDocument/didClose" params:params];
-	[_diagnosticGenerations removeObjectForKey:fileURL.absoluteString];
+
+	NSString* uriString = fileURL.absoluteString;
+	[_diagnosticOpenURIs removeObject:uriString];
+	[_diagnosticPendingURIs removeObject:uriString];
+
+	NSNumber* inFlight = _diagnosticInFlightIds[uriString];
+	if(inFlight)
+	{
+		[self cancelRequest:inFlight.intValue];
+		[_diagnosticInFlightIds removeObjectForKey:uriString];
+	}
+
+	[_diagnosticGenerations removeObjectForKey:uriString];
 	if(_diagnosticInterFileDependencies)
 		[self scheduleAllDiagnostics];
 }
@@ -1291,6 +1400,7 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 - (void)cancelRequest:(int)requestId
 {
 	[_responseCallbacks removeObjectForKey:@(requestId)];
+	[_requestMethods removeObjectForKey:@(requestId)];
 
 	json params = {{"id", requestId}};
 	[self sendNotification:@"$/cancelRequest" params:params];
@@ -2312,12 +2422,29 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 	if(_fsEventsObserver)
 		[FSEventsManager.sharedInstance removeObserver:_fsEventsObserver];
 
+	// Diagnostic state is main-thread-confined: invalidate the debounce timer on
+	// its owning thread, then drop the collections without asserting.
+	NSTimer* diagnosticTimer = _diagnosticDebounceTimer;
+	if(diagnosticTimer)
+	{
+		if([NSThread isMainThread])
+			[diagnosticTimer invalidate];
+		else
+			dispatch_async(dispatch_get_main_queue(), ^{ [diagnosticTimer invalidate]; });
+	}
+	_diagnosticDebounceTimer = nil;
+	[_diagnosticOpenURIs removeAllObjects];
+	[_diagnosticPendingURIs removeAllObjects];
+	[_diagnosticGenerations removeAllObjects];
+	[_diagnosticInFlightIds removeAllObjects];
+	_diagnosticRefreshAll = NO;
+
 	[_responseCallbacks removeAllObjects];
 }
 
 - (void)shutdown
 {
-	[_diagnosticGenerations removeAllObjects];
+	[self resetDiagnosticState];
 	if(!_task.isRunning)
 		return;
 

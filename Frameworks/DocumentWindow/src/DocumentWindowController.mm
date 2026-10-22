@@ -1,5 +1,6 @@
 #import "DocumentWindowController.h"
 #import "ProjectLayoutView.h"
+#import "TerminalPanelViewController.h"
 #import "SelectGrammarViewController.h"
 #import "OakRunCommandWindowController.h"
 #import <document/OakDocument.h>
@@ -88,6 +89,8 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 }
 @property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
 @property (nonatomic) ProjectLayoutView*          layoutView;
+@property (nonatomic) TerminalPanelViewController* terminalPanelController;
+@property (nonatomic) NSButton* terminalPanelButton;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -165,7 +168,7 @@ namespace
 	}
 }
 
-static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
+static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontScaleFactor", @"textView.themeUUID", @"selectedDocument.fileType", @"selectedDocument", @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
 
 @implementation DocumentWindowController
 + (KVDB*)sharedProjectStateDB
@@ -207,11 +210,45 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		_titlebarViewController.fullScreenMinHeight = NSHeight(self.tabBarView.frame);
 		[self.window addTitlebarAccessoryViewController:_titlebarViewController];
 
-		OakAddAutoLayoutViewsToSuperview(@[ self.layoutView ], self.window.contentView);
+		self.terminalPanelController = [[TerminalPanelViewController alloc] initWithContentView:self.layoutView];
+		__weak DocumentWindowController* terminalOwner = self;
+		self.terminalPanelController.terminalDirectoryProvider = ^{
+			return terminalOwner.terminalStartDirectory ?: NSHomeDirectory();
+		};
+		self.terminalPanelController.openTerminalFile = ^(NSURL* url, NSInteger line, NSInteger column){
+			NSMutableDictionary* item = [@{ @"path": url.path } mutableCopy];
+			if(line > 0) item[@"selectionString"] = [NSString stringWithFormat:@"%ld:%ld", (long)line, (long)MAX(1, column)];
+			[terminalOwner openItems:@[ item ] closingOtherTabs:NO activate:YES];
+		};
+		self.terminalPanelController.detachSessionHandler = ^(NSUUID* identifier){
+			DocumentWindowController* source = terminalOwner;
+			if(!source) return;
+			DocumentWindowController* destination = [[DocumentWindowController alloc] init];
+			destination.defaultProjectPath = source.terminalStartDirectory;
+			destination.documents = @[ [OakDocumentController.sharedInstance untitledDocument] ];
+			[destination openAndSelectDocument:destination.documents.firstObject activate:YES];
+			destination.terminalPanelController.panelVisible = YES;
+			[destination.terminalPanelController takeTerminalSession:identifier fromPanel:source.terminalPanelController];
+			[destination updateTerminalTheme];
+			[destination updateTerminalPanelButton];
+			[destination showWindow:nil];
+			[destination.terminalPanelController focusTerminal];
+		};
+		NSTitlebarAccessoryViewController* terminalAccessory = [[NSTitlebarAccessoryViewController alloc] init];
+		terminalAccessory.layoutAttribute = NSLayoutAttributeRight;
+		self.terminalPanelButton = [NSButton buttonWithTitle:@"Terminal" target:self action:@selector(toggleTerminalPanel:)];
+		self.terminalPanelButton.buttonType = NSButtonTypePushOnPushOff;
+		self.terminalPanelButton.frame = NSMakeRect(0, 0, 90, 24);
+		self.terminalPanelButton.toolTip = @"Show Terminal Panel (⌘`)";
+		self.terminalPanelButton.accessibilityLabel = @"Show Terminal Panel";
+		terminalAccessory.view = self.terminalPanelButton;
+		[self.window addTitlebarAccessoryViewController:terminalAccessory];
+
+		OakAddAutoLayoutViewsToSuperview(@[ self.terminalPanelController.view ], self.window.contentView);
 		self.window.initialFirstResponder = self.textView;
 
-		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view": self.layoutView }]];
-		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view": self.layoutView }]];
+		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view": self.terminalPanelController.view }]];
+		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view": self.terminalPanelController.view }]];
 
 		_arrayController = [[NSArrayController alloc] init];
 		[_arrayController bind:NSContentBinding toObject:self withKeyPath:@"documents" options:nil];
@@ -315,6 +352,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 - (void)windowWillClose:(NSNotification*)aNotification
 {
+	[self.terminalPanelController stopTerminal];
 	if((([self.window styleMask] & NSWindowStyleMaskFullScreen) != NSWindowStyleMaskFullScreen) && !self.window.isZoomed)
 		[NSUserDefaults.standardUserDefaults setObject:NSStringFromRect([self windowFrame]) forKey:@"DocumentControllerWindowFrame"];
 
@@ -612,6 +650,9 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 - (BOOL)windowShouldClose:(id)sender
 {
+	if(![self.terminalPanelController confirmTerminalClose])
+		return NO;
+
 	if(!self.htmlOutputInWindow && _htmlOutputView.isRunningCommand)
 	{
 		[_htmlOutputView stopLoadingWithUserInteraction:YES completionHandler:^(BOOL didStop){
@@ -716,6 +757,12 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 + (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender
 {
+	for(DocumentWindowController* controller in SortedControllers())
+	{
+		if(![controller.terminalPanelController confirmTerminalClose])
+			return NSTerminateCancel;
+	}
+
 	NSMutableArray<DocumentWindowController*>* controllers = [NSMutableArray array];
 	NSMutableArray<OakDocument*>* documents = [NSMutableArray array];
 	for(DocumentWindowController* controller in SortedControllers())
@@ -771,6 +818,12 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 - (void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)anObject change:(NSDictionary*)change context:(void*)context
 {
+	if([keyPath isEqualToString:@"textView.font"] || [keyPath isEqualToString:@"textView.fontScaleFactor"] || [keyPath isEqualToString:@"textView.themeUUID"] || [keyPath isEqualToString:@"selectedDocument.fileType"] || [keyPath isEqualToString:@"selectedDocument"])
+	{
+		// Theme notifications can arrive while OakTextView is replacing its document view.
+		dispatch_async(dispatch_get_main_queue(), ^{ [self updateTerminalTheme]; });
+	}
+
 	OakDocument* document = self.selectedDocument;
 	if([keyPath isEqualToString:@"selectedDocument.path"] || [keyPath isEqualToString:@"selectedDocument.displayName"])
 	{
@@ -1873,6 +1926,61 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	[[self class] scheduleSessionBackup:self];
 }
 
+- (void)updateTerminalTheme
+{
+	NSFont* font = self.textView.font;
+	if(font)
+		[self.terminalPanelController applyTerminalFont:[NSFont fontWithDescriptor:font.fontDescriptor size:font.pointSize * self.textView.fontScaleFactor]];
+	if(theme_ptr theme = self.textView.theme)
+	{
+		auto const& styles = theme->styles_for_scope(scope::scope_t(to_s(self.selectedDocument.fileType ?: @"")));
+		NSColor* foreground = [NSColor colorWithCGColor:styles.foreground() ?: theme->foreground()];
+		[self.terminalPanelController applyTerminalBackground:[NSColor colorWithCGColor:theme->background(to_s(self.selectedDocument.fileType ?: @""))]
+			foreground:foreground
+			caret:styles.caret() ? [NSColor colorWithCGColor:styles.caret()] : foreground
+			selection:styles.selection() ? [NSColor colorWithCGColor:styles.selection()] : NSColor.selectedTextBackgroundColor];
+	}
+}
+
+- (void)updateTerminalPanelButton
+{
+	BOOL visible = self.terminalPanelController.panelVisible;
+	self.terminalPanelButton.state = visible ? NSControlStateValueOn : NSControlStateValueOff;
+	self.terminalPanelButton.toolTip = visible ? @"Hide Terminal Panel (⌘`)" : @"Show Terminal Panel (⌘`)";
+	self.terminalPanelButton.accessibilityLabel = visible ? @"Hide Terminal Panel" : @"Show Terminal Panel";
+}
+
+- (NSString*)terminalStartDirectory
+{
+	// An explicitly opened project takes precedence over an older inferred document/startup folder.
+	return self.defaultProjectPath ?: self.projectPath ?: self.fileBrowser.path ?: [self.selectedDocument.path stringByDeletingLastPathComponent];
+}
+
+- (IBAction)toggleTerminalPanel:(id)sender
+{
+	NSResponder* responder = self.window.firstResponder;
+	if(self.terminalPanelController.panelVisible && [responder isKindOfClass:NSView.class] &&
+	   [(NSView*)responder isDescendantOf:self.terminalPanelController.view] &&
+	   ![(NSView*)responder isDescendantOf:self.layoutView])
+		[self.window makeFirstResponder:self.textView];
+	self.terminalPanelController.panelVisible = !self.terminalPanelController.panelVisible;
+	if(self.terminalPanelController.panelVisible)
+	{
+		[self.terminalPanelController startTerminalInDirectory:self.terminalStartDirectory];
+		[self updateTerminalTheme];
+		[self.terminalPanelController focusTerminal];
+	}
+	[self updateTerminalPanelButton];
+	[[self class] scheduleSessionBackup:self];
+}
+
+- (IBAction)takeTerminalPanelPositionFrom:(NSMenuItem*)sender
+{
+	self.terminalPanelController.panelPosition = sender.representedObject;
+	[NSUserDefaults.standardUserDefaults setObject:self.terminalPanelController.panelPosition forKey:kUserDefaultsTerminalPanelPlacementKey];
+	[[self class] scheduleSessionBackup:self];
+}
+
 - (IBAction)toggleFileBrowser:(id)sender    { self.fileBrowserVisible = !self.fileBrowserVisible; }
 
 - (id)fileBrowserHistory                    { return self.fileBrowser.sessionState ?: _fileBrowserHistory; }
@@ -2269,7 +2377,11 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	};
 
 	BOOL active = YES;
-	if([menuItem action] == @selector(toggleFileBrowser:))
+	if([menuItem action] == @selector(toggleTerminalPanel:))
+		[menuItem setTitle:self.terminalPanelController.panelVisible ? @"Hide Terminal Panel" : @"Show Terminal Panel"];
+	else if([menuItem action] == @selector(takeTerminalPanelPositionFrom:))
+		menuItem.state = [self.terminalPanelController.panelPosition isEqual:menuItem.representedObject] ? NSControlStateValueOn : NSControlStateValueOff;
+	else if([menuItem action] == @selector(toggleFileBrowser:))
 		[menuItem setTitle:self.fileBrowserVisible ? @"Hide File Browser" : @"Show File Browser"];
 	else if([menuItem action] == @selector(toggleHTMLOutput:))
 	{
@@ -2531,6 +2643,15 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(NSString* htmlOutputSize = project[@"htmlOutputSize"])
 		self.htmlOutputSize = NSSizeFromString(htmlOutputSize);
 
+	if(NSString* position = project[@"terminalPanelPosition"])
+		self.terminalPanelController.panelPosition = position;
+	if(NSNumber* width = project[@"terminalPanelWidth"])
+		self.terminalPanelController.panelWidth = width.doubleValue;
+	if(NSNumber* height = project[@"terminalPanelHeight"])
+		self.terminalPanelController.panelHeight = height.doubleValue;
+	self.terminalPanelController.panelVisible = [project[@"terminalPanelVisible"] boolValue];
+	[self updateTerminalPanelButton];
+
 	self.defaultProjectPath = project[@"projectPath"];
 	self.projectPath        = project[@"projectPath"];
 	self.fileBrowserHistory = project[@"archivedFileBrowserState"] ?: project[@"fileBrowserState"];
@@ -2575,6 +2696,10 @@ static NSUInteger DisableSessionSavingCount = 0;
 	self.selectedTabIndex = selectedTabIndex;
 
 	[self openAndSelectDocument:documents[selectedTabIndex] activate:YES];
+
+	// Start the shell once the project/document context exists, so it opens in the window's folder.
+	if(self.terminalPanelController.panelVisible)
+		[self.terminalPanelController startTerminalInDirectory:self.terminalStartDirectory];
 }
 
 - (NSDictionary*)sessionInfoIncludingUntitledDocuments:(BOOL)includeUntitled
@@ -2594,6 +2719,10 @@ static NSUInteger DisableSessionSavingCount = 0;
 		res[@"windowFrame"] = [self.window stringWithSavedFrame];
 
 	res[@"miniaturized"]       = @([self.window isMiniaturized]);
+	res[@"terminalPanelVisible"] = @(self.terminalPanelController.panelVisible);
+	res[@"terminalPanelPosition"] = self.terminalPanelController.panelPosition;
+	res[@"terminalPanelWidth"] = @(self.terminalPanelController.panelWidth);
+	res[@"terminalPanelHeight"] = @(self.terminalPanelController.panelHeight);
 	res[@"htmlOutputSize"]     = NSStringFromSize(self.htmlOutputSize);
 	res[@"fileBrowserVisible"] = @(self.fileBrowserVisible);
 	res[@"fileBrowserWidth"]   = @(self.fileBrowserWidth);
@@ -2637,7 +2766,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 	if(controllers.count == 1)
 	{
 		DocumentWindowController* controller = controllers.firstObject;
-		if(!controller.projectPath && !controller.fileBrowserVisible && controller.documents.count == 1 && is_disposable(controller.selectedDocument))
+		if(!controller.projectPath && !controller.fileBrowserVisible && !controller.terminalPanelController.panelVisible && controller.documents.count == 1 && is_disposable(controller.selectedDocument))
 			controllers = nil;
 	}
 
