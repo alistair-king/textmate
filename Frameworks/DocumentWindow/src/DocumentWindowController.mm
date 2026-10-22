@@ -217,6 +217,11 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 		self.terminalPanelController.terminalDirectoryProvider = ^{
 			return terminalOwner.terminalStartDirectory ?: NSHomeDirectory();
 		};
+		self.terminalPanelController.openTerminalFile = ^(NSURL* url, NSInteger line, NSInteger column){
+			NSMutableDictionary* item = [@{ @"path": url.path } mutableCopy];
+			if(line > 0) item[@"selectionString"] = [NSString stringWithFormat:@"%ld:%ld", (long)line, (long)MAX(1, column)];
+			[terminalOwner openItems:@[ item ] closingOtherTabs:NO activate:YES];
+		};
 		self.terminalPanelController.detachSessionHandler = ^(NSUUID* identifier){
 			DocumentWindowController* source = terminalOwner;
 			if(!source) return;

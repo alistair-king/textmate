@@ -14,6 +14,7 @@ extern NSString* const kUserDefaultsTerminalPanelHeightKey;
 @property (nonatomic) CGFloat panelHeight;
 - (void)takeTerminalSession:(NSUUID*)identifier fromPanel:(TerminalPanelViewController*)source;
 @property (nonatomic, copy) void (^detachSessionHandler)(NSUUID*);
+@property (nonatomic, copy) void (^openTerminalFile)(NSURL*, NSInteger, NSInteger);
 - (void)startTerminalInDirectory:(NSString*)directory;
 - (void)focusTerminal;
 - (void)applyTerminalFont:(NSFont*)font;

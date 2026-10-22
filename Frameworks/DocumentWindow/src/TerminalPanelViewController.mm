@@ -82,6 +82,9 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 			if(weakSelf.detachSessionHandler) weakSelf.detachSessionHandler(identifier);
 		};
 		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
+		_terminalController.openFile = ^(NSURL* url, NSInteger line, NSInteger column){
+			if(weakSelf.openTerminalFile) weakSelf.openTerminalFile(url, line, column);
+		};
 		[_panelView removeFromSuperview];
 		_panelView = _terminalController.view;
 		[self rebuildLayout];

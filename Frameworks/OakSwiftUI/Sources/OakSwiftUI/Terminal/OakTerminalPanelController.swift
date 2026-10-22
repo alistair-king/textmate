@@ -15,7 +15,8 @@ private final class TerminalContainer: NSView {
         let barHeight: CGFloat = min(23, bounds.height)
         tabBar?.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
         emptyLabel.frame = NSRect(x: 8, y: max(0, (bounds.height - barHeight) / 2 - 10), width: max(0, bounds.width - 16), height: 20)
-        terminal?.frame = NSRect(x: 0, y: 0, width: max(32, bounds.width), height: max(32, bounds.height - barHeight))
+        let padding: CGFloat = 6
+        terminal?.frame = NSRect(x: padding, y: padding, width: max(32, bounds.width - 2 * padding), height: max(32, bounds.height - barHeight - 2 * padding))
     }
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         needsLayout = true
@@ -97,6 +98,7 @@ private final class TerminalContainer: NSView {
         destination.nextID += 1
         destination.started = true
         session.terminal.processDelegate = destination
+        (session.terminal as? FileLinkTerminalView)?.owner = destination
         destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title), at: min(max(0, insertionIndex), destination.sessions.count))
         destination.applyFont(destination.terminalFont)
         destination.updateTerminalColors()
@@ -109,6 +111,7 @@ private final class TerminalContainer: NSView {
         guard confirmClose(terminals: closing.map(\.terminal)) else { return }
         for session in closing { removeSession(id: session.id) }
     }
+    @objc public var openFile: ((URL, Int, Int) -> Void)?
     @objc public var workingDirectoryProvider: (() -> String)?
     private var directory = NSHomeDirectory()
     private var terminalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -176,7 +179,12 @@ private final class TerminalContainer: NSView {
         let requestedDirectory = workingDirectoryProvider?() ?? directory
         var isDirectory: ObjCBool = false
         let launchDirectory = FileManager.default.fileExists(atPath: requestedDirectory, isDirectory: &isDirectory) && isDirectory.boolValue ? requestedDirectory : NSHomeDirectory()
-        let terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
+        let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
+        terminal.owner = self
+        terminal.launchDirectory = launchDirectory
+        terminal.setProcessOutputHandler { [weak terminal] in
+            DispatchQueue.main.async { terminal?.scheduleOutputCapture() }
+        }
         terminal.font = terminalFont
         terminal.processDelegate = self
         terminal.setAccessibilityLabel("Terminal")
@@ -208,6 +216,7 @@ private final class TerminalContainer: NSView {
     /// Clears the display and scrollback, then has the shell redraw its prompt.
     @objc public func clearTerminal() {
         guard let terminal else { return }
+        (terminal as? FileLinkTerminalView)?.clearFileLinkHistory()
         terminal.feed(text: "\u{1b}[2J\u{1b}[3J")
         // Only the shell can reprint its prompt; Ctrl+L asks it to redraw at the top.
         terminal.send(txt: "\u{0c}")
@@ -305,7 +314,15 @@ private final class TerminalContainer: NSView {
         sessions[index].title = title.isEmpty ? "Terminal \(sessions[index].id)" : String(title.prefix(120))
         rebuildTabs()
     }
-    public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        guard let terminal = source as? FileLinkTerminalView, let directory else { return }
+        if let url = URL(string: directory), url.isFileURL,
+           url.host == nil || url.host == "" || url.host == "localhost" || url.host == ProcessInfo.processInfo.hostName {
+            terminal.reportedDirectory = url.path
+        } else if directory.hasPrefix("/") {
+            terminal.reportedDirectory = directory
+        }
+    }
     public func processTerminated(source: TerminalView, exitCode: Int32?) {
         guard let session = sessions.first(where: { $0.terminal === source }) else { return }
         removeSession(id: session.id)

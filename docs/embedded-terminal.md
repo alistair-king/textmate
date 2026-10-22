@@ -17,3 +17,9 @@ SwiftTerm 1.99.1 is pinned in Frameworks/OakSwiftUI/Package.swift and Package.re
 The terminal bridge is OakTerminalPanelController. TerminalPanelViewController owns the bridge independently of its position/visibility, and DocumentWindowController supplies the initial directory and handles close/quit checks.
 
 Terminal sessions follow the active editor’s font family, size, and zoom level. Font changes update all tabs, including hidden sessions; new and transferred sessions use the destination editor’s font.
+
+## Opening files from terminal output
+
+Hold Command to underline a detected local file, then Command-click to open it in the same TextMate window. Existing editor tabs are reused. References such as `src/main.swift:42:7` jump to the indicated line and column. Absolute paths, `~/` paths, quoted paths with spaces, and explicit `file://` terminal hyperlinks are supported. Ordinary clicks still select terminal text, and web hyperlinks retain their normal behaviour.
+
+Relative paths use the session's shell working directory (queried from macOS, with OSC 7 directory reports as a fallback). Recent output retains its observed directory when the shell changes directories. This is best-effort for old output: resizing/reflow, cleared history, or multiple directory changes within a single output batch can lose that context. Explicit absolute file hyperlinks are unambiguous. Remote files are not downloaded, and plain-path detection is disabled in alternate-screen applications.
