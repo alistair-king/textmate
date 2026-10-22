@@ -1,4 +1,5 @@
 #import "TerminalTabBarController.h"
+#if HAVE_OAK_SWIFTUI
 #import "OakSwiftUI-Swift.h"
 #import <OakTabBarView/OakTabBarView.h>
 
@@ -119,3 +120,4 @@
 }
 - (void)closeTabsFromMenu:(NSMenuItem*)sender { [self.controller closeSessionsWithIdentifiers:sender.representedObject]; }
 @end
+#endif

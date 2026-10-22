@@ -1931,11 +1931,13 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	NSFont* font = self.textView.font;
 	if(font)
 		[self.terminalPanelController applyTerminalFont:[NSFont fontWithDescriptor:font.fontDescriptor size:font.pointSize * self.textView.fontScaleFactor]];
+	if(!self.selectedDocument.fileType) // styles_for_scope ASSERTs on an empty scope
+		return;
 	if(theme_ptr theme = self.textView.theme)
 	{
-		auto const& styles = theme->styles_for_scope(scope::scope_t(to_s(self.selectedDocument.fileType ?: @"")));
+		auto const& styles = theme->styles_for_scope(scope::scope_t(to_s(self.selectedDocument.fileType)));
 		NSColor* foreground = [NSColor colorWithCGColor:styles.foreground() ?: theme->foreground()];
-		[self.terminalPanelController applyTerminalBackground:[NSColor colorWithCGColor:theme->background(to_s(self.selectedDocument.fileType ?: @""))]
+		[self.terminalPanelController applyTerminalBackground:[NSColor colorWithCGColor:theme->background(to_s(self.selectedDocument.fileType))]
 			foreground:foreground
 			caret:styles.caret() ? [NSColor colorWithCGColor:styles.caret()] : foreground
 			selection:styles.selection() ? [NSColor colorWithCGColor:styles.selection()] : NSColor.selectedTextBackgroundColor];
@@ -2403,7 +2405,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	else if([menuItem action] == @selector(revealFileInProject:) || [menuItem action] == @selector(revealFileInProjectByExpandingAncestors:))
 	{
 		active = self.selectedDocument.path != nil;
-		[menuItem setDynamicTitle:active ? [NSString stringWithFormat:@"Select “%@”", self.selectedDocument.displayName] : @"Select Document"];
+		[menuItem setDynamicTitle:active ? [NSString stringWithFormat:@"Show “%@” in File Browser", self.selectedDocument.displayName] : @"Show in File Browser"];
 	}
 	else if([menuItem action] == @selector(goToProjectFolder:))
 		active = self.projectPath != nil;
