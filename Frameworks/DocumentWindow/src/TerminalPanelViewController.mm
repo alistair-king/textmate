@@ -40,7 +40,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 + (void)initialize
 {
 	[NSUserDefaults.standardUserDefaults registerDefaults:@{
-		kUserDefaultsTerminalPanelPlacementKey: @"right",
+		kUserDefaultsTerminalPanelPlacementKey: @"bottom",
 		kUserDefaultsTerminalPanelWidthKey:     @320,
 		kUserDefaultsTerminalPanelHeightKey:    @220,
 	}];
@@ -52,7 +52,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	{
 		_contentView = contentView;
 		NSString* placement = [NSUserDefaults.standardUserDefaults stringForKey:kUserDefaultsTerminalPanelPlacementKey];
-		_panelPosition = [@[@"left", @"right", @"bottom"] containsObject:placement] ? placement : @"right";
+		_panelPosition = [@[@"left", @"right", @"bottom"] containsObject:placement] ? placement : @"bottom";
 		_panelWidth    = MAX(120, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelWidthKey]);
 		_panelHeight   = MAX(100, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelHeightKey]);
 		_splitView = [[TerminalPanelSplitView alloc] initWithFrame:NSZeroRect];
