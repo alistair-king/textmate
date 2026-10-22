@@ -74,7 +74,7 @@ brew install ninja cmake
 ## Setup
 
 ```sh
-git clone --recursive https://github.com/tectiv3/textmate.git
+git clone --recursive https://github.com/alistair-king/textmate.git
 cd textmate
 make run
 ```
