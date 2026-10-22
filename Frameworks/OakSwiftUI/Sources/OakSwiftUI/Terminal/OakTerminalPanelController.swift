@@ -98,6 +98,7 @@ private final class TerminalContainer: NSView {
         destination.started = true
         session.terminal.processDelegate = destination
         destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title), at: min(max(0, insertionIndex), destination.sessions.count))
+        destination.applyFont(destination.terminalFont)
         destination.updateTerminalColors()
         destination.selectSession(id: newID)
         destination.focusTerminal()
@@ -110,6 +111,15 @@ private final class TerminalContainer: NSView {
     }
     @objc public var workingDirectoryProvider: (() -> String)?
     private var directory = NSHomeDirectory()
+    private var terminalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+
+    @objc public func applyFont(_ font: NSFont) {
+        terminalFont = font
+        for session in sessions where session.terminal.font != font {
+            session.terminal.font = font
+        }
+    }
+
     private var started = false
     private var themeColors: (background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor)?
 
@@ -167,7 +177,7 @@ private final class TerminalContainer: NSView {
         var isDirectory: ObjCBool = false
         let launchDirectory = FileManager.default.fileExists(atPath: requestedDirectory, isDirectory: &isDirectory) && isDirectory.boolValue ? requestedDirectory : NSHomeDirectory()
         let terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
-        terminal.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        terminal.font = terminalFont
         terminal.processDelegate = self
         terminal.setAccessibilityLabel("Terminal")
         let id = nextID

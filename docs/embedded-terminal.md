@@ -1,6 +1,6 @@
 # Embedded terminal
 
-Show the panel using the Terminal title-bar button, View → Show Terminal Panel, or Control–Option–Command–A. Choose its edge under View → Terminal Panel Position. The panel now contains a SwiftTerm terminal. The edge and size last chosen are shared by all windows, and restored windows reopen with their own saved state.
+Show the panel using the Terminal title-bar button, View → Show Terminal Panel, or Command–`. Choose its edge under View → Terminal Panel Position. The panel now contains a SwiftTerm terminal. The edge and size last chosen are shared by all windows, and restored windows reopen with their own saved state.
 
 Each window starts one login shell on first use, using the account's configured shell. It starts in the project folder, the file browser's root, the current document's folder, or the home folder when none is available. Opening another document does not change an existing shell's directory.
 
@@ -15,3 +15,5 @@ Closing a window or quitting checks for foreground or background child processes
 SwiftTerm 1.99.1 is pinned in Frameworks/OakSwiftUI/Package.swift and Package.resolved. It requires Swift 6.2 or later. `make debug` and `make release` build the Swift component before the application. The first build downloads Swift package dependencies. TerminalThirdPartyLicenses.txt is included in the application resources.
 
 The terminal bridge is OakTerminalPanelController. TerminalPanelViewController owns the bridge independently of its position/visibility, and DocumentWindowController supplies the initial directory and handles close/quit checks.
+
+Terminal sessions follow the active editor’s font family, size, and zoom level. Font changes update all tabs, including hidden sessions; new and transferred sessions use the destination editor’s font.
