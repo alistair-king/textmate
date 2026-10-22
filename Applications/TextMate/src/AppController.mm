@@ -216,7 +216,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 						{ @"Replace All in Selection",    @selector(replaceAllInSelection:),        @"G", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagControl },
 						{ /* -------- */ },
 						{ @"Use Selection for Find",      @selector(copySelectionToFindPboard:),    @"e"   },
-						{ @"Use Selection for Replace",   @selector(copySelectionToReplacePboard:), @"E"   },
+						{ @"Use Selection for Replace",   @selector(copySelectionToReplacePboard:)         },
 					}
 				},
 				{ @"Spelling",
@@ -400,7 +400,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 				{ @"Forward",          @selector(goForward:)                      },
 				{ @"Enclosing Folder", @selector(goToParentFolder:),       .key = NSUpArrowFunctionKey },
 				{ /* -------- */ },
-				{ @"Select Document",  @selector(revealFileInProject:),    @"r", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagControl },
+				{ @"Show in File Browser", @selector(revealFileInProject:),     @"E"   },
 				{ @"Select None",      @selector(deselectAll:),            @"A"   },
 				{ /* -------- */ },
 				{ @"Project Folder",   @selector(goToProjectFolder:),      @"P"   },

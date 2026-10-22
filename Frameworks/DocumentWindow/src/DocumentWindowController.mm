@@ -2405,7 +2405,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	else if([menuItem action] == @selector(revealFileInProject:) || [menuItem action] == @selector(revealFileInProjectByExpandingAncestors:))
 	{
 		active = self.selectedDocument.path != nil;
-		[menuItem setDynamicTitle:active ? [NSString stringWithFormat:@"Select “%@”", self.selectedDocument.displayName] : @"Select Document"];
+		[menuItem setDynamicTitle:active ? [NSString stringWithFormat:@"Show “%@” in File Browser", self.selectedDocument.displayName] : @"Show in File Browser"];
 	}
 	else if([menuItem action] == @selector(goToProjectFolder:))
 		active = self.projectPath != nil;
