@@ -262,3 +262,31 @@ import Darwin
     #expect(first.processDelegate === target)
     #expect(target.sessionIdentifiers.first == id)
 }
+
+@MainActor
+@Test func terminalFontFollowsEditorAcrossSessions() throws {
+    _ = NSApplication.shared
+    let controller = OakTerminalPanelController()
+    let destination = OakTerminalPanelController()
+    defer { controller.stopSession(); destination.stopSession() }
+    let initialFont = try #require(NSFont(name: "Menlo", size: 15))
+    let updatedFont = try #require(NSFont(name: "Monaco", size: 18))
+    controller.applyFont(initialFont)
+    controller.startSession(inDirectory: NSTemporaryDirectory())
+    let first = try #require(controller.terminal)
+    let pid = first.process.shellPid
+    #expect(first.font == initialFont)
+    controller.newTerminal()
+    let second = try #require(controller.terminal)
+    controller.applyFont(updatedFont)
+    #expect(first.font == updatedFont)
+    #expect(second.font == updatedFont)
+    #expect(first.process.shellPid == pid)
+    controller.newTerminal()
+    #expect(controller.terminal?.font == updatedFont)
+    destination.applyFont(initialFont)
+    controller.transferSession(identifier: controller.sessionIdentifiers[0], to: destination, at: 0)
+    #expect(destination.terminal === first)
+    #expect(first.font == initialFont)
+    #expect(first.process.shellPid == pid)
+}

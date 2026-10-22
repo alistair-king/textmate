@@ -24,6 +24,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 @property (nonatomic) OakTerminalPanelController* terminalController;
 @property (nonatomic) TerminalTabBarController* terminalTabBarController;
 @property (nonatomic) NSArray<NSColor*>* terminalColors;
+@property (nonatomic) NSFont* terminalFont;
 @property (nonatomic) NSView* contentView;
 @property (nonatomic) NSView* panelView;
 @property (nonatomic) BOOL adjustingLayout;
@@ -85,6 +86,8 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		_panelView = _terminalController.view;
 		[self rebuildLayout];
 	}
+	if(_terminalFont)
+		[_terminalController applyFont:_terminalFont];
 	if(_terminalColors)
 		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3]];
 }
@@ -105,6 +108,12 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 {
 	self.terminalColors = @[ background, foreground, caret, selection ];
 	[_terminalController applyThemeWithBackground:background foreground:foreground caret:caret selection:selection];
+}
+
+- (void)applyTerminalFont:(NSFont*)font
+{
+	self.terminalFont = font;
+	[_terminalController applyFont:font];
 }
 
 - (void)focusTerminal { [_terminalController focusTerminal]; }

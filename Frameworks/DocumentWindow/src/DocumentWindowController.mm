@@ -168,7 +168,7 @@ namespace
 	}
 }
 
-static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDocument.fileType", @"selectedDocument", @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
+static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontScaleFactor", @"textView.themeUUID", @"selectedDocument.fileType", @"selectedDocument", @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
 
 @implementation DocumentWindowController
 + (KVDB*)sharedProjectStateDB
@@ -234,7 +234,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 		self.terminalPanelButton = [NSButton buttonWithTitle:@"Terminal" target:self action:@selector(toggleTerminalPanel:)];
 		self.terminalPanelButton.buttonType = NSButtonTypePushOnPushOff;
 		self.terminalPanelButton.frame = NSMakeRect(0, 0, 90, 24);
-		self.terminalPanelButton.toolTip = @"Show Terminal Panel (⌃⌥⌘A)";
+		self.terminalPanelButton.toolTip = @"Show Terminal Panel (⌘`)";
 		self.terminalPanelButton.accessibilityLabel = @"Show Terminal Panel";
 		terminalAccessory.view = self.terminalPanelButton;
 		[self.window addTitlebarAccessoryViewController:terminalAccessory];
@@ -813,7 +813,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 
 - (void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)anObject change:(NSDictionary*)change context:(void*)context
 {
-	if([keyPath isEqualToString:@"textView.themeUUID"] || [keyPath isEqualToString:@"selectedDocument.fileType"] || [keyPath isEqualToString:@"selectedDocument"])
+	if([keyPath isEqualToString:@"textView.font"] || [keyPath isEqualToString:@"textView.fontScaleFactor"] || [keyPath isEqualToString:@"textView.themeUUID"] || [keyPath isEqualToString:@"selectedDocument.fileType"] || [keyPath isEqualToString:@"selectedDocument"])
 	{
 		// Theme notifications can arrive while OakTextView is replacing its document view.
 		dispatch_async(dispatch_get_main_queue(), ^{ [self updateTerminalTheme]; });
@@ -1923,6 +1923,9 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 
 - (void)updateTerminalTheme
 {
+	NSFont* font = self.textView.font;
+	if(font)
+		[self.terminalPanelController applyTerminalFont:[NSFont fontWithDescriptor:font.fontDescriptor size:font.pointSize * self.textView.fontScaleFactor]];
 	if(theme_ptr theme = self.textView.theme)
 	{
 		auto const& styles = theme->styles_for_scope(scope::scope_t(to_s(self.selectedDocument.fileType ?: @"")));
@@ -1938,7 +1941,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.themeUUID", @"selectedDo
 {
 	BOOL visible = self.terminalPanelController.panelVisible;
 	self.terminalPanelButton.state = visible ? NSControlStateValueOn : NSControlStateValueOff;
-	self.terminalPanelButton.toolTip = visible ? @"Hide Terminal Panel (⌃⌥⌘A)" : @"Show Terminal Panel (⌃⌥⌘A)";
+	self.terminalPanelButton.toolTip = visible ? @"Hide Terminal Panel (⌘`)" : @"Show Terminal Panel (⌘`)";
 	self.terminalPanelButton.accessibilityLabel = visible ? @"Hide Terminal Panel" : @"Show Terminal Panel";
 }
 
