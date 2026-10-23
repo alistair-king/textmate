@@ -265,5 +265,65 @@ class MCPTests(unittest.TestCase):
             self.assertNotIn(environment["TM_CONTEXT_TOKEN"], process.stdout)
 
 
+    def test_claude_launcher_arguments_connection_and_credentials(self):
+        launcher = str(Path(EXECUTABLE).with_name("tm-claude"))
+        with tempfile.TemporaryDirectory(prefix="tm-claude-", dir="/tmp") as directory:
+            app = Path(directory) / 'app "quoted" 😀'
+            app.mkdir()
+            shutil.copy2(EXECUTABLE, app / "textmate-mcp")
+            shutil.copy2(launcher, app / "tm-claude")
+            stub = Path(directory) / "claude-stub"
+            stub.write_text("#!" + sys.executable + "\n" +
+                "import json, os, subprocess, sys\n" +
+                "arguments = sys.argv[1:]\n" +
+                "config = json.loads(arguments[arguments.index('--mcp-config')+1])['mcpServers']['textmate']\n" +
+                "environment = dict(os.environ)\n" +
+                "for key, value in config['env'].items(): environment[key] = os.path.expandvars(value)\n" +
+                "probe = subprocess.run([config['command'], '--check'], env=environment, text=True, capture_output=True)\n" +
+                "print(json.dumps({'args': arguments, 'cwd': os.getcwd(), 'probe': probe.returncode}))\n" +
+                "sys.exit(23)\n")
+            stub.chmod(0o700)
+            for user_arguments in [["Explain the selection"], ["--model", "sonnet", "--resume", "conversation-id", "--", "prompt with spaces"]]:
+                with self.subTest(arguments=user_arguments):
+                    received = []
+                    def context(message, _):
+                        received.append(message)
+                        return {"windowId": "claude-window", "documentName": "selected.txt"}
+                    with context_server(context) as environment:
+                        environment["TM_CLAUDE_COMMAND"] = str(stub)
+                        process = subprocess.run([str(app / "tm-claude"), *user_arguments], cwd=directory,
+                                                 env=environment, text=True, capture_output=True, timeout=5)
+                        self.assertEqual(process.returncode, 23, process.stderr)
+                        actual = json.loads(process.stdout)
+                        self.assertEqual(actual["cwd"], os.path.realpath(directory))
+                        self.assertEqual(actual["probe"], 0)
+                        arguments = actual["args"]
+                        index = arguments.index("--mcp-config")
+                        config = json.loads(arguments[index+1])["mcpServers"]["textmate"]
+                        self.assertEqual(arguments[:index] + arguments[index+2:], user_arguments)
+                        if "--" in arguments: self.assertLess(index+1, arguments.index("--"))
+                        else: self.assertEqual(index+2, len(arguments))
+                        self.assertEqual(config["command"], str((app / "textmate-mcp").resolve()))
+                        self.assertEqual(config["type"], "stdio")
+                        self.assertEqual(config["env"]["TM_CONTEXT_TOKEN"], "${TM_CONTEXT_TOKEN}")
+                        self.assertNotIn("--strict-mcp-config", arguments)
+                        self.assertNotIn(environment["TM_CONTEXT_TOKEN"], " ".join(arguments))
+                        self.assertEqual(len(received), 2)
+                        self.assertTrue(all(m["token"] == environment["TM_CONTEXT_TOKEN"] for m in received))
+
+    def test_claude_launcher_help_check_and_missing_installation(self):
+        launcher = str(Path(EXECUTABLE).with_name("tm-claude"))
+        help_result = subprocess.run([launcher, "--help"], text=True, capture_output=True, check=True)
+        self.assertIn("TM_CLAUDE_COMMAND", help_result.stdout)
+        with context_server(lambda message, _: {"windowId": "claude-window", "documentName": "test.txt"}) as environment:
+            environment["TM_CLAUDE_COMMAND"] = "/tmp/nonexistent-claude-installation"
+            process = subprocess.run([launcher, "--check"], env=environment, text=True, capture_output=True, check=True)
+            self.assertIn("claude-window", process.stdout)
+            process = subprocess.run([launcher], env=environment, text=True, capture_output=True)
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("Claude Code CLI was not found", process.stderr)
+            self.assertIn("TM_CLAUDE_COMMAND", process.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
