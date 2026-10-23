@@ -26,7 +26,7 @@ Relative paths use the session's shell working directory (queried from macOS, wi
 
 ## Editor context for terminal agents
 
-The bundled read-only MCP server lets an agent query the current file, selected text, open documents, and unsaved buffer contents in its terminal's window. In a new terminal tab, run `tm-codex`, `tm-claude`, or `tm-opencode` to start the corresponding agent with editor context. Each launcher accepts `--check` to test the connection. Other MCP clients can obtain configuration with `"$TM_MCP_SERVER" --print-config`. See [Editor context MCP](editor-context-mcp.md) for setup and tool details.
+The bundled MCP server lets an agent query the current file, selected text, open documents, and unsaved buffer contents in its terminal's window. In a new terminal tab, run `tm-codex`, `tm-claude`, or `tm-opencode` to start the corresponding agent with editor context. Each launcher accepts `--check` to test the connection. Other MCP clients can obtain configuration with `"$TM_MCP_SERVER" --print-config`. See [Editor context MCP](editor-context-mcp.md) for setup and tool details.
 
 ## Explain Selection
 
@@ -41,3 +41,9 @@ The agent is asked to explain without editing files or executing the excerpt. It
 With an agent running through `tm-codex`, `tm-claude`, or `tm-opencode`, ask it to **“Read TextMate's diagnostics and explain the errors and warnings in this file.”** The `get_diagnostics` tool reads the language-server reports behind the editor's inline diagnostics, including messages, severity, source, codes, and source ranges. Ask for file locations in the response, then Command-click a location to jump to that line.
 
 The tool reports whether diagnostics have been received and whether a server is available, and supports other loaded documents in the same window. Reports are cached and can lag unsaved edits. Terminal build logs are not collected by this tool. See [Using diagnostics](editor-context-mcp.md#using-diagnostics) for paging and status details.
+
+## Navigate from the conversation
+
+Ask an agent **“Show me that function in TextMate”**, **“Open this file at line 42”**, or **“Select the code for that diagnostic.”** Its `navigate_editor` tool opens or reuses an editor tab in the terminal's window, moves to a line, or selects a passage. It works with unsaved and untitled documents already in that window, as well as existing local files supplied by absolute path.
+
+Keyboard focus stays in the terminal so you can keep chatting. Ask the agent to focus the editor if you want to start editing. Navigation preserves document contents and existing tabs. The agent can use current document revisions to avoid stale locations, and coordinates handle Unicode correctly. See [Navigate from the conversation](editor-context-mcp.md#navigate-from-the-conversation) for the tool arguments and file-loading behavior.
