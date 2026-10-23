@@ -177,9 +177,20 @@ private final class TerminalContainer: NSView {
         focusTerminal()
     }
 
-    private func launchShell() {
+    /// Start in a separate tab; pass arguments directly, never as shell source or PTY input.
+    @objc(startCommandWithExecutable:arguments:title:inDirectory:)
+    public func startCommand(executable: String, arguments: [String], title: String, inDirectory path: String) -> Bool {
+        guard executable.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: executable),
+              !([executable] + arguments).contains(where: { $0.contains("\0") }) else { return false }
+        started = true
+        launchShell(command: [executable] + arguments, title: title, inDirectory: path)
+        focusTerminal()
+        return true
+    }
+
+    private func launchShell(command: [String]? = nil, title: String? = nil, inDirectory path: String? = nil) {
         _ = view
-        let requestedDirectory = workingDirectoryProvider?() ?? directory
+        let requestedDirectory = path ?? workingDirectoryProvider?() ?? directory
         var isDirectory: ObjCBool = false
         let launchDirectory = FileManager.default.fileExists(atPath: requestedDirectory, isDirectory: &isDirectory) && isDirectory.boolValue ? requestedDirectory : NSHomeDirectory()
         let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
@@ -194,7 +205,7 @@ private final class TerminalContainer: NSView {
         let id = nextID
         nextID += 1
         let sessionUUID = UUID()
-        sessions.append(Session(id: id, uuid: sessionUUID, terminal: terminal, title: "Terminal \(id)"))
+        sessions.append(Session(id: id, uuid: sessionUUID, terminal: terminal, title: title ?? "Terminal \(id)"))
         updateTerminalColors()
         selectSession(id: id)
 
@@ -221,7 +232,12 @@ private final class TerminalContainer: NSView {
         for key in Array(environment.keys) where key.hasPrefix("DYLD_") || key == "ASAN_OPTIONS" {
             environment.removeValue(forKey: key)
         }
-        terminal.startProcess(executable: shell, args: ["-l"], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
+        // zsh is available on macOS regardless of the user's configured shell.
+        // Its positional parameters preserve the entire prompt as one argument,
+        // including quotes, newlines, and shell metacharacters. Keep a shell open
+        // afterwards so startup errors and the agent's final output remain visible.
+        let args = command.map { ["-l", "-i", "-c", "\"$@\"; exec \"$SHELL\" -l", "tm-explain-selection"] + $0 } ?? ["-l"]
+        terminal.startProcess(executable: command == nil ? shell : "/bin/zsh", args: args, environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
     }
 
     // Run before AppKit's key-equivalent search: the editor and global bundle menu

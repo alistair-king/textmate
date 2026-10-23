@@ -2,6 +2,8 @@
 
 TextMate bundles a read-only MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`), Claude Code (`tm-claude`), and OpenCode (`tm-opencode`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
 
+For a ready-made explanation, select text and choose **Edit → Explain Selection…** (**⌃⌥⌘E**). Choose an agent to start a new terminal conversation with a snapshot of the selection, including unsaved text. See [Explain Selection](embedded-terminal.md#explain-selection) for details.
+
 ## Start Codex
 
 Launch the updated TextMate app and open a **new terminal tab**, then run:

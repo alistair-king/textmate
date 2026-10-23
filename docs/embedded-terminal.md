@@ -27,3 +27,11 @@ Relative paths use the session's shell working directory (queried from macOS, wi
 ## Editor context for terminal agents
 
 The bundled read-only MCP server lets an agent query the current file, selected text, open documents, and unsaved buffer contents in its terminal's window. In a new terminal tab, run `tm-codex`, `tm-claude`, or `tm-opencode` to start the corresponding agent with editor context. Each launcher accepts `--check` to test the connection. Other MCP clients can obtain configuration with `"$TM_MCP_SERVER" --print-config`. See [Editor context MCP](editor-context-mcp.md) for setup and tool details.
+
+## Explain Selection
+
+Select text in the editor, then choose **Edit → Explain Selection…** or press **⌃⌥⌘E**. Choose Codex, Claude Code, or OpenCode and click **Explain**. TextMate remembers the last agent you chose. The agent must already be installed and signed in, just as when using its `tm-` launcher manually.
+
+The action opens a separate terminal tab in the document's project folder (or the usual terminal starting directory) with an initial request to explain the selection. Existing terminal sessions keep running. The request contains a snapshot of the selected text, its file information, and line positions, including unsaved or untitled content. Later edits or selection changes do not change that request. Disjoint and rectangular selections are supported, up to 128 ranges and 8,192 UTF-16 code units in total; larger selections produce a message asking you to select less text.
+
+The agent is asked to explain without editing files or executing the excerpt. Its normal permissions still apply, and its TextMate MCP connection can read additional context. The selected text is passed as a process argument, never typed into an existing shell. When the agent exits, the tab stays open with a login shell so its output or startup errors remain visible. The action is disabled when no text is selected or the terminal component is unavailable.

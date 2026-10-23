@@ -2,6 +2,7 @@
 #import <EditorContextProtocol.h>
 #import "../src/EditorContextService.h"
 #import "../src/EditorContextBuffer.h"
+#import "../src/SelectionExplanation.h"
 #import "../src/TerminalPanelViewController.h"
 #import "../src/DocumentWindowController.h"
 #import <OakTextView/OakTextView.h>
@@ -104,6 +105,63 @@ void test_editor_context_live_buffers_and_unicode ()
         [window close];
         [DocumentWindowController enableSessionSave];
     } });
+}
+
+void test_selection_explanation_snapshot_and_validation ()
+{
+    __block DocumentWindowController* window;
+    __block OakDocument* document;
+    __block EditorContextSnapshot* snapshot;
+    __block BOOL loaded = NO;
+    dispatch_semaphore_t ready = dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        document = [OakDocument documentWithString:@"one\nA😀B\nlast" fileType:@"text.plain" customName:@"unsaved selection"];
+        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+            loaded = status == OakDocumentIOResultSuccess;
+            dispatch_semaphore_signal(ready);
+        }];
+    });
+    OAK_ASSERT(dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0 && loaded);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setDocuments:@[document]];
+        [window setSelectedDocument:document];
+        NSMenuItem* action = [[NSMenuItem alloc] initWithTitle:@"Explain Selection…" action:NSSelectorFromString(@"explainSelection:") keyEquivalent:@""];
+        window.textView.selectionString = @"1:1";
+        OAK_ASSERT(![window validateMenuItem:action]);
+        window.textView.selectionString = @"1:1-1:4&2:2-2:6";
+        OAK_ASSERT([window validateMenuItem:action]);
+        snapshot = [window editorContextForMethod:@"get_editor_context" arguments:@{}];
+        document.content = @"edited after invoking Explain Selection";
+    });
+    NSString* error = nil;
+    NSString* prompt = SelectionExplanationPrompt([snapshot renderBefore:editor_context::now()+3], &error);
+    OAK_ASSERT(prompt != nil && error == nil);
+    NSRange start = [prompt rangeOfString:@"\n\n{" options:NSBackwardsSearch];
+    OAK_ASSERT(start.location != NSNotFound);
+    NSDictionary* excerpt = editor_context::parse([[prompt substringFromIndex:start.location+2] dataUsingEncoding:NSUTF8StringEncoding]);
+    OAK_ASSERT([excerpt[@"document"][@"name"] isEqual:@"unsaved selection"]);
+    OAK_ASSERT(excerpt[@"document"][@"path"] == NSNull.null);
+    OAK_ASSERT([excerpt[@"selections"] count] == 2);
+    OAK_ASSERT([excerpt[@"selections"][0][@"text"] isEqual:@"one"]);
+    OAK_ASSERT([excerpt[@"selections"][1][@"text"] isEqual:@"😀"]);
+    OAK_ASSERT([excerpt[@"selections"][1][@"start"][@"line"] integerValue] == 2);
+    for(NSString* agent in @[@"codex", @"claude", @"opencode"])
+        OAK_ASSERT([SelectionExplanationArguments(agent, prompt).lastObject isEqual:prompt]);
+    OAK_ASSERT(SelectionExplanationArguments(@"unknown", prompt) == nil);
+    OAK_ASSERT(SelectionExplanationPrompt(@{ @"document": @{}, @"selections": @[@{ @"text": @"" }] }, &error) == nil && error != nil);
+    OAK_ASSERT(SelectionExplanationPrompt(@{ @"document": @{}, @"selections": @[@{ @"text": @"partial", @"truncated": @YES }] }, &error) == nil);
+    OAK_ASSERT(SelectionExplanationPrompt(@{ @"document": @{}, @"selectionsTruncated": @YES, @"selections": @[] }, &error) == nil);
+    OAK_ASSERT(SelectionExplanationPrompt(@{ @"error": @"The editor request timed out." }, &error) == nil);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setSelectedDocument:nil];
+        [window setDocuments:@[]];
+        [document close];
+        [window close];
+        [DocumentWindowController enableSessionSave];
+    });
 }
 
 void test_editor_context_large_immutable_snapshot ()
