@@ -30,6 +30,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 @property (nonatomic) NSArray<NSColor*>* terminalColors;
 @property (nonatomic) NSFont* terminalFont;
 @property (nonatomic) NSView* contentView;
+@property (nonatomic) NSView* contentContainer;
 @property (nonatomic) NSView* panelView;
 @property (nonatomic) BOOL adjustingLayout;
 @property (nonatomic) NSLayoutConstraint* minimumWidthConstraint;
@@ -51,6 +52,20 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	if(self = [super initWithNibName:nil bundle:nil])
 	{
 		_contentView = contentView;
+		_contentContainer = [[NSView alloc] initWithFrame:contentView.frame];
+		_contentView.translatesAutoresizingMaskIntoConstraints = NO;
+		[_contentContainer addSubview:_contentView];
+		// NSSplitView fixes its children's frames during a resize. Allow the
+		// project layout to grow inside that frame when restoration adds views
+		// before the split view's next sizing pass.
+		NSLayoutConstraint* width = [_contentView.widthAnchor constraintEqualToAnchor:_contentContainer.widthAnchor];
+		NSLayoutConstraint* height = [_contentView.heightAnchor constraintEqualToAnchor:_contentContainer.heightAnchor];
+		width.priority = height.priority = NSLayoutPriorityDefaultHigh;
+		[NSLayoutConstraint activateConstraints:@[
+			[_contentView.leftAnchor constraintEqualToAnchor:_contentContainer.leftAnchor],
+			[_contentView.topAnchor constraintEqualToAnchor:_contentContainer.topAnchor],
+			width, height,
+		]];
 		NSString* placement = [NSUserDefaults.standardUserDefaults stringForKey:kUserDefaultsTerminalPanelPlacementKey];
 		_panelPosition = [@[@"left", @"right", @"bottom"] containsObject:placement] ? placement : @"bottom";
 		_panelWidth    = MAX(120, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelWidthKey]);
@@ -204,12 +219,12 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		([(NSView*)responder isDescendantOf:_contentView] ||
 		 (_panelVisible && [(NSView*)responder isDescendantOf:_panelView]));
 	_adjustingLayout = YES;
-	[_contentView removeFromSuperview];
+	[_contentContainer removeFromSuperview];
 	[_panelView removeFromSuperview];
 	_splitView.vertical = ![_panelPosition isEqualToString:@"bottom"];
 	if(_panelVisible && [_panelPosition isEqualToString:@"left"])
 		[_splitView addSubview:_panelView];
-	[_splitView addSubview:_contentView];
+	[_splitView addSubview:_contentContainer];
 	if(_panelVisible && ![_panelPosition isEqualToString:@"left"])
 		[_splitView addSubview:_panelView];
 	_adjustingLayout = NO;
@@ -233,7 +248,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	bounds.size.width = MAX(bounds.size.width, _minimumWidthConstraint.constant);
 	bounds.size.height = MAX(bounds.size.height, _minimumHeightConstraint.constant);
 	if(!_panelVisible)
-		_contentView.frame = bounds;
+		_contentContainer.frame = bounds;
 	else
 	{
 		BOOL vertical = _splitView.isVertical;
@@ -258,6 +273,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		_splitView.subviews[0].frame = first;
 		_splitView.subviews[1].frame = second;
 	}
+	_contentView.frame = _contentContainer.bounds;
 	_adjustingLayout = NO;
 }
 
