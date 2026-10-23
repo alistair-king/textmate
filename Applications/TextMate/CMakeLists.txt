@@ -141,6 +141,8 @@ set_source_files_properties(${_about_js} PROPERTIES
 
 # Embedded CLI tools
 textmate_embed(TextMate mate "MacOS")
+textmate_embed(TextMate textmate-mcp "MacOS")
+textmate_embed(TextMate tm-codex "MacOS")
 textmate_embed(TextMate tm_query "MacOS")
 textmate_embed(TextMate PrivilegedTool "Resources")
 
@@ -152,6 +154,10 @@ textmate_embed(TextMate Dialog2 "PlugIns" DIRECTORY)
 textmate_embed(TextMate TextMateQL "Library/QuickLook" DIRECTORY)
 
 # Sign embedded binaries (inner-to-outer, before app signature)
+textmate_codesign_file(TextMate "${CS_IDENTITY}"
+  "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-codex")
+textmate_codesign_file(TextMate "${CS_IDENTITY}"
+  "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/textmate-mcp")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/mate")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
