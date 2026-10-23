@@ -2,6 +2,8 @@
 #import <OakTabBarView/OakTabBarView.h>
 #import "../src/TerminalPanelViewController.h"
 #import "../src/DocumentWindowController.h"
+#import "../src/ProjectLayoutView.h"
+#import <FileBrowser/FileBrowserViewController.h>
 
 // A plain sh without rc files, so tests do not depend on the user's login shell or dotfiles.
 static TerminalPanelViewController* MakePanel (NSView* content)
@@ -30,6 +32,45 @@ static void LayOut (NSWindow* window, NSSize size)
 {
 	[window setContentSize:size];
 	[window.contentView layoutSubtreeIfNeeded];
+}
+
+void test_terminal_panel_open_project ()
+{
+	dispatch_sync(dispatch_get_main_queue(), ^{
+		@autoreleasepool
+		{
+			[NSApplication sharedApplication];
+			ProjectLayoutView* content = [[ProjectLayoutView alloc] initWithFrame:NSZeroRect];
+			content.documentView = [[NSView alloc] initWithFrame:NSZeroRect];
+			[content.documentView.heightAnchor constraintGreaterThanOrEqualToConstant:25].active = YES;
+			TerminalPanelViewController* controller = MakePanel(content);
+			NSView* split = controller.view;
+			NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1000, 700) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+			window.releasedWhenClosed = NO;
+			split.translatesAutoresizingMaskIntoConstraints = NO;
+			[window.contentView addSubview:split];
+			[NSLayoutConstraint activateConstraints:@[
+				[split.leftAnchor constraintEqualToAnchor:window.contentView.leftAnchor],
+				[split.rightAnchor constraintEqualToAnchor:window.contentView.rightAnchor],
+				[split.topAnchor constraintEqualToAnchor:window.contentView.topAnchor],
+				[split.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor],
+			]];
+			// Project restoration adds the browser before the window's first layout pass.
+			[window.contentView updateConstraintsForSubtreeIfNeeded];
+			controller.panelHeight = 220;
+			FileBrowserViewController* browser = [[FileBrowserViewController alloc] init];
+			CGFloat minimumBrowserHeight = browser.view.fittingSize.height;
+			content.fileBrowserView = browser.view;
+			[window.contentView updateConstraintsForSubtreeIfNeeded];
+			[content layoutSubtreeIfNeeded];
+			OAK_ASSERT(NSHeight(browser.view.frame) >= minimumBrowserHeight);
+			[window setContentSize:NSMakeSize(1100, 700)];
+			[window.contentView layoutSubtreeIfNeeded];
+			OAK_ASSERT(NSHeight(browser.view.frame) >= minimumBrowserHeight);
+			OAK_ASSERT(NSHeight(content.frame) == NSHeight(split.bounds));
+			[window close];
+		}
+	});
 }
 
 void test_terminal_panel_layout ()
