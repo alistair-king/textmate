@@ -1,6 +1,6 @@
 # Querying TextMate from a terminal agent
 
-TextMate bundles a read-only MCP server, `textmate-mcp`, and a Codex launcher, `tm-codex`. Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
+TextMate bundles a read-only MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`) and Claude Code (`tm-claude`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
 
 ## Start Codex
 
@@ -26,10 +26,31 @@ Install and sign in to [Codex CLI](https://learn.chatgpt.com/docs/cli) first if 
 
 The launcher neither writes Codex configuration nor places session credentials in command arguments. It passes the names of the environment variables Codex must forward, as described in [Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp). User-supplied Codex configuration options still work and can override the launcher's settings.
 
+## Start Claude Code
+
+Install and sign in to [Claude Code](https://code.claude.com/docs/en/setup), then open a new terminal in the updated TextMate app and run:
+
+```sh
+tm-claude
+# Or start with a prompt:
+tm-claude "Explain the selected text in TextMate"
+```
+
+The launcher checks the editor connection and supplies a temporary `textmate` server using Claude's [`--mcp-config` option](https://code.claude.com/docs/en/cli-reference). Claude's [environment variable expansion](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcpjson) forwards the terminal credentials by reference, so their values do not appear in arguments or configuration files.
+
+Claude's existing MCP servers and permission settings stay enabled. Session arguments, such as `--model`, `--continue`, `--resume`, and print mode, are forwarded. Administrative subcommands should be run directly with `claude`.
+
+The launcher searches PATH, `~/.local/bin/claude`, the older `~/.claude/local/claude` location, and common Homebrew locations. Set `TM_CLAUDE_COMMAND` to an explicit executable path for another installation. To launch by full path when shell startup files replace PATH:
+
+```sh
+"${TM_MCP_SERVER%/*}/tm-claude"
+```
+
 ## Check the connection
 
 ```sh
 tm-codex --check
+tm-claude --check
 # or:
 "$TM_MCP_SERVER" --check
 ```
@@ -50,7 +71,7 @@ This prints an `mcpServers` JSON entry with the helper's absolute path and expli
 
 Clients supporting environment forwarding can pass those three variables from the launching shell instead. Explicit forwarding matters because MCP clients may inherit only a restricted environment. `TM_MCP_SERVER` holds the helper's absolute path.
 
-The helper runs without arguments as an MCP stdio server. Standard output contains protocol messages only. No Python, Node, TCP listener, or external service is needed by the TextMate integration at runtime. Codex CLI is installed separately.
+The helper runs without arguments as an MCP stdio server. Standard output contains protocol messages only. No Python, Node, TCP listener, or external service is needed by the TextMate integration at runtime. The chosen agent CLI is installed separately.
 
 ## Tools
 
@@ -74,7 +95,7 @@ The native helper implements MCP's stdio tools capability for protocol revisions
 
 ## Verification
 
-Build with `make debug` or `make release`. Both helpers are embedded and signed inside the application bundle. Run the native and executable regression tests with:
+Build with `make debug` or `make release`. The MCP helper and both launchers are embedded and signed inside the application bundle. Run the native and executable regression tests with:
 
 ```sh
 ctest --test-dir build-debug -R '^(EditorContext|DocumentWindow|selection|textmate-mcp)$' --output-on-failure
@@ -92,3 +113,12 @@ node Applications/textmate-mcp/tests/test_sdk.mjs \
 ```
 
 Alternatively, set CMake's `TEXTMATE_MCP_SDK_DIR` to that SDK `dist/esm` directory to add the `textmate-mcp-sdk` CTest target. Tests need permission to create local Unix sockets, and AppKit tests require access to a graphical login session.
+
+For an optional real-Claude startup check, supply an installed Claude executable:
+
+```sh
+python3 Applications/textmate-mcp/tests/test_claude_cli.py \
+  build-debug/Applications/textmate-mcp/textmate-mcp /absolute/path/to/claude
+```
+
+This check uses isolated temporary settings and a local API stub that rejects inference. It verifies the actual launcher's inline configuration, environment expansion, and MCP startup without logging in or sending a request to a real model.
