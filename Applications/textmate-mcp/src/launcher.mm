@@ -11,7 +11,7 @@ int main(int argc, char const* argv[]) {
     @autoreleasepool {
         signal(SIGPIPE, SIG_IGN);
         if(argc == 2 && !strcmp(argv[1], "--help")) {
-            puts("Usage: tm-codex [Codex arguments...]\n       tm-codex --check\n\nStarts Codex with read-only context from this TextMate terminal.\nConnection configuration is temporary. Codex arguments and the current directory are preserved.\nSet TM_CODEX_COMMAND to an explicit Codex executable if it is not on PATH.");
+            puts("Usage: tm-codex [Codex arguments...]\n       tm-codex --check\n\nStarts Codex with editor context and navigation from this TextMate terminal.\nConnection configuration is temporary. Codex arguments and the current directory are preserved.\nSet TM_CODEX_COMMAND to an explicit Codex executable if it is not on PATH.");
             return 0;
         }
         if(argc == 2 && !strcmp(argv[1], "--check")) return editor_context::check_connection();

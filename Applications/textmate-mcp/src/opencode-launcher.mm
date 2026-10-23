@@ -52,7 +52,7 @@ int main(int argc, char const* argv[]) {
     @autoreleasepool {
         signal(SIGPIPE, SIG_IGN);
         if(argc == 2 && !strcmp(argv[1], "--help")) {
-            puts("Usage: tm-opencode [OpenCode arguments...]\n       tm-opencode --check\n\nStarts OpenCode with read-only context from this TextMate terminal.\nConfiguration is temporary. Arguments, current directory, and other settings are preserved.\nSet TM_OPENCODE_COMMAND to an explicit OpenCode executable if it is not on PATH.");
+            puts("Usage: tm-opencode [OpenCode arguments...]\n       tm-opencode --check\n\nStarts OpenCode with editor context and navigation from this TextMate terminal.\nConfiguration is temporary. Arguments, current directory, and other settings are preserved.\nSet TM_OPENCODE_COMMAND to an explicit OpenCode executable if it is not on PATH.");
             return 0;
         }
         if(argc == 2 && !strcmp(argv[1], "--check")) return editor_context::check_connection();

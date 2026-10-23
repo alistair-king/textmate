@@ -84,8 +84,9 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-11-25")
         tools = replies[1]["result"]["tools"]
         self.assertEqual([t["name"] for t in tools],
-                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics"])
-        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools))
+                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "navigate_editor"])
+        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools[:-1]))
+        self.assertFalse(tools[-1]["annotations"]["readOnlyHint"])
         self.assertEqual(replies[2]["result"], {})
         self.assertEqual(replies[3]["error"]["code"], -32601)
         self.assertEqual(replies[4]["error"]["code"], -32602)
@@ -119,6 +120,31 @@ class MCPTests(unittest.TestCase):
             request(index + 2, "tools/call", name="get_diagnostics", arguments=arguments)
             for index, arguments in enumerate(invalid)])
         self.assertEqual(len(replies), 1 + len(invalid))
+        self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
+
+    def test_navigation_forwarding_and_argument_validation(self):
+        expected = {"path": "/tmp/a file 😀.txt", "line": 2, "column": 2, "endLine": 3, "endColumn": 1, "focus": False, "revision": "opaque"}
+        received = []
+        def navigate(message, _):
+            received.append(message)
+            return {"status": "navigated", "opened": True, "focused": False}
+        with context_server(navigate) as environment:
+            replies = self.run_server([INITIALIZE, READY, request(2, "tools/call", name="navigate_editor", arguments=expected)], environment)
+        self.assertEqual(received[0]["method"], "navigate_editor")
+        self.assertEqual(received[0]["arguments"], expected)
+        self.assertEqual(json.loads(replies[1]["result"]["content"][0]["text"])["status"], "navigated")
+        invalid = [{}, {"documentId": "x", "path": "/tmp/x"}, {"path": "relative.txt"}, {"path": "file:///tmp/x"},
+                   {"path": "/tmp/x\0hidden"}, {"documentId": ""}, {"documentId": "x", "focus": "true"},
+                   {"documentId": "x", "focus": 1}, {"documentId": "x", "line": True},
+                   {"documentId": "x", "line": 0}, {"documentId": "x", "line": 1.5},
+                   {"documentId": "x", "column": 2}, {"documentId": "x", "line": 2, "endLine": 2},
+                   {"documentId": "x", "line": 2, "endLine": 1, "endColumn": 1},
+                   {"documentId": "x", "line": 2, "column": 4, "endLine": 2, "endColumn": 2},
+                   {"documentId": "x", "revision": ""}, {"documentId": "x", "unexpected": True}]
+        replies = self.run_server([INITIALIZE, READY] + [
+            request(index+2, "tools/call", name="navigate_editor", arguments=arguments)
+            for index, arguments in enumerate(invalid)])
+        self.assertEqual(len(replies), 1+len(invalid))
         self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
 
     def test_malformed_and_oversized_input_recovers(self):

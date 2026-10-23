@@ -1,4 +1,5 @@
 #include <cmath>
+#include <sys/stat.h>
 #import "EditorContextService.h"
 #import "EditorContextBuffer.h"
 #import "EditorContextDiagnostics.h"
@@ -104,6 +105,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) BOOL                         terminalCloseConfirmed; // set once the user approved ending running shells, so the re-issued close does not ask again
 @property (nonatomic) BOOL                         terminalOnlyWindow; // created by detaching a terminal tab; closes with its last session while the placeholder document is untouched
 @property (nonatomic) BOOL preparingSelectionExplanation;
+@property (nonatomic) NSUInteger editorNavigationGeneration;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -131,6 +133,8 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) NSArrayController*                arrayController;
 
 - (EditorContextSnapshot*)editorContextForMethod:(NSString*)method arguments:(NSDictionary*)arguments;
+- (EditorContextSnapshot*)editorNavigation:(NSDictionary*)arguments;
+- (void)loadNavigationDocument:(OakDocument*)document arguments:(NSDictionary*)arguments deadline:(double)deadline canCommit:(BOOL(^)(void))canCommit completion:(void(^)(NSDictionary*))completion;
 + (void)scheduleSessionBackup:(id)sender;
 
 - (void)makeTextViewFirstResponder:(id)sender;
@@ -201,6 +205,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 {
     if(NSString* error = editor_context::validate_arguments(method, arguments))
         return [EditorContextSnapshot response:editor_context::failure(error, @"invalid_arguments")];
+    if([method isEqual:@"navigate_editor"]) return [self editorNavigation:arguments];
     NSDictionary* base = @{ @"windowId": self.identifier.UUIDString,
                             @"projectPath": self.projectPath ?: (id)NSNull.null,
                             @"coordinateEncoding": @"utf-16",
@@ -247,6 +252,95 @@ static NSDictionary* ContextDocument(OakDocument* document)
     NSUInteger caret = [self.textView editorContextCaretByteOffset];
     return [EditorContextSnapshot renderer:^NSDictionary*(double deadline){
         return [buffer responseForMethod:method arguments:arguments base:base document:metadata ranges:ranges caret:caret deadline:deadline];
+    }];
+}
+
+- (EditorContextSnapshot*)editorNavigation:(NSDictionary*)arguments
+{
+    __weak DocumentWindowController* weakSelf = self;
+    NSUUID* owner = self.identifier;
+    return [EditorContextSnapshot action:^(double deadline, BOOL (^authorized)(void), void (^completion)(NSDictionary*)){
+        DocumentWindowController* controller = weakSelf;
+        if(!controller || ![controller.identifier isEqual:owner]) { completion(editor_context::failure(@"The editor window has closed.", @"window_closed")); return; }
+        NSUInteger generation = ++controller.editorNavigationGeneration;
+        BOOL (^canCommit)(void) = ^{ return authorized() && [weakSelf.identifier isEqual:owner] && weakSelf.editorNavigationGeneration == generation; };
+        NSString* path = [arguments[@"path"] stringByStandardizingPath];
+        OakDocument* target = nil;
+        for(OakDocument* candidate in controller.documents) {
+            if((arguments[@"documentId"] && [candidate.identifier.UUIDString isEqual:arguments[@"documentId"]]) ||
+               (path && [[candidate.path stringByStandardizingPath] isEqual:path])) { target = candidate; break; }
+        }
+        if(arguments[@"documentId"] && !target) { completion(editor_context::failure(@"Document is not open in this window.", @"document_unavailable")); return; }
+        if(target.isLoaded) {
+            [controller loadNavigationDocument:target arguments:arguments deadline:deadline canCommit:canCommit completion:completion];
+            return;
+        }
+        NSString* file = target.path ?: path;
+        if(!file) { completion(editor_context::failure(@"The document cannot be loaded.", @"document_unavailable")); return; }
+        // File metadata and buffer indexing stay off the UI thread. Never create
+        // a missing file or interpret a directory, device, or FIFO as a document.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            struct stat info;
+            BOOL regular = stat(file.fileSystemRepresentation, &info) == 0 && S_ISREG(info.st_mode);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if(!canCommit()) { completion(editor_context::failure(@"Navigation expired or its terminal session changed.", @"navigation_cancelled")); return; }
+                if(!regular) { completion(editor_context::failure(@"path must name an existing regular local file.", @"file_unavailable")); return; }
+                OakDocument* document = target ?: [OakDocumentController.sharedInstance documentWithPath:file];
+                [weakSelf loadNavigationDocument:document arguments:arguments deadline:deadline canCommit:canCommit completion:completion];
+            });
+        });
+    }];
+}
+
+- (void)loadNavigationDocument:(OakDocument*)document arguments:(NSDictionary*)arguments deadline:(double)deadline canCommit:(BOOL(^)(void))canCommit completion:(void(^)(NSDictionary*))completion
+{
+    if(!canCommit()) { completion(editor_context::failure(@"Navigation expired or its terminal session changed.", @"navigation_cancelled")); return; }
+    BOOL alreadyLoaded = document.isLoaded;
+    [document loadWithoutUIWithCompletionHandler:^(OakDocumentIOResult status, NSString* error, oak::uuid_t const&){
+        if(status != OakDocumentIOResultSuccess) {
+            completion(editor_context::failure(error.length ? error : @"The file could not be opened without a dialog. Open it manually in TextMate first.", @"file_unavailable"));
+            return;
+        }
+        if(!alreadyLoaded && !document.isOnDisk) {
+            [document close]; completion(editor_context::failure(@"The file disappeared while opening it.", @"file_unavailable")); return;
+        }
+        // Each successful load owns one temporary open reference. Release it on
+        // every completion path; adding a tab supplies its own reference.
+        if(!canCommit()) { [document close]; completion(editor_context::failure(@"Navigation expired or its terminal session changed.", @"navigation_cancelled")); return; }
+        NSDictionary* metadata = ContextDocument(document);
+        if(arguments[@"revision"] && ![arguments[@"revision"] isEqual:metadata[@"revision"]]) {
+            [document close]; completion(editor_context::failure(@"The document changed. Read its current context before navigating.", @"document_changed")); return;
+        }
+        EditorContextBuffer* buffer = arguments[@"line"] ? [EditorContextBuffer bufferForDocument:document revision:metadata[@"revision"]] : nil;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSDictionary* plan = buffer ? [buffer navigationForArguments:arguments deadline:deadline] : @{};
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSDictionary* failure = nil;
+                if(!canCommit()) failure = editor_context::failure(@"Navigation expired or its terminal session changed.", @"navigation_cancelled");
+                else if(plan[@"error"]) failure = plan;
+                else if(![metadata[@"revision"] isEqual:ContextDocument(document)[@"revision"]]) failure = editor_context::failure(@"The document changed while locating the range. Try again with its current revision.", @"document_changed");
+                else if(arguments[@"documentId"] && ![self.documents containsObject:document]) failure = editor_context::failure(@"Document is no longer open in this window.", @"document_unavailable");
+                if(failure) { [document close]; completion(failure); return; }
+                BOOL opened = ![self.documents containsObject:document];
+                if(opened) self.documents = [(self.documents ?: @[]) arrayByAddingObject:document];
+                self.selectedTabIndex = [self.documents indexOfObject:document];
+                self.selectedDocument = document;
+                if(plan[@"selectionString"]) {
+                    self.textView.selectionString = plan[@"selectionString"];
+                    [self.textView ensureSelectionIsInVisibleArea:nil];
+                }
+                if([arguments[@"focus"] boolValue]) {
+                    [self.window makeKeyAndOrderFront:nil];
+                    [self.window makeFirstResponder:self.textView];
+                }
+                NSDictionary* response = @{ @"status": @"navigated", @"windowId": self.identifier.UUIDString,
+                    @"document": metadata, @"opened": @(opened), @"focused": @([arguments[@"focus"] boolValue]),
+                    @"coordinateEncoding": @"utf-16", @"lineBase": @1, @"columnBase": @1,
+                    @"range": plan[@"range"] ?: (id)NSNull.null };
+                [document close];
+                completion(response);
+            });
+        });
     }];
 }
 

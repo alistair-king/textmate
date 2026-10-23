@@ -14,7 +14,7 @@
 
 #import "EditorContextTestAccess.h"
 
-static NSDictionary* context_test_query(NSDictionary* environment) {
+static NSDictionary* context_test_query(NSDictionary* environment, NSString* method = @"get_editor_context", NSDictionary* arguments = @{}) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     editor_context::configure_socket(fd);
     sockaddr_un address = {};
@@ -22,7 +22,7 @@ static NSDictionary* context_test_query(NSDictionary* environment) {
     strlcpy(address.sun_path, [environment[@"TM_CONTEXT_SOCKET"] fileSystemRepresentation], sizeof(address.sun_path));
     OAK_ASSERT(connect(fd, (sockaddr*)&address, sizeof(address)) == 0);
     editor_context::write_json(fd, @{ @"session": environment[@"TM_CONTEXT_SESSION"], @"token": environment[@"TM_CONTEXT_TOKEN"],
-                                     @"method": @"get_editor_context", @"arguments": @{} });
+                                     @"method": method, @"arguments": arguments });
     NSDictionary* result = editor_context::parse(editor_context::read_line(fd));
     close(fd);
     return result;
@@ -285,6 +285,132 @@ void test_editor_context_diagnostics_bounds_and_invalid_ranges ()
     OAK_ASSERT(result[@"diagnostics"][0][@"range"] == NSNull.null);
     OAK_ASSERT([result[@"diagnostics"][0][@"invalidRange"] boolValue]);
     OAK_ASSERT([EditorContextDiagnostics(report, @{}, @{}, @{}, editor_context::now()-1)[@"code"] isEqual:@"timeout"]);
+}
+
+void test_editor_context_navigation_files_ranges_and_focus ()
+{
+    NSString* directory = [@"/tmp/tm-navigation-" stringByAppendingString:NSUUID.UUID.UUIDString];
+    OAK_ASSERT([NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil]);
+    NSString* file = [directory stringByAppendingPathComponent:@"a 'quoted' file 😀.txt"];
+    NSString* content = @"first\nA😀B\nlast\n";
+    OAK_ASSERT([content writeToFile:file atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    __block DocumentWindowController* window;
+    __block DocumentWindowController* other;
+    __block OakDocument* document;
+    __block OakDocument* foreign;
+    __block NSTextView* terminalFocus;
+    __block NSDictionary* environment;
+    NSUUID* session = NSUUID.UUID;
+    dispatch_group_t loaded = dispatch_group_create();
+    __block BOOL success = YES;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        other = [[DocumentWindowController alloc] init];
+        document = [OakDocument documentWithString:@"A😀B\n\té z\nlast\n" fileType:@"text.plain" customName:@"unsaved navigation"];
+        foreign = [OakDocument documentWithString:@"other window" fileType:@"text.plain" customName:@"foreign navigation"];
+        for(OakDocument* doc in @[document, foreign]) {
+            dispatch_group_enter(loaded);
+            [doc loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+                success = success && status == OakDocumentIOResultSuccess;
+                dispatch_group_leave(loaded);
+            }];
+        }
+    });
+    OAK_ASSERT(dispatch_group_wait(loaded, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0 && success);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setDocuments:@[document]]; [window setSelectedDocument:document];
+        [other setDocuments:@[foreign]]; [other setSelectedDocument:foreign];
+        terminalFocus = [[NSTextView alloc] initWithFrame:NSMakeRect(0,0,10,10)];
+        [window.window.contentView addSubview:terminalFocus];
+        [window.window makeFirstResponder:terminalFocus];
+        __weak DocumentWindowController* owner = window;
+        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString* method, NSDictionary* args){ return [owner editorContextForMethod:method arguments:args]; }];
+    });
+    NSDictionary* result = context_test_query(environment, @"navigate_editor", @{ @"documentId": document.identifier.UUIDString, @"line": @1, @"column": @2, @"endLine": @1, @"endColumn": @4 });
+    OAK_ASSERT([result[@"status"] isEqual:@"navigated"] && ![result[@"opened"] boolValue]);
+    OAK_ASSERT([result[@"range"][@"start"][@"offset"] integerValue] == 1 && [result[@"range"][@"end"][@"offset"] integerValue] == 3);
+    OAK_ASSERT([context_test_query(environment)[@"selections"][0][@"text"] isEqual:@"😀"]);
+    dispatch_sync(dispatch_get_main_queue(), ^{ OAK_ASSERT(window.window.firstResponder == terminalFocus); });
+    result = context_test_query(environment, @"navigate_editor", @{ @"path": file, @"line": @2, @"column": @4, @"endLine": @2, @"endColumn": @5 });
+    OAK_ASSERT([result[@"status"] isEqual:@"navigated"] && [result[@"opened"] boolValue]);
+    NSString* openedId = result[@"document"][@"documentId"];
+    NSDictionary* context = context_test_query(environment);
+    OAK_ASSERT([context[@"document"][@"documentId"] isEqual:openedId]);
+    OAK_ASSERT([context[@"selections"][0][@"text"] isEqual:@"B"]);
+    result = context_test_query(environment, @"navigate_editor", @{ @"path": file });
+    OAK_ASSERT(![result[@"opened"] boolValue] && result[@"range"] == NSNull.null);
+    OAK_ASSERT([context_test_query(environment)[@"selections"][0][@"text"] isEqual:@"B"]);
+    for(NSDictionary* args in @[
+        @{ @"documentId": document.identifier.UUIDString, @"line": @99 },
+        @{ @"documentId": document.identifier.UUIDString, @"line": @1, @"column": @3 },
+        @{ @"documentId": document.identifier.UUIDString, @"revision": @"outdated", @"line": @1 },
+        @{ @"documentId": foreign.identifier.UUIDString },
+        @{ @"path": [directory stringByAppendingPathComponent:@"missing.txt"] }, @{ @"path": directory }
+    ]) {
+        OAK_ASSERT(context_test_query(environment, @"navigate_editor", args)[@"error"] != nil);
+        OAK_ASSERT([context_test_query(environment)[@"document"][@"documentId"] isEqual:openedId]);
+    }
+    result = context_test_query(environment, @"navigate_editor", @{ @"documentId": document.identifier.UUIDString, @"line": @2, @"column": @2, @"endLine": @2, @"endColumn": @3, @"focus": @YES });
+    OAK_ASSERT([result[@"status"] isEqual:@"navigated"] && [result[@"focused"] boolValue]);
+    OAK_ASSERT([context_test_query(environment)[@"selections"][0][@"text"] isEqual:@"é"]);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        OAK_ASSERT(window.window.firstResponder == window.textView);
+        OAK_ASSERT(window.documents.count == 2 && other.selectedDocument == foreign);
+        OAK_ASSERT([document.content isEqual:@"A😀B\n\té z\nlast\n"]);
+        [EditorContextService.sharedService revokeSession:session];
+        [window close]; [other close];
+        [document close]; [foreign close];
+        [DocumentWindowController enableSessionSave];
+    });
+    OAK_ASSERT([[NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil] isEqual:content]);
+    OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:directory error:nil]);
+}
+
+void test_editor_context_navigation_late_actions_and_session_transfer ()
+{
+    __block NSInteger effects = 0;
+    dispatch_semaphore_t started = dispatch_semaphore_create(0);
+    dispatch_semaphore_t completed = dispatch_semaphore_create(0);
+    NSUUID* session = NSUUID.UUID;
+    __block NSDictionary* environment;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString*, NSDictionary*){
+            return [EditorContextSnapshot action:^(double deadline, BOOL (^canCommit)(void), void (^completion)(NSDictionary*)){
+                dispatch_semaphore_signal(started);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200*NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                    if(canCommit()) ++effects;
+                    completion(canCommit() ? @{ @"status": @"navigated" } : editor_context::failure(@"Session changed", @"navigation_cancelled"));
+                    dispatch_semaphore_signal(completed);
+                });
+            }];
+        }];
+    });
+    __block NSDictionary* result;
+    dispatch_group_t query = dispatch_group_create();
+    dispatch_group_async(query, dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{ result = context_test_query(environment, @"navigate_editor", @{ @"path": @"/tmp/unused" }); });
+    long startStatus = dispatch_semaphore_wait(started, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC));
+    if(startStatus) NSLog(@"Navigation test did not start: %@", result);
+    OAK_ASSERT(startStatus == 0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        // Transfer keeps credentials but changes the registered owning provider.
+        [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString*, NSDictionary*){ return [EditorContextSnapshot response:@{ @"window": @"destination" }]; }];
+    });
+    OAK_ASSERT(dispatch_group_wait(query, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) == 0);
+    OAK_ASSERT([result[@"code"] isEqual:@"navigation_cancelled"] && effects == 0);
+    OAK_ASSERT(dispatch_semaphore_wait(completed, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) == 0);
+    EditorContextSnapshot* late = [EditorContextSnapshot action:^(double deadline, BOOL (^canCommit)(void), void (^completion)(NSDictionary*)){
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100*NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            if(canCommit()) ++effects;
+            completion(@{});
+            dispatch_semaphore_signal(completed);
+        });
+    }];
+    OAK_ASSERT([[late renderBefore:editor_context::now()+0.03][@"code"] isEqual:@"timeout"]);
+    OAK_ASSERT(dispatch_semaphore_wait(completed, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) == 0);
+    OAK_ASSERT(effects == 0);
+    dispatch_sync(dispatch_get_main_queue(), ^{ [EditorContextService.sharedService revokeSession:session]; });
 }
 
 void test_editor_context_large_immutable_snapshot ()
