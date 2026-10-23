@@ -4,6 +4,8 @@ add_executable(tm-codex src/launcher.mm)
 target_link_libraries(tm-codex PRIVATE "-framework Foundation")
 add_executable(tm-claude src/claude-launcher.mm)
 target_link_libraries(tm-claude PRIVATE "-framework Foundation")
+add_executable(tm-opencode src/opencode-launcher.mm)
+target_link_libraries(tm-opencode PRIVATE "-framework Foundation")
 
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter QUIET)
