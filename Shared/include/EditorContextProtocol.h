@@ -88,6 +88,15 @@ inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
     if(![arguments isKindOfClass:NSDictionary.class]) return @"Expected object arguments";
     if([method isEqual:@"get_editor_context"] || [method isEqual:@"list_open_documents"] || [method isEqual:@"get_connection_status"])
         return arguments.count ? @"This tool takes no arguments" : nil;
+    if([method isEqual:@"get_diagnostics"]) {
+        for(NSString* key in arguments)
+            if(![@[@"documentId", @"offset", @"limit", @"reportId"] containsObject:key]) return @"Unknown argument";
+        for(NSString* key in @[@"documentId", @"reportId"])
+            if(arguments[key] && (![arguments[key] isKindOfClass:NSString.class] || ![arguments[key] length])) return @"documentId and reportId must be nonempty strings when provided";
+        if(arguments[@"offset"] && !integer(arguments[@"offset"], 9007199254740991.0)) return @"offset must be a nonnegative integer";
+        if(arguments[@"limit"] && (!integer(arguments[@"limit"], 100) || [arguments[@"limit"] integerValue] == 0)) return @"limit must be an integer between 1 and 100";
+        return nil;
+    }
     if(![method isEqual:@"read_document"]) return @"Unknown tool";
     for(NSString* key in arguments)
         if(![@[@"documentId", @"offset", @"length"] containsObject:key]) return @"Unknown argument";

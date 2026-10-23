@@ -35,3 +35,9 @@ Select text in the editor, then choose **Edit → Explain Selection…** or pres
 The action opens a separate terminal tab in the document's project folder (or the usual terminal starting directory) with an initial request to explain the selection. Existing terminal sessions keep running. The request contains a snapshot of the selected text, its file information, and line positions, including unsaved or untitled content. Later edits or selection changes do not change that request. Disjoint and rectangular selections are supported, up to 128 ranges and 8,192 UTF-16 code units in total; larger selections produce a message asking you to select less text.
 
 The agent is asked to explain without editing files or executing the excerpt. Its normal permissions still apply, and its TextMate MCP connection can read additional context. The selected text is passed as a process argument, never typed into an existing shell. When the agent exits, the tab stays open with a login shell so its output or startup errors remain visible. The action is disabled when no text is selected or the terminal component is unavailable.
+
+## Diagnostics for terminal agents
+
+With an agent running through `tm-codex`, `tm-claude`, or `tm-opencode`, ask it to **“Read TextMate's diagnostics and explain the errors and warnings in this file.”** The `get_diagnostics` tool reads the language-server reports behind the editor's inline diagnostics, including messages, severity, source, codes, and source ranges. Ask for file locations in the response, then Command-click a location to jump to that line and column.
+
+The tool reports whether diagnostics have been received and whether a server is available, and supports other loaded documents in the same window. Reports are cached and can lag unsaved edits. Terminal build logs are not collected by this tool. See [Using diagnostics](editor-context-mcp.md#using-diagnostics) for paging and status details.
