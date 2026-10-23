@@ -26,4 +26,4 @@ Relative paths use the session's shell working directory (queried from macOS, wi
 
 ## Editor context for terminal agents
 
-The bundled read-only MCP server lets an agent query the current file, selected text, open documents, and unsaved buffer contents in its terminal's window. In a new terminal tab, run `tm-codex` to start Codex with editor context, or `tm-codex --check` to test the connection. Other MCP clients can obtain configuration with `"$TM_MCP_SERVER" --print-config`. See [Editor context MCP](editor-context-mcp.md) for setup and tool details.
+The bundled read-only MCP server lets an agent query the current file, selected text, open documents, and unsaved buffer contents in its terminal's window. In a new terminal tab, run `tm-codex` or `tm-claude` to start the corresponding agent with editor context. Either launcher accepts `--check` to test the connection. Other MCP clients can obtain configuration with `"$TM_MCP_SERVER" --print-config`. See [Editor context MCP](editor-context-mcp.md) for setup and tool details.
