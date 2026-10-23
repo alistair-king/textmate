@@ -7,7 +7,7 @@ void test_terminal_panel_layout ()
 	@autoreleasepool {
   NSView* content = [[NSView alloc] initWithFrame:NSZeroRect];
   TerminalPanelViewController* controller = [[TerminalPanelViewController alloc] initWithContentView:content];
-  // Exercise a fixed layout regardless of the default placement or saved sizes.
+  // Test a defined geometry independently of the user's saved panel settings.
   controller.panelPosition = @"right";
   controller.panelWidth = 320;
   controller.panelHeight = 220;

@@ -1,3 +1,8 @@
+#include <cmath>
+#import "EditorContextService.h"
+#import "EditorContextBuffer.h"
+#import <EditorContextProtocol.h>
+#import <document/OakDocument Private.h>
 #import "DocumentWindowController.h"
 #import "ProjectLayoutView.h"
 #import "TerminalPanelViewController.h"
@@ -116,6 +121,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic, readwrite) OakDocument*           selectedDocument;
 @property (nonatomic) NSArrayController*                arrayController;
 
+- (EditorContextSnapshot*)editorContextForMethod:(NSString*)method arguments:(NSDictionary*)arguments;
 + (void)scheduleSessionBackup:(id)sender;
 
 - (void)makeTextViewFirstResponder:(id)sender;
@@ -170,6 +176,62 @@ namespace
 static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontScaleFactor", @"textView.themeUUID", @"selectedDocument.fileType", @"selectedDocument", @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
 
 @implementation DocumentWindowController
+
+static NSDictionary* ContextDocument(OakDocument* document)
+{
+    return @{ @"documentId": document.identifier.UUIDString,
+              @"path": document.path ?: (id)NSNull.null,
+              @"name": document.displayName ?: @"Untitled",
+              @"language": document.fileType ?: @"",
+              @"modified": @(document.isDocumentEdited),
+              @"loaded": @(document.isLoaded),
+              @"revision": document.isLoaded ? [NSString stringWithFormat:@"%zu:%lu", [document buffer].revision(), (unsigned long)[EditorContextService.sharedService contentGenerationForDocument:document]] : (id)NSNull.null };
+}
+
+- (EditorContextSnapshot*)editorContextForMethod:(NSString*)method arguments:(NSDictionary*)arguments
+{
+    if(NSString* error = editor_context::validate_arguments(method, arguments))
+        return [EditorContextSnapshot response:editor_context::failure(error, @"invalid_arguments")];
+    NSDictionary* base = @{ @"windowId": self.identifier.UUIDString,
+                            @"projectPath": self.projectPath ?: (id)NSNull.null,
+                            @"coordinateEncoding": @"utf-16",
+                            @"offsetBase": @0, @"lineBase": @1, @"columnBase": @1 };
+    if([method isEqual:@"get_connection_status"])
+        return [EditorContextSnapshot response:@{ @"windowId": self.identifier.UUIDString,
+                    @"documentName": self.selectedDocument.displayName ?: @"none", @"status": @"connected" }];
+    if([method isEqual:@"list_open_documents"]) {
+        NSMutableArray* documents = [NSMutableArray array];
+        for(OakDocument* document in self.documents) {
+            if(documents.count == 256) break;
+            [documents addObject:ContextDocument(document)];
+        }
+        NSMutableDictionary* result = [base mutableCopy];
+        result[@"documents"] = documents;
+        result[@"truncated"] = @(self.documents.count > documents.count);
+        return [EditorContextSnapshot response:result];
+    }
+    OakDocument* document = self.selectedDocument;
+    if([method isEqual:@"read_document"]) {
+        document = nil;
+        for(OakDocument* candidate in self.documents)
+            if([candidate.identifier.UUIDString isEqual:arguments[@"documentId"]]) { document = candidate; break; }
+        if(!document || !document.isLoaded)
+            return [EditorContextSnapshot response:editor_context::failure(@"Document is not loaded in this window", @"document_unavailable")];
+    }
+    if(!document || !document.isLoaded) {
+        NSMutableDictionary* result = [base mutableCopy];
+        result[@"document"] = document ? ContextDocument(document) : (id)NSNull.null;
+        return [EditorContextSnapshot response:result];
+    }
+    NSDictionary* metadata = ContextDocument(document);
+    EditorContextBuffer* buffer = [EditorContextBuffer bufferForDocument:document revision:metadata[@"revision"]];
+    ng::ranges_t ranges = [method isEqual:@"get_editor_context"] ? [self.textView editorContextByteRanges] : ng::ranges_t();
+    NSUInteger caret = [self.textView editorContextCaretByteOffset];
+    return [EditorContextSnapshot renderer:^NSDictionary*(double deadline){
+        return [buffer responseForMethod:method arguments:arguments base:base document:metadata ranges:ranges caret:caret deadline:deadline];
+    }];
+}
+
 + (KVDB*)sharedProjectStateDB
 {
 	NSString* appSupport = [[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) objectAtIndex:0] stringByAppendingPathComponent:@"TextMate"];
@@ -214,7 +276,15 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 		self.terminalPanelController.terminalDirectoryProvider = ^{
 			return terminalOwner.terminalStartDirectory ?: NSHomeDirectory();
 		};
-		self.terminalPanelController.openTerminalFile = ^(NSURL* url, NSInteger line, NSInteger column){
+		self.terminalPanelController.contextEnvironmentProvider = ^(NSUUID* session){
+            return [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString* method, NSDictionary* arguments){
+                return [terminalOwner editorContextForMethod:method arguments:arguments];
+            }];
+        };
+        self.terminalPanelController.contextSessionClosed = ^(NSUUID* session){
+            [EditorContextService.sharedService revokeSession:session];
+        };
+        self.terminalPanelController.openTerminalFile = ^(NSURL* url, NSInteger line, NSInteger column){
 			NSMutableDictionary* item = [@{ @"path": url.path } mutableCopy];
 			if(line > 0) item[@"selectionString"] = [NSString stringWithFormat:@"%ld:%ld", (long)line, (long)MAX(1, column)];
 			[terminalOwner openItems:@[ item ] closingOtherTabs:NO activate:YES];
