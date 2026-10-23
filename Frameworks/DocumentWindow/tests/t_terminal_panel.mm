@@ -35,7 +35,6 @@ static void LayOut (NSWindow* window, NSSize size)
 void test_terminal_panel_layout ()
 {
 	dispatch_sync(dispatch_get_main_queue(), ^{
-<<<<<<< HEAD
 		@autoreleasepool
 		{
 			[NSApplication sharedApplication];
@@ -108,45 +107,6 @@ void test_terminal_panel_content_is_not_frame_pinned ()
 			[window.contentView layoutSubtreeIfNeeded];
 			OAK_ASSERT(NSHeight(content.frame) >= 400);
 		}
-=======
-	@autoreleasepool {
-  NSView* content = [[NSView alloc] initWithFrame:NSZeroRect];
-  TerminalPanelViewController* controller = [[TerminalPanelViewController alloc] initWithContentView:content];
-  // Test a defined geometry independently of the user's saved panel settings.
-  controller.panelPosition = @"right";
-  controller.panelWidth = 320;
-  controller.panelHeight = 220;
-  NSSplitView* split = (NSSplitView*)controller.view;
-  split.frame = NSMakeRect(0, 0, 1000, 700);
-  [split adjustSubviews];
-  OAK_ASSERT(split.subviews.count == 1 && NSWidth(content.frame) == 1000);
-  controller.panelVisible = YES;
-  OAK_ASSERT(split.subviews.count == 2 && split.subviews[0] == content);
-  OAK_ASSERT(NSWidth(split.subviews[1].frame) == 320);
-  controller.panelPosition = @"left";
-  OAK_ASSERT(split.subviews[1] == content && NSMinX(content.frame) > 0);
-  controller.panelPosition = @"bottom";
-  OAK_ASSERT(!split.isVertical && split.subviews[0] == content);
-  OAK_ASSERT(NSHeight(split.subviews[1].frame) == 220);
-  controller.panelHeight = 260;
-  controller.panelPosition = @"right";
-  controller.panelWidth = 380;
-  split.frame = NSMakeRect(0, 0, 400, 300);
-  [split adjustSubviews];
-  OAK_ASSERT(NSWidth(content.frame) >= 240);
-  OAK_ASSERT(controller.panelWidth == 380);
-  split.frame = NSMakeRect(0, 0, 1000, 700);
-  [split adjustSubviews];
-  OAK_ASSERT(NSWidth(split.subviews[1].frame) == 380);
-  controller.panelVisible = NO;
-  OAK_ASSERT(split.subviews.count == 1 && NSWidth(content.frame) == 1000);
-  controller.panelVisible = YES;
-  controller.panelPosition = @"bottom";
-  OAK_ASSERT(NSHeight(split.subviews[1].frame) == 260);
-  controller.panelPosition = @"invalid";
-  OAK_ASSERT([controller.panelPosition isEqualToString:@"bottom"]);
- }
->>>>>>> 1d411b5e (Initial implementation of MCP)
 	});
 }
 

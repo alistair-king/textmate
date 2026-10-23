@@ -186,12 +186,8 @@ typedef NS_ENUM(NSInteger, TerminalDividerDrag) {
 		_terminalController.shellPath = self.terminalShellPath;
 		_terminalController.shellArguments = self.terminalShellArguments;
 		_terminalController.delegate = self;
-		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
 		_terminalController.contextEnvironmentProvider = self.contextEnvironmentProvider;
 		_terminalController.contextSessionClosed = self.contextSessionClosed;
-		_terminalController.openFile = ^(NSURL* url, NSInteger line, NSInteger column){
-			if(weakSelf.openTerminalFile) weakSelf.openTerminalFile(url, line, column);
-		};
 		[_panelView removeFromSuperview];
 		_panelView = _terminalController.view;
 		[self rebuildLayout];
@@ -289,6 +285,16 @@ typedef NS_ENUM(NSInteger, TerminalDividerDrag) {
 	self.panelPosition = source.panelPosition;
 	self.panelWidth    = source.panelWidth;
 	self.panelHeight   = source.panelHeight;
+}
+
+- (BOOL)startCommand:(NSString*)executable arguments:(NSArray<NSString*>*)arguments title:(NSString*)title inDirectory:(NSString*)directory
+{
+#if HAVE_OAK_SWIFTUI
+	[self prepareTerminalController];
+	return [_terminalController startCommandWithExecutable:executable arguments:arguments title:title inDirectory:directory ?: NSHomeDirectory()];
+#else
+	return NO;
+#endif
 }
 
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection

@@ -12,12 +12,9 @@ extern NSString* const kTerminalPanelPositionBottom;
 @interface TerminalPanelViewController : NSViewController
 @property (nonatomic) BOOL panelVisible;
 @property (nonatomic, copy) NSString* (^terminalDirectoryProvider)(void);
-<<<<<<< HEAD
 @property (nonatomic, copy) NSDictionary<NSString*, NSString*>* (^terminalEnvironmentProvider)(NSString* directory); // base environment for new shells
-=======
 @property (nonatomic, copy) NSDictionary<NSString*, NSString*>* (^contextEnvironmentProvider)(NSUUID*);
 @property (nonatomic, copy) void (^contextSessionClosed)(NSUUID*);
->>>>>>> 1d411b5e (Initial implementation of MCP)
 @property (nonatomic, copy) NSString* panelPosition; // left, right, bottom
 @property (nonatomic) CGFloat panelWidth;
 @property (nonatomic) CGFloat panelHeight;
@@ -40,6 +37,7 @@ extern NSString* const kTerminalPanelPositionBottom;
 - (void)simulateSessionAttentionAtIndex:(NSInteger)index state:(NSString*)state kind:(NSString*)kind;
 @property (nonatomic, readonly) BOOL hasTerminal; // YES once a shell has been started or received
 - (void)startTerminal; // starts the first shell in the directory from terminalDirectoryProvider
+- (BOOL)startCommand:(NSString*)executable arguments:(NSArray<NSString*>*)arguments title:(NSString*)title inDirectory:(NSString*)directory;
 - (void)focusTerminal;
 - (void)applyTerminalFont:(NSFont*)font;
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection;
