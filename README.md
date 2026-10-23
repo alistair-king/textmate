@@ -1,20 +1,12 @@
 # TextMate
 
-## Download
-
-Install this fork via Homebrew:
-
-```sh
-brew install --cask tectiv3/textmate/textmate
-```
-
-Or download a signed and notarized build from the [releases page](https://github.com/tectiv3/textmate/releases).
-
-The official (upstream) TextMate is available [from macromates.com](https://macromates.com/download).
+## Description
+- Based on tectiv3/textmate, brionging in his great work on LSP.
+- Adds things I wished textmate had, for years.
 
 ## Feedback
 
-Use [GitHub Issues](https://github.com/tectiv3/textmate/issues) for bug reports and feature requests.
+Use [GitHub Issues](https://github.com/alistair-king/textmate/issues) for bug reports and feature requests.
 
 ## Screenshot
 
@@ -82,7 +74,7 @@ brew install ninja cmake
 ## Setup
 
 ```sh
-git clone --recursive https://github.com/tectiv3/textmate.git
+git clone --recursive https://github.com/alistair-king/textmate.git
 cd textmate
 make run
 ```

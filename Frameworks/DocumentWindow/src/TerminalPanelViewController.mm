@@ -1,6 +1,8 @@
 #import "TerminalPanelViewController.h"
 #import "TerminalTabBarController.h"
-#import "OakSwiftUI-Swift.h"
+#if HAVE_OAK_SWIFTUI
+	#import "OakSwiftUI-Swift.h"
+#endif
 
 NSString* const kUserDefaultsTerminalPanelPlacementKey = @"terminalPanelPlacement";
 NSString* const kUserDefaultsTerminalPanelWidthKey     = @"terminalPanelWidth";
@@ -21,8 +23,10 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 
 @interface TerminalPanelViewController () <NSSplitViewDelegate>
 @property (nonatomic) TerminalPanelSplitView* splitView;
+#if HAVE_OAK_SWIFTUI
 @property (nonatomic) OakTerminalPanelController* terminalController;
 @property (nonatomic) TerminalTabBarController* terminalTabBarController;
+#endif
 @property (nonatomic) NSArray<NSColor*>* terminalColors;
 @property (nonatomic) NSFont* terminalFont;
 @property (nonatomic) NSView* contentView;
@@ -88,6 +92,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 
 - (void)prepareTerminalController
 {
+#if HAVE_OAK_SWIFTUI
 	if(!_terminalController)
 	{
 		_terminalController = [[OakTerminalPanelController alloc] init];
@@ -97,6 +102,8 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 			if(weakSelf.detachSessionHandler) weakSelf.detachSessionHandler(identifier);
 		};
 		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
+		_terminalController.contextEnvironmentProvider = self.contextEnvironmentProvider;
+		_terminalController.contextSessionClosed = self.contextSessionClosed;
 		_terminalController.openFile = ^(NSURL* url, NSInteger line, NSInteger column){
 			if(weakSelf.openTerminalFile) weakSelf.openTerminalFile(url, line, column);
 		};
@@ -108,35 +115,63 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		[_terminalController applyFont:_terminalFont];
 	if(_terminalColors)
 		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3]];
+#endif
 }
 
 - (void)startTerminalInDirectory:(NSString*)directory
 {
+#if HAVE_OAK_SWIFTUI
 	[self prepareTerminalController];
 	[_terminalController startSessionInDirectory:directory ?: NSHomeDirectory()];
+#endif
 }
 
 - (void)takeTerminalSession:(NSUUID*)identifier fromPanel:(TerminalPanelViewController*)source
 {
+#if HAVE_OAK_SWIFTUI
 	[self prepareTerminalController];
 	[source.terminalController transferSessionWithIdentifier:identifier to:self.terminalController at:self.terminalController.sessionIdentifiers.count];
+#endif
 }
 
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection
 {
 	self.terminalColors = @[ background, foreground, caret, selection ];
+#if HAVE_OAK_SWIFTUI
 	[_terminalController applyThemeWithBackground:background foreground:foreground caret:caret selection:selection];
+#endif
 }
 
 - (void)applyTerminalFont:(NSFont*)font
 {
 	self.terminalFont = font;
+#if HAVE_OAK_SWIFTUI
 	[_terminalController applyFont:font];
+#endif
 }
 
-- (void)focusTerminal { [_terminalController focusTerminal]; }
-- (BOOL)confirmTerminalClose { return !_terminalController || [_terminalController confirmClose]; }
-- (void)stopTerminal { [_terminalController stopSession]; }
+- (void)focusTerminal
+{
+#if HAVE_OAK_SWIFTUI
+	[_terminalController focusTerminal];
+#endif
+}
+
+- (BOOL)confirmTerminalClose
+{
+#if HAVE_OAK_SWIFTUI
+	return !_terminalController || [_terminalController confirmClose];
+#else
+	return YES;
+#endif
+}
+
+- (void)stopTerminal
+{
+#if HAVE_OAK_SWIFTUI
+	[_terminalController stopSession];
+#endif
+}
 
 - (void)setPanelVisible:(BOOL)visible
 {

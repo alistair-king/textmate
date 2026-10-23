@@ -322,3 +322,26 @@ import Darwin
     }
     Issue.record("Ctrl+K did not reach the focused terminal process")
 }
+
+@MainActor
+@Test func contextRegistrationFollowsTerminalLifetimeAndTransfers() throws {
+    _ = NSApplication.shared
+    let source = OakTerminalPanelController()
+    let destination = OakTerminalPanelController()
+    var owners: [UUID: String] = [:]
+    var closed: [UUID] = []
+    source.contextEnvironmentProvider = { owners[$0] = "source"; return [:] }
+    destination.contextEnvironmentProvider = { owners[$0] = "destination"; return [:] }
+    source.contextSessionClosed = { closed.append($0); owners.removeValue(forKey: $0) }
+    destination.contextSessionClosed = { closed.append($0); owners.removeValue(forKey: $0) }
+    source.startSession(inDirectory: NSTemporaryDirectory())
+    let identifier = try #require(source.sessionIdentifiers.first)
+    #expect(owners[identifier] == "source")
+    source.transferSession(identifier: identifier, to: destination, at: 0)
+    #expect(owners[identifier] == "destination")
+    source.stopSession()
+    #expect(closed.isEmpty)
+    destination.stopSession()
+    #expect(closed == [identifier])
+    #expect(owners.isEmpty)
+}
