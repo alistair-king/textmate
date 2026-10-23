@@ -2,9 +2,7 @@
 
 ## Description
 - Based on tectiv3/textmate, brionging in his great work on LSP.
-- Adds things I wished textmate had:
--- a build in terminal panel, with multiple tabs
--- an MCP, so an AI running in the terminal can interact with the editor
+- Adds things I wished textmate had: a built in terminal panel, with multiple tabs, an MCP, so an AI running in the terminal can interact with the editor.
 
 ## Feedback
 
@@ -368,3 +366,14 @@ TextMate is a trademark of Allan Odgaard.
 [ninja]:         https://ninja-build.org/
 [cmake]:         https://cmake.org/
 [Homebrew]:      https://brew.sh/
+
+
+# Terminal
+
+- Access via Cmd+`
+- add other panes with + button, bottom left.
+- appearance is based on editor theme, but I am continuing to work on this.
+
+# MCP
+- works for codex, claude and opencode.
+- easily access by running tm-codex, tm-claude, or tm-popencode.
