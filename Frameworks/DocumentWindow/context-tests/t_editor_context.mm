@@ -2,11 +2,14 @@
 #import <EditorContextProtocol.h>
 #import "../src/EditorContextService.h"
 #import "../src/EditorContextBuffer.h"
+#import "../src/EditorContextDiagnostics.h"
 #import "../src/SelectionExplanation.h"
 #import "../src/TerminalPanelViewController.h"
 #import "../src/DocumentWindowController.h"
 #import <OakTextView/OakTextView.h>
 #import <document/OakDocument.h>
+#import <lsp/LSPManager.h>
+#import <lsp/LSPClient.h>
 #include <sys/un.h>
 
 #import "EditorContextTestAccess.h"
@@ -162,6 +165,123 @@ void test_selection_explanation_snapshot_and_validation ()
         [window close];
         [DocumentWindowController enableSessionSave];
     });
+}
+
+void test_editor_context_diagnostics_reports_and_window_boundary ()
+{
+    NSString* directory = [@"/tmp/tm-diagnostic-test-" stringByAppendingString:NSUUID.UUID.UUIDString];
+    OAK_ASSERT([NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil]);
+    NSString* path = [directory stringByAppendingPathComponent:@"a file 😀.txt"];
+    OAK_ASSERT([@"A😀B\nlast\n" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    __block DocumentWindowController* window;
+    __block OakDocument* document;
+    __block OakDocument* foreign;
+    __block EditorContextSnapshot* snapshot;
+    __block BOOL loaded = NO;
+    __block NSString* capturedReport;
+    dispatch_semaphore_t ready = dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        document = [OakDocument documentWithPath:path];
+        document.fileType = @"text.plain";
+        foreign = [OakDocument documentWithString:@"not in this window" fileType:@"text.plain" customName:@"foreign"];
+        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+            loaded = status == OakDocumentIOResultSuccess;
+            dispatch_semaphore_signal(ready);
+        }];
+    });
+    OAK_ASSERT(dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0 && loaded);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setDocuments:@[document]];
+        [window setSelectedDocument:document];
+        LSPManager* manager = LSPManager.sharedManager;
+        NSDictionary* result = [window testEditorContextForMethod:@"get_diagnostics" arguments:@{}];
+        OAK_ASSERT([result[@"status"] isEqual:@"unavailable"]);
+        OAK_ASSERT(result[@"reportId"] == NSNull.null);
+        ContextDiagnosticTestClient* client = [ContextDiagnosticTestClient new];
+        client.running = client.initialized = YES;
+        NSMutableDictionary* clients = [manager valueForKey:@"documentClients"];
+        clients[document.identifier] = client;
+        result = [window testEditorContextForMethod:@"get_diagnostics" arguments:@{}];
+        OAK_ASSERT([result[@"status"] isEqual:@"pending"]);
+        OAK_ASSERT([result[@"serverStatus"] isEqual:@"running"]);
+        NSString* uri = [NSURL fileURLWithPath:path].absoluteString;
+        [(id<LSPClientDelegate>)manager lspClient:nil didReceiveDiagnostics:@[] forDocumentURI:uri];
+        result = [window testEditorContextForMethod:@"get_diagnostics" arguments:@{}];
+        OAK_ASSERT([result[@"status"] isEqual:@"reported"] && [result[@"totalCount"] integerValue] == 0);
+        NSString* emptyReport = result[@"reportId"];
+        NSMutableArray* diagnostics = [NSMutableArray array];
+        for(NSUInteger severity = 1; severity <= 4; ++severity)
+            [diagnostics addObject:@{ @"line": @0, @"character": @3, @"endLine": @1, @"endCharacter": @2,
+                                     @"severity": @(severity), @"message": @"diagnostic 😀", @"code": severity == 1 ? (id)@123 : @"TEST",
+                                     @"source": @"test-server", @"data": @{ @"private": @"not exported" } }];
+        [(id<LSPClientDelegate>)manager lspClient:nil didReceiveDiagnostics:diagnostics forDocumentURI:uri];
+        [diagnostics removeAllObjects]; // The manager owns an immutable copy.
+        result = [window testEditorContextForMethod:@"get_diagnostics" arguments:@{ @"limit": @2 }];
+        OAK_ASSERT([result[@"diagnostics"] count] == 2);
+        OAK_ASSERT([result[@"totalCount"] integerValue] == 4 && [result[@"truncated"] boolValue]);
+        OAK_ASSERT([result[@"nextOffset"] integerValue] == 2);
+        NSDictionary* first = result[@"diagnostics"][0];
+        OAK_ASSERT([first[@"severity"] isEqual:@"error"] && [first[@"code"] integerValue] == 123);
+        OAK_ASSERT([first[@"source"] isEqual:@"test-server"] && first[@"data"] == nil);
+        OAK_ASSERT([first[@"range"][@"start"][@"line"] integerValue] == 1 && [first[@"range"][@"start"][@"column"] integerValue] == 4);
+        OAK_ASSERT([first[@"location"] isEqual:[path stringByAppendingString:@":1:4"]]);
+        OAK_ASSERT([result[@"freshness"] isEqual:@"unknown"]);
+        capturedReport = result[@"reportId"];
+        OAK_ASSERT(![capturedReport isEqual:emptyReport]);
+        result = [window testEditorContextForMethod:@"get_diagnostics" arguments:@{ @"documentId": document.identifier.UUIDString, @"offset": @2, @"reportId": capturedReport }];
+        OAK_ASSERT(![result[@"truncated"] boolValue] && [result[@"diagnostics"] count] == 2);
+        OAK_ASSERT([result[@"diagnostics"][0][@"severity"] isEqual:@"information"]);
+        OAK_ASSERT([result[@"diagnostics"][1][@"severity"] isEqual:@"hint"]);
+        OAK_ASSERT([[window testEditorContextForMethod:@"get_diagnostics" arguments:@{ @"documentId": foreign.identifier.UUIDString }][@"code"] isEqual:@"document_unavailable"]);
+        OAK_ASSERT([[window testEditorContextForMethod:@"get_diagnostics" arguments:@{ @"offset": @5 }][@"code"] isEqual:@"invalid_offset"]);
+        snapshot = [window editorContextForMethod:@"get_diagnostics" arguments:@{ @"limit": @100 }];
+        document.content = @"unsaved changes after capture";
+        [(id<LSPClientDelegate>)manager lspClient:nil didReceiveDiagnostics:@[] forDocumentURI:uri];
+        OAK_ASSERT([[window testEditorContextForMethod:@"get_diagnostics" arguments:@{ @"reportId": capturedReport }][@"code"] isEqual:@"diagnostics_changed"]);
+        [clients removeObjectForKey:document.identifier];
+    });
+    NSDictionary* captured = [snapshot renderBefore:editor_context::now()+3];
+    OAK_ASSERT([captured[@"diagnostics"] count] == 4 && [captured[@"reportId"] isEqual:capturedReport]);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setSelectedDocument:nil];
+        [window setDocuments:@[]];
+        [document close];
+        [foreign close];
+        [window close];
+        // These fixture reports have no real server lifecycle to clear them.
+        NSString* uri = [NSURL fileURLWithPath:path].absoluteString;
+        [[LSPManager.sharedManager valueForKey:@"diagnosticsByURI"] removeObjectForKey:uri];
+        [[LSPManager.sharedManager valueForKey:@"diagnosticReportIdentifiers"] removeObjectForKey:uri];
+        [DocumentWindowController enableSessionSave];
+    });
+    OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:directory error:nil]);
+}
+
+void test_editor_context_diagnostics_bounds_and_invalid_ranges ()
+{
+    NSString* message = [[@"x" stringByPaddingToLength:4095 withString:@"x" startingAtIndex:0] stringByAppendingString:@"😀suffix"];
+    NSDictionary* item = @{ @"line": @0, @"character": @1, @"endLine": @0, @"endCharacter": @2,
+                            @"message": message, @"severity": @2 };
+    NSMutableArray* many = [NSMutableArray array];
+    for(int i = 0; i < 100; ++i) [many addObject:item];
+    NSDictionary* report = @{ @"diagnostics": many, @"reportId": @"bounded", @"status": @"reported", @"serverStatus": @"running", @"pendingChanges": @NO, @"freshness": @"unknown" };
+    NSDictionary* result = EditorContextDiagnostics(report, @{}, @{}, @{ @"limit": @100 }, editor_context::now()+3);
+    OAK_ASSERT([result[@"diagnostics"] count] > 0 && [result[@"diagnostics"] count] < 100);
+    OAK_ASSERT([result[@"textTruncated"] boolValue] && [result[@"truncated"] boolValue]);
+    OAK_ASSERT([result[@"nextOffset"] integerValue] == [result[@"diagnostics"] count]);
+    OAK_ASSERT([result[@"diagnostics"][0][@"message"] length] == 4095); // No half of a surrogate pair.
+    OAK_ASSERT([NSJSONSerialization dataWithJSONObject:result options:0 error:nil].length < editor_context::message_limit);
+    NSMutableDictionary* invalid = [item mutableCopy];
+    invalid[@"line"] = @(-1);
+    NSMutableDictionary* invalidReport = [report mutableCopy];
+    invalidReport[@"diagnostics"] = @[invalid];
+    result = EditorContextDiagnostics(invalidReport, @{}, @{}, @{}, editor_context::now()+3);
+    OAK_ASSERT(result[@"diagnostics"][0][@"range"] == NSNull.null);
+    OAK_ASSERT([result[@"diagnostics"][0][@"invalidRange"] boolValue]);
+    OAK_ASSERT([EditorContextDiagnostics(report, @{}, @{}, @{}, editor_context::now()-1)[@"code"] isEqual:@"timeout"]);
 }
 
 void test_editor_context_large_immutable_snapshot ()
