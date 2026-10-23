@@ -3,6 +3,7 @@
 #import "../src/EditorContextService.h"
 #import "../src/EditorContextBuffer.h"
 #import "../src/EditorContextDiagnostics.h"
+#import "../src/EditorContextChanges.h"
 #import "../src/SelectionExplanation.h"
 #import "../src/TerminalPanelViewController.h"
 #import "../src/DocumentWindowController.h"
@@ -413,6 +414,79 @@ void test_editor_context_navigation_late_actions_and_session_transfer ()
     dispatch_sync(dispatch_get_main_queue(), ^{ [EditorContextService.sharedService revokeSession:session]; });
 }
 
+void test_editor_context_follow_changes_and_bounded_history ()
+{
+    __block DocumentWindowController* window;
+    __block OakDocument* first;
+    __block OakDocument* second;
+    dispatch_group_t loaded = dispatch_group_create();
+    __block BOOL success = YES;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        first = [OakDocument documentWithString:@"A😀B\n" fileType:@"text.plain" customName:@"first follow"];
+        second = [OakDocument documentWithString:@"second" fileType:@"text.plain" customName:@"second follow"];
+        for(OakDocument* document in @[first, second]) {
+            dispatch_group_enter(loaded);
+            [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+                success = success && status == OakDocumentIOResultSuccess;
+                dispatch_group_leave(loaded);
+            }];
+        }
+    });
+    OAK_ASSERT(dispatch_group_wait(loaded, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0 && success);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setDocuments:@[first, second]]; [window setSelectedDocument:first];
+        NSDictionary* initial = [window testEditorContextForMethod:@"get_editor_changes" arguments:@{}];
+        OAK_ASSERT([initial[@"reset"] boolValue] && [initial[@"changed"] boolValue]);
+        OAK_ASSERT([initial[@"context"][@"document"][@"documentId"] isEqual:first.identifier.UUIDString]);
+        NSString* cursor = initial[@"cursor"];
+        OAK_ASSERT([cursor isEqual:initial[@"context"][@"changeCursor"]]);
+        NSDictionary* unchanged = [window testEditorContextForMethod:@"get_editor_changes" arguments:@{ @"cursor": cursor }];
+        OAK_ASSERT(![unchanged[@"changed"] boolValue] && unchanged[@"context"] == nil);
+        OAK_ASSERT([[window testEditorContextForMethod:@"get_editor_change_token" arguments:@{}][@"cursor"] isEqual:cursor]);
+        window.textView.selectionString = @"1:2-1:6";
+        NSDictionary* selection = [window testEditorContextForMethod:@"get_editor_changes" arguments:@{ @"cursor": cursor }];
+        OAK_ASSERT([selection[@"changed"] boolValue] && ![selection[@"reset"] boolValue]);
+        OAK_ASSERT([[selection[@"events"] valueForKey:@"type"] containsObject:@"selection"]);
+        OAK_ASSERT([selection[@"context"][@"selections"][0][@"text"] isEqual:@"😀"]);
+        cursor = selection[@"cursor"];
+        first.content = @"edited without saving";
+        NSDictionary* content = [window testEditorContextForMethod:@"get_editor_changes" arguments:@{ @"cursor": cursor }];
+        OAK_ASSERT([[content[@"events"] valueForKey:@"type"] containsObject:@"content"]);
+        OAK_ASSERT(![content[@"context"][@"document"][@"revision"] isEqual:initial[@"context"][@"document"][@"revision"]]);
+        cursor = content[@"cursor"];
+        [window setSelectedDocument:second];
+        NSDictionary* switched = [window testEditorContextForMethod:@"get_editor_changes" arguments:@{ @"cursor": cursor }];
+        OAK_ASSERT([[switched[@"events"] valueForKey:@"type"] containsObject:@"document"]);
+        OAK_ASSERT([switched[@"context"][@"document"][@"documentId"] isEqual:second.identifier.UUIDString]);
+        cursor = switched[@"cursor"];
+        first.content = @"inactive document edit";
+        NSDictionary* inactive = [window testEditorContextForMethod:@"get_editor_changes" arguments:@{ @"cursor": cursor }];
+        OAK_ASSERT([[inactive[@"events"] valueForKey:@"documentId"] containsObject:first.identifier.UUIDString]);
+        OAK_ASSERT([inactive[@"context"][@"document"][@"documentId"] isEqual:second.identifier.UUIDString]);
+        cursor = inactive[@"cursor"];
+        [window setDocuments:@[second]];
+        NSDictionary* tabs = [window testEditorContextForMethod:@"get_editor_changes" arguments:@{ @"cursor": cursor }];
+        OAK_ASSERT([[tabs[@"events"] valueForKey:@"type"] containsObject:@"documents"]);
+        NSDictionary* foreign = [window testEditorContextForMethod:@"get_editor_changes" arguments:@{ @"cursor": @"another-window/0" }];
+        OAK_ASSERT([foreign[@"reset"] boolValue] && foreign[@"context"] != nil);
+        EditorContextChanges* journal = [EditorContextChanges new];
+        NSString* old = journal.cursor;
+        for(int i = 0; i < 200; ++i) [journal record:@"selection" documentId:second.identifier.UUIDString];
+        OAK_ASSERT([[journal changesAfter:old][@"reset"] boolValue]);
+        NSString* recent = journal.cursor;
+        [journal record:@"content" documentId:second.identifier.UUIDString];
+        NSDictionary* delta = [journal changesAfter:recent];
+        OAK_ASSERT(![delta[@"reset"] boolValue] && [delta[@"events"] count] == 1);
+        OAK_ASSERT(![[journal changesAfter:journal.cursor][@"changed"] boolValue]);
+        [window setSelectedDocument:nil]; [window setDocuments:@[]];
+        [first close]; [second close]; [window close];
+        [DocumentWindowController enableSessionSave];
+    });
+}
+
 void test_editor_context_large_immutable_snapshot ()
 {
     __block OakDocument* document;
@@ -509,6 +583,9 @@ void test_editor_context_real_terminal_transfer_and_window_close ()
         [first close];
     });
     OAK_ASSERT([context_test_query(firstEnvironment)[@"document"][@"documentId"] isEqual:secondDocument.identifier.UUIDString]);
+    NSDictionary* transferredChanges = context_test_query(firstEnvironment, @"get_editor_changes", @{ @"cursor": firstResult[@"changeCursor"] });
+    OAK_ASSERT([transferredChanges[@"reset"] boolValue]);
+    OAK_ASSERT([transferredChanges[@"context"][@"document"][@"documentId"] isEqual:secondDocument.identifier.UUIDString]);
     dispatch_sync(dispatch_get_main_queue(), ^{
         [second close];
         [firstDocument close]; [secondDocument close];

@@ -86,8 +86,13 @@ inline bool integer(id value, double maximum) {
 }
 inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
     if(![arguments isKindOfClass:NSDictionary.class]) return @"Expected object arguments";
-    if([method isEqual:@"get_editor_context"] || [method isEqual:@"list_open_documents"] || [method isEqual:@"get_connection_status"])
+    if([method isEqual:@"get_editor_context"] || [method isEqual:@"list_open_documents"] || [method isEqual:@"get_connection_status"] || [method isEqual:@"get_editor_change_token"])
         return arguments.count ? @"This tool takes no arguments" : nil;
+    if([method isEqual:@"get_editor_changes"]) {
+        for(NSString* key in arguments) if(![key isEqual:@"cursor"]) return @"Unknown argument";
+        if(arguments[@"cursor"] && (![arguments[@"cursor"] isKindOfClass:NSString.class] || ![arguments[@"cursor"] length] || [arguments[@"cursor"] length] > 256)) return @"cursor must be a nonempty string of at most 256 characters";
+        return nil;
+    }
     if([method isEqual:@"navigate_editor"]) {
         for(NSString* key in arguments)
             if(![@[@"documentId", @"path", @"line", @"column", @"endLine", @"endColumn", @"revision", @"focus"] containsObject:key]) return @"Unknown argument";
