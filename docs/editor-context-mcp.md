@@ -1,0 +1,94 @@
+# Querying TextMate from a terminal agent
+
+TextMate bundles a read-only MCP server, `textmate-mcp`, and a Codex launcher, `tm-codex`. Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
+
+## Start Codex
+
+Launch the updated TextMate app and open a **new terminal tab**, then run:
+
+```sh
+tm-codex
+```
+
+The launcher checks the editor connection, finds Codex CLI, and starts it with temporary MCP settings for this terminal. It preserves the current directory and forwards arguments, including prompts, model options, `exec`, and `resume`. For example:
+
+```sh
+tm-codex "Tell me which file is open and explain my selection"
+```
+
+The bundled command directory is added to new terminals' PATH. If a shell startup file replaces PATH entirely, run the launcher by its full path:
+
+```sh
+"${TM_MCP_SERVER%/*}/tm-codex"
+```
+
+Install and sign in to [Codex CLI](https://learn.chatgpt.com/docs/cli) first if necessary. The launcher checks PATH, the ChatGPT application's bundled CLI, and common Homebrew locations. Set `TM_CODEX_COMMAND` to the absolute executable path for another installation. Codex must support `--no-daemon`; this ensures a terminal uses its own connection environment rather than a previously started shared server. An older CLI reporting an unknown option needs updating.
+
+The launcher neither writes Codex configuration nor places session credentials in command arguments. It passes the names of the environment variables Codex must forward, as described in [Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp). User-supplied Codex configuration options still work and can override the launcher's settings.
+
+## Check the connection
+
+```sh
+tm-codex --check
+# or:
+"$TM_MCP_SERVER" --check
+```
+
+A successful check identifies the connected window and current document without reading document content. Errors distinguish missing environment variables, an unavailable service, permission denial, a closed or unauthorized session, an invalid response, and a timeout.
+
+Open a new terminal if its variables are missing. Restarting TextMate ends existing sessions; old credentials cannot reconnect. After rebuilding, restart the app to load the updated service. A new terminal tab alone does not update an already running application binary.
+
+## Other MCP clients
+
+Inside a TextMate terminal, run:
+
+```sh
+"$TM_MCP_SERVER" --print-config
+```
+
+This prints an `mcpServers` JSON entry with the helper's absolute path and explicit `TM_CONTEXT_SOCKET`, `TM_CONTEXT_SESSION`, and `TM_CONTEXT_TOKEN` values. Register that entry using the client's configuration mechanism. These connection values belong to this terminal; generate separate configuration for separate tabs. Do not commit generated credentials to a project.
+
+Clients supporting environment forwarding can pass those three variables from the launching shell instead. Explicit forwarding matters because MCP clients may inherit only a restricted environment. `TM_MCP_SERVER` holds the helper's absolute path.
+
+The helper runs without arguments as an MCP stdio server. Standard output contains protocol messages only. No Python, Node, TCP listener, or external service is needed by the TextMate integration at runtime. Codex CLI is installed separately.
+
+## Tools
+
+- `get_editor_context`: current document metadata, cursor, selections and selected text, plus roughly 2,048 UTF-16 code units around the cursor. Selected text has an 8,192-unit combined budget; at most 128 ranges are returned. Column selections expand into rows with the limit applied during expansion. Truncation is explicit.
+- `list_open_documents`: up to 256 document IDs and metadata in the associated window. Includes path (null for untitled documents), name, language, modified state, loaded state, and an opaque content revision.
+- `read_document`: reads a loaded document by `documentId`, with optional `offset` (default 0) and `length` (default 16,384; maximum 32,768). Returns text, total length, next offset, revision, and truncation status. It does not open arbitrary paths or load inactive buffers.
+
+Offsets and lengths count **UTF-16 code units**, starting at zero. Line and column numbers start at one; lines split on LF. Ranges are half-open. Text boundaries preserve surrogate pairs, and reads reject offsets inside a pair. Continue with the returned `nextOffset` and compare document ID and revision between requests, since the user can edit between calls. A requested length of one at a supplementary character may return no text; request at least two units to advance.
+
+No-document context returns a null document. Closed windows, revoked sessions, foreign document IDs, malformed arguments, and unavailable services produce errors rather than falling back to another window or disk content.
+
+## Implementation
+
+`EditorContextService` owns one private Unix socket per application instance, in a mode-0700 temporary directory; the socket has mode 0600. Each terminal receives a separate random capability token. Every request validates credentials and resolves the terminal's current owning window. Terminal closure revokes its registration. Normal application termination removes the socket; an abrupt process kill may leave an inaccessible directory in the system temporary area.
+
+The main thread captures metadata, bounded raw selection ranges, and an immutable snapshot sharing the buffer's existing storage. Background workers build a sparse UTF-16/line index and extract only requested text. The index is reused for an unchanged buffer, and edits invalidate the cached snapshot. In-flight snapshots remain consistent even when the user edits or closes the document.
+
+Local requests have a three-second overall deadline, covering connection, I/O, main-thread scheduling, and rendering. Reads and writes use deadline-aware polling; a peer sending a slow trickle of bytes cannot extend the deadline. The service admits at most eight concurrent connections, and messages are limited to 1 MiB.
+
+The native helper implements MCP's stdio tools capability for protocol revisions 2024-11-05, 2025-03-26, 2025-06-18, and 2025-11-25. It validates initialization, waits for `notifications/initialized`, rejects invalid tool arguments and duplicate in-flight IDs, and remains able to process pings and cancellation while tool calls run. Cancellation suppresses the result; an outstanding editor request is allowed to finish within its deadline. Editor text is untrusted content for the agent to interpret.
+
+## Verification
+
+Build with `make debug` or `make release`. Both helpers are embedded and signed inside the application bundle. Run the native and executable regression tests with:
+
+```sh
+ctest --test-dir build-debug -R '^(EditorContext|DocumentWindow|selection|textmate-mcp)$' --output-on-failure
+```
+
+The tests cover live and immutable buffers, Unicode and pagination, multiple and rectangular selections, large documents, concurrent contexts in real windows, moving a live terminal, closure and revocation, launcher argument and path handling, initialization, cancellation, diagnostics, and slow-peer deadlines. If Codex is installed, an additional executable test checks the generated configuration with the actual CLI without invoking a model.
+
+An optional interoperability test uses the official MCP TypeScript SDK installed separately for development:
+
+```sh
+npm install --prefix /tmp/textmate-mcp-sdk --ignore-scripts @modelcontextprotocol/sdk
+node Applications/textmate-mcp/tests/test_sdk.mjs \
+  /tmp/textmate-mcp-sdk/node_modules/@modelcontextprotocol/sdk/dist/esm \
+  build-debug/Applications/textmate-mcp/textmate-mcp
+```
+
+Alternatively, set CMake's `TEXTMATE_MCP_SDK_DIR` to that SDK `dist/esm` directory to add the `textmate-mcp-sdk` CTest target. Tests need permission to create local Unix sockets, and AppKit tests require access to a graphical login session.

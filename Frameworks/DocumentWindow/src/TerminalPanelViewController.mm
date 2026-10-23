@@ -186,6 +186,12 @@ typedef NS_ENUM(NSInteger, TerminalDividerDrag) {
 		_terminalController.shellPath = self.terminalShellPath;
 		_terminalController.shellArguments = self.terminalShellArguments;
 		_terminalController.delegate = self;
+		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
+		_terminalController.contextEnvironmentProvider = self.contextEnvironmentProvider;
+		_terminalController.contextSessionClosed = self.contextSessionClosed;
+		_terminalController.openFile = ^(NSURL* url, NSInteger line, NSInteger column){
+			if(weakSelf.openTerminalFile) weakSelf.openTerminalFile(url, line, column);
+		};
 		[_panelView removeFromSuperview];
 		_panelView = _terminalController.view;
 		[self rebuildLayout];

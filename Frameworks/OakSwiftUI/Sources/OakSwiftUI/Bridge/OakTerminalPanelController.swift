@@ -111,6 +111,7 @@ private final class TerminalContainer: NSView {
         session.terminal.processDelegate = destination
         (session.terminal as? FileLinkTerminalView)?.owner = destination
         destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title, attention: session.attention), at: min(max(0, insertionIndex), destination.sessions.count))
+        _ = destination.contextEnvironmentProvider?(session.uuid)
         destination.applyFont(destination.terminalFont)
         destination.updateTerminalColors()
         destination.selectSession(id: newID)
@@ -125,12 +126,20 @@ private final class TerminalContainer: NSView {
             for session in closing { self.removeSession(id: session.id) }
         }
     }
+<<<<<<< HEAD:Frameworks/OakSwiftUI/Sources/OakSwiftUI/Bridge/OakTerminalPanelController.swift
     func requestOpenFile(_ url: URL, line: Int, column: Int) {
         delegate?.terminalPanel(self, openFile: url, line: line, column: column)
     }
     /// Replaces the account's login shell; used by tests so they do not depend on the user's rc files.
     @objc public var shellPath: String?
     @objc public var shellArguments: [String]?
+=======
+    @objc public var openFile: ((URL, Int, Int) -> Void)?
+    @objc public var workingDirectoryProvider: (() -> String)?
+    @objc public var contextEnvironmentProvider: ((UUID) -> [String: String])?
+    @objc public var contextSessionClosed: ((UUID) -> Void)?
+    private var directory = NSHomeDirectory()
+>>>>>>> 1d411b5e (Initial implementation of MCP):Frameworks/OakSwiftUI/Sources/OakSwiftUI/Terminal/OakTerminalPanelController.swift
     private var terminalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
     @objc public func applyFont(_ font: NSFont) {
@@ -216,7 +225,12 @@ private final class TerminalContainer: NSView {
         terminal.setAccessibilityLabel("Terminal")
         let id = nextID
         nextID += 1
+<<<<<<< HEAD:Frameworks/OakSwiftUI/Sources/OakSwiftUI/Bridge/OakTerminalPanelController.swift
         sessions.append(Session(id: id, uuid: UUID(), terminal: terminal, title: Self.defaultTitle(forID: id)))
+=======
+        let sessionUUID = UUID()
+        sessions.append(Session(id: id, uuid: sessionUUID, terminal: terminal, title: "Terminal \(id)"))
+>>>>>>> 1d411b5e (Initial implementation of MCP):Frameworks/OakSwiftUI/Sources/OakSwiftUI/Terminal/OakTerminalPanelController.swift
         updateTerminalColors()
         selectSession(id: id)
 
@@ -232,6 +246,17 @@ private final class TerminalContainer: NSView {
         environment["TERM_PROGRAM"] = "TextMate"
         environment["SHELL"] = shell
         environment["PWD"] = launchDirectory
+        for key in Array(environment.keys) where key.hasPrefix("TM_CONTEXT_") {
+            environment.removeValue(forKey: key)
+        }
+        environment.removeValue(forKey: "TM_MCP_SERVER")
+        environment.merge(contextEnvironmentProvider?(sessionUUID) ?? [:]) { _, new in new }
+        if let executable = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("textmate-mcp").path,
+           FileManager.default.isExecutableFile(atPath: executable) {
+            environment["TM_MCP_SERVER"] = executable
+            let directory = URL(fileURLWithPath: executable).deletingLastPathComponent().path
+            environment["PATH"] = directory + ":" + (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        }
         // Do not propagate the debug app's injected runtime into shell commands.
         for key in Array(environment.keys) where key.hasPrefix("DYLD_") || key == "ASAN_OPTIONS" {
             environment.removeValue(forKey: key)
@@ -304,7 +329,10 @@ private final class TerminalContainer: NSView {
     }
 
     @objc public func stopSession() {
-        for session in sessions { stop(terminal: session.terminal) }
+        for session in sessions {
+            contextSessionClosed?(session.uuid)
+            stop(terminal: session.terminal)
+        }
         sessions.removeAll()
         selectedID = nil
         if isViewLoaded { showSelectedSession() }
@@ -368,6 +396,7 @@ private final class TerminalContainer: NSView {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         let wasSelected = selectedID == id
         let hadFocus = (view.window?.firstResponder as? NSView)?.isDescendant(of: view) == true
+        contextSessionClosed?(sessions[index].uuid)
         stop(terminal: sessions[index].terminal)
         sessions.remove(at: index)
         if wasSelected { selectedID = sessions.isEmpty ? nil : sessions[min(index, sessions.count - 1)].id }

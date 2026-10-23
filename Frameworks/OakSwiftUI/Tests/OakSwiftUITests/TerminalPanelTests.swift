@@ -609,6 +609,7 @@ private func waitForRecords(_ terminal: LocalProcessTerminalView, _ state: Termi
     Issue.record("Ctrl+K did not reach the focused terminal process")
 }
 
+<<<<<<< HEAD
 /// A plain sh without rc files, so results do not depend on the user's login shell, prompt plugins or dotfiles.
 @MainActor
 func makeTerminalController() -> OakTerminalPanelController {
@@ -627,4 +628,27 @@ final class TerminalTestDelegate: NSObject, OakTerminalPanelControllerDelegate {
     func terminalPanel(_ panel: OakTerminalPanelController, openFile url: URL, line: Int, column: Int) { opened = (url, line, column) }
     func terminalPanelWorkingDirectory(_ panel: OakTerminalPanelController) -> String? { workingDirectory }
     func terminalPanelDidCloseLastSession(_ panel: OakTerminalPanelController) { lastSessionClosed += 1 }
+=======
+@MainActor
+@Test func contextRegistrationFollowsTerminalLifetimeAndTransfers() throws {
+    _ = NSApplication.shared
+    let source = OakTerminalPanelController()
+    let destination = OakTerminalPanelController()
+    var owners: [UUID: String] = [:]
+    var closed: [UUID] = []
+    source.contextEnvironmentProvider = { owners[$0] = "source"; return [:] }
+    destination.contextEnvironmentProvider = { owners[$0] = "destination"; return [:] }
+    source.contextSessionClosed = { closed.append($0); owners.removeValue(forKey: $0) }
+    destination.contextSessionClosed = { closed.append($0); owners.removeValue(forKey: $0) }
+    source.startSession(inDirectory: NSTemporaryDirectory())
+    let identifier = try #require(source.sessionIdentifiers.first)
+    #expect(owners[identifier] == "source")
+    source.transferSession(identifier: identifier, to: destination, at: 0)
+    #expect(owners[identifier] == "destination")
+    source.stopSession()
+    #expect(closed.isEmpty)
+    destination.stopSession()
+    #expect(closed == [identifier])
+    #expect(owners.isEmpty)
+>>>>>>> 1d411b5e (Initial implementation of MCP)
 }

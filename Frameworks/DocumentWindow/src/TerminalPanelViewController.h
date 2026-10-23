@@ -12,7 +12,12 @@ extern NSString* const kTerminalPanelPositionBottom;
 @interface TerminalPanelViewController : NSViewController
 @property (nonatomic) BOOL panelVisible;
 @property (nonatomic, copy) NSString* (^terminalDirectoryProvider)(void);
+<<<<<<< HEAD
 @property (nonatomic, copy) NSDictionary<NSString*, NSString*>* (^terminalEnvironmentProvider)(NSString* directory); // base environment for new shells
+=======
+@property (nonatomic, copy) NSDictionary<NSString*, NSString*>* (^contextEnvironmentProvider)(NSUUID*);
+@property (nonatomic, copy) void (^contextSessionClosed)(NSUUID*);
+>>>>>>> 1d411b5e (Initial implementation of MCP)
 @property (nonatomic, copy) NSString* panelPosition; // left, right, bottom
 @property (nonatomic) CGFloat panelWidth;
 @property (nonatomic) CGFloat panelHeight;
