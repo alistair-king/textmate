@@ -219,6 +219,8 @@ BOOL HasDocumentWindow (NSArray* windows)
 						{ @"Use Selection for Replace",   @selector(copySelectionToReplacePboard:), @"E"   },
 					}
 				},
+				{ @"Explain Selection…", @selector(explainSelection:), @"e", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
+				{ /* -------- */ },
 				{ @"Spelling",
 					.submenuRef = &spellingMenu, .submenu = {
 						{ @"Spelling…",                   @selector(showGuessPanel:),                @":"   },

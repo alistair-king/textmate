@@ -1,6 +1,7 @@
 #include <cmath>
 #import "EditorContextService.h"
 #import "EditorContextBuffer.h"
+#import "SelectionExplanation.h"
 #import <EditorContextProtocol.h>
 #import <document/OakDocument Private.h>
 #import "DocumentWindowController.h"
@@ -95,6 +96,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
 @property (nonatomic) ProjectLayoutView*          layoutView;
 @property (nonatomic) TerminalPanelViewController* terminalPanelController;
+@property (nonatomic) BOOL preparingSelectionExplanation;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -2026,6 +2028,68 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	[[self class] scheduleSessionBackup:self];
 }
 
+- (BOOL)canExplainSelection
+{
+#if HAVE_OAK_SWIFTUI
+	if(self.preparingSelectionExplanation || self.window.attachedSheet || !self.selectedDocument.isLoaded)
+		return NO;
+	for(auto const& range : [self.textView editorContextByteRanges])
+		if(range.min().index != range.max().index) return YES;
+#endif
+	return NO;
+}
+
+- (IBAction)explainSelection:(id)sender
+{
+	if(![self canExplainSelection]) { NSBeep(); return; }
+	// Capture before displaying the sheet or moving focus to the terminal.
+	EditorContextSnapshot* snapshot = [self editorContextForMethod:@"get_editor_context" arguments:@{}];
+	NSString* directory = [self.terminalStartDirectory copy];
+	self.preparingSelectionExplanation = YES;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NSString* error = nil;
+		NSString* prompt = SelectionExplanationPrompt([snapshot renderBefore:editor_context::now()+3], &error);
+		dispatch_async(dispatch_get_main_queue(), ^{
+			self.preparingSelectionExplanation = NO;
+			if(!self.window.isVisible || self.window.attachedSheet) return;
+			if(!prompt)
+			{
+				[[NSAlert tmAlertWithMessageText:@"Cannot Explain Selection" informativeText:error buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
+				return;
+			}
+			NSArray* agents = @[@"codex", @"claude", @"opencode"];
+			NSPopUpButton* choices = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 260, 26) pullsDown:NO];
+			[choices addItemsWithTitles:@[@"Codex", @"Claude Code", @"OpenCode"]];
+			choices.accessibilityLabel = @"Agent";
+			NSUInteger index = [agents indexOfObject:[NSUserDefaults.standardUserDefaults stringForKey:@"selectionExplanationAgent"] ?: @"codex"];
+			[choices selectItemAtIndex:index == NSNotFound ? 0 : index];
+			NSAlert* alert = [NSAlert tmAlertWithMessageText:@"Explain Selection" informativeText:@"Choose an installed agent to explain the selected text in a new terminal tab." buttons:@"Explain", @"Cancel", nil];
+			alert.accessoryView = choices;
+			[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
+				if(response != NSAlertFirstButtonReturn) return;
+				NSString* agent = agents[choices.indexOfSelectedItem];
+				NSString* launcher = [NSBundle.mainBundle.executablePath.stringByDeletingLastPathComponent stringByAppendingPathComponent:SelectionExplanationLauncher(agent)];
+				if(![NSFileManager.defaultManager isExecutableFileAtPath:launcher])
+				{
+					[[NSAlert tmAlertWithMessageText:@"Cannot Start Agent" informativeText:@"The bundled agent launcher is missing. Rebuild or reinstall TextMate." buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
+					return;
+				}
+				[NSUserDefaults.standardUserDefaults setObject:agent forKey:@"selectionExplanationAgent"];
+				self.terminalPanelController.panelVisible = YES;
+				[self updateTerminalTheme];
+				NSString* title = [NSString stringWithFormat:@"Explain · %@", choices.titleOfSelectedItem];
+				if(![self.terminalPanelController startCommand:launcher arguments:SelectionExplanationArguments(agent, prompt) title:title inDirectory:directory])
+				{
+					[[NSAlert tmAlertWithMessageText:@"Cannot Start Agent" informativeText:@"The terminal could not start the agent launcher." buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
+					return;
+				}
+				[self.terminalPanelController focusTerminal];
+				[[self class] scheduleSessionBackup:self];
+			}];
+		});
+	});
+}
+
 - (IBAction)takeTerminalPanelPositionFrom:(NSMenuItem*)sender
 {
 	self.terminalPanelController.panelPosition = sender.representedObject;
@@ -2431,6 +2495,8 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	BOOL active = YES;
 	if([menuItem action] == @selector(toggleTerminalPanel:))
 		[menuItem setTitle:self.terminalPanelController.panelVisible ? @"Hide Terminal Panel" : @"Show Terminal Panel"];
+	else if([menuItem action] == @selector(explainSelection:))
+		active = [self canExplainSelection];
 	else if([menuItem action] == @selector(takeTerminalPanelPositionFrom:))
 		menuItem.state = [self.terminalPanelController.panelPosition isEqual:menuItem.representedObject] ? NSControlStateValueOn : NSControlStateValueOff;
 	else if([menuItem action] == @selector(toggleFileBrowser:))
