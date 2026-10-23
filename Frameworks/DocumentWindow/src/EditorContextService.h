@@ -1,9 +1,13 @@
 #import <Foundation/Foundation.h>
 
-// Capture on the main thread; render the immutable snapshot on a worker thread.
+typedef void (^EditorContextAction)(double deadline, BOOL (^canCommit)(void), void (^completion)(NSDictionary*));
+
+// Capture on the main thread; await on a worker thread. Query snapshots render
+// there; navigation actions asynchronously return to the main thread to commit.
 @interface EditorContextSnapshot : NSObject
 + (instancetype)response:(NSDictionary*)response;
 + (instancetype)renderer:(NSDictionary* (^)(double deadline))renderer;
++ (instancetype)action:(EditorContextAction)action;
 - (NSDictionary*)renderBefore:(double)deadline;
 @end
 

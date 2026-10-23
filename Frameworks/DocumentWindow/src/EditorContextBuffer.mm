@@ -208,4 +208,30 @@ static char contextBufferCacheKey;
     }
     catch(context_timeout const&) { return editor_context::failure(@"The editor request timed out.", @"timeout"); }
 }
+
+- (NSDictionary*)navigationForArguments:(NSDictionary*)arguments deadline:(double)deadline
+{
+    try {
+        auto const& buffer = *_buffer;
+        _buffer->index(deadline);
+        NSUInteger line = [arguments[@"line"] unsignedIntegerValue];
+        NSUInteger column = arguments[@"column"] ? [arguments[@"column"] unsignedIntegerValue] : 1;
+        NSUInteger endLine = arguments[@"endLine"] ? [arguments[@"endLine"] unsignedIntegerValue] : line;
+        NSUInteger endColumn = arguments[@"endColumn"] ? [arguments[@"endColumn"] unsignedIntegerValue] : column;
+        auto byteForPosition = [&](NSUInteger row, NSUInteger col) -> size_t {
+            if(!row || row > buffer.lines() || !col) return NSNotFound;
+            auto begin = buffer.position(buffer.begin(row-1)), end = buffer.position(buffer.eol(row-1));
+            if(col-1 > end.units-begin.units) return NSNotFound;
+            return buffer.byte_at(begin.units+col-1);
+        };
+        size_t start = byteForPosition(line, column), end = byteForPosition(endLine, endColumn);
+        if(start == NSNotFound || end == NSNotFound || end < start)
+            return editor_context::failure(@"The requested position is outside the buffer or inside a UTF-16 surrogate pair.", @"invalid_position");
+        auto nativeStart = buffer.convert(start), nativeEnd = buffer.convert(end);
+        NSString* selection = [NSString stringWithFormat:@"%zu:%zu-%zu:%zu", nativeStart.line+1, nativeStart.column+1, nativeEnd.line+1, nativeEnd.column+1];
+        return @{ @"selectionString": selection,
+                  @"range": @{ @"start": position_json(buffer.position(start)), @"end": position_json(buffer.position(end)) } };
+    }
+    catch(context_timeout const&) { return editor_context::failure(@"The editor request timed out.", @"timeout"); }
+}
 @end

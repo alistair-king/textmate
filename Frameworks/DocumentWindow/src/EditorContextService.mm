@@ -9,6 +9,8 @@
 
 @interface EditorContextSnapshot ()
 @property (copy) NSDictionary* (^renderer)(double);
+@property (copy) EditorContextAction action;
+@property (copy) BOOL (^authorization)(void);
 @end
 @implementation EditorContextSnapshot
 + (instancetype)response:(NSDictionary*)response { return [self renderer:^NSDictionary*(double){ return response; }]; }
@@ -17,8 +19,30 @@
     snapshot.renderer = renderer;
     return snapshot;
 }
++ (instancetype)action:(EditorContextAction)action {
+    EditorContextSnapshot* snapshot = [[self alloc] init];
+    snapshot.action = action;
+    return snapshot;
+}
 - (NSDictionary*)renderBefore:(double)deadline {
     if(editor_context::now() >= deadline) return editor_context::failure(@"The editor request timed out.", @"timeout");
+    if(_action) {
+        if(NSThread.isMainThread) return editor_context::failure(@"Navigation must be awaited on a worker thread.", @"invalid_request");
+        __block NSDictionary* result;
+        dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            BOOL (^canCommit)(void) = ^{ return editor_context::now() < deadline && (!self.authorization || self.authorization()); };
+            if(!canCommit()) {
+                result = editor_context::failure(@"Navigation expired or its terminal session changed.", @"navigation_cancelled");
+                dispatch_semaphore_signal(finished);
+                return;
+            }
+            self.action(deadline, canCommit, ^(NSDictionary* response){ result = response; dispatch_semaphore_signal(finished); });
+        });
+        if(dispatch_semaphore_wait(finished, dispatch_time(DISPATCH_TIME_NOW, MAX(0.0, deadline-editor_context::now()) * NSEC_PER_SEC)))
+            return editor_context::failure(@"The editor request timed out.", @"timeout");
+        return result;
+    }
     return _renderer(deadline);
 }
 @end
@@ -135,6 +159,11 @@
     NSDictionary* entry = _registrations[session];
     if(!entry || ![entry[@"token"] isEqual:token]) return [EditorContextSnapshot response:editor_context::failure(@"This terminal session has closed or its credentials are invalid.", @"session_unavailable")];
     EditorContextProvider provider = entry[@"provider"];
-    return provider(method, arguments) ?: [EditorContextSnapshot response:editor_context::failure(@"The editor window has closed.", @"window_closed")];
+    EditorContextSnapshot* snapshot = provider(method, arguments);
+    // A terminal transfer replaces its registration even though credentials stay
+    // stable. Delayed navigation must not act in its former window after a move.
+    __weak EditorContextService* weakSelf = self;
+    snapshot.authorization = ^{ return weakSelf.registrations[session] == entry; };
+    return snapshot ?: [EditorContextSnapshot response:editor_context::failure(@"The editor window has closed.", @"window_closed")];
 }
 @end
