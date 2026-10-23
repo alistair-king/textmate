@@ -719,7 +719,7 @@ static std::string detectWorkspaceRoot (std::string const& filePath)
 	NSAssert(NSThread.isMainThread, @"Capture diagnostics on the main thread");
 	NSString* uri = document.path ? [NSURL fileURLWithPath:document.path].absoluteString : nil;
 	NSArray* diagnostics = uri ? _diagnosticsByURI[uri] : nil;
-	NSString* serverStatus = [self serverStatusForDocument:document] ?: @"unavailable";
+	NSString* serverStatus = uri ? ([self serverStatusForDocument:document] ?: @"unavailable") : @"unavailable";
 	return @{ @"diagnostics": [diagnostics copy] ?: @[],
 	          @"reportId": (uri ? _diagnosticReportIdentifiers[uri] : nil) ?: (id)NSNull.null,
 	          @"status": diagnostics ? @"reported" : ([serverStatus isEqual:@"unavailable"] ? @"unavailable" : @"pending"),
