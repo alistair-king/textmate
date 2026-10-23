@@ -84,7 +84,7 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-11-25")
         tools = replies[1]["result"]["tools"]
         self.assertEqual([t["name"] for t in tools],
-                         ["get_editor_context", "list_open_documents", "read_document"])
+                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics"])
         self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools))
         self.assertEqual(replies[2]["result"], {})
         self.assertEqual(replies[3]["error"]["code"], -32601)
@@ -96,6 +96,30 @@ class MCPTests(unittest.TestCase):
                                   request(1, "initialize", protocolVersion="future", capabilities={}, clientInfo={"name": "test", "version": "1"})])
         self.assertEqual(replies[0]["error"]["code"], -32000)
         self.assertEqual(replies[1]["result"]["protocolVersion"], "2025-11-25")
+
+    def test_diagnostic_forwarding_and_argument_validation(self):
+        received = []
+        expected = {"documentId": "open-document", "offset": 2, "limit": 3, "reportId": "report-1"}
+        def report(message, _):
+            received.append(message)
+            return {"status": "reported", "diagnostics": [{"severity": "warning", "message": "Example 😀"}], "reportId": "report-1"}
+        with context_server(report) as environment:
+            replies = self.run_server([INITIALIZE, READY, request(2, "tools/call", name="get_diagnostics", arguments=expected),
+                                       request(3, "tools/call", name="get_diagnostics")], environment)
+        self.assertEqual({m["method"] for m in received}, {"get_diagnostics"})
+        self.assertCountEqual([m["arguments"] for m in received], [expected, {}])
+        by_id = {reply["id"]: reply for reply in replies}
+        value = json.loads(by_id[2]["result"]["content"][0]["text"])
+        self.assertEqual(value["diagnostics"][0]["message"], "Example 😀")
+        self.assertFalse(by_id[2]["result"]["isError"])
+        invalid = [{"documentId": ""}, {"documentId": 1}, {"reportId": ""}, {"reportId": False},
+                   {"offset": True}, {"offset": -1}, {"offset": 0.5}, {"limit": 0}, {"limit": 101},
+                   {"limit": True}, {"severity": "error"}]
+        replies = self.run_server([INITIALIZE, READY] + [
+            request(index + 2, "tools/call", name="get_diagnostics", arguments=arguments)
+            for index, arguments in enumerate(invalid)])
+        self.assertEqual(len(replies), 1 + len(invalid))
+        self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
 
     def test_malformed_and_oversized_input_recovers(self):
         data = '{broken\n' + 'x' * (1024 * 1024 + 1) + '\n' + json.dumps(INITIALIZE) + '\n'

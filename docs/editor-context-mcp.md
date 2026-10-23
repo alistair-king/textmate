@@ -103,10 +103,23 @@ The helper runs without arguments as an MCP stdio server. Standard output contai
 - `get_editor_context`: current document metadata, cursor, selections and selected text, plus roughly 2,048 UTF-16 code units around the cursor. Selected text has an 8,192-unit combined budget; at most 128 ranges are returned. Column selections expand into rows with the limit applied during expansion. Truncation is explicit.
 - `list_open_documents`: up to 256 document IDs and metadata in the associated window. Includes path (null for untitled documents), name, language, modified state, loaded state, and an opaque content revision.
 - `read_document`: reads a loaded document by `documentId`, with optional `offset` (default 0) and `length` (default 16,384; maximum 32,768). Returns text, total length, next offset, revision, and truncation status. It does not open arbitrary paths or load inactive buffers.
+- `get_diagnostics`: cached language-server diagnostics for the current document, or an optional `documentId` from `list_open_documents`. The document must be loaded in the terminal's window. Returns document metadata, messages, severity (`error`, `warning`, `information`, `hint`, or `unknown`), optional source and code, and one-based UTF-16 ranges with exclusive ends. A `location` such as `/path/to/file:12:4` can be repeated in the agent's reply and Command-clicked in the terminal to jump to the source. Invalid server ranges are explicitly marked instead of inventing a location.
 
 Offsets and lengths count **UTF-16 code units**, starting at zero. Line and column numbers start at one; lines split on LF. Ranges are half-open. Text boundaries preserve surrogate pairs, and reads reject offsets inside a pair. Continue with the returned `nextOffset` and compare document ID and revision between requests, since the user can edit between calls. A requested length of one at a supplementary character may return no text; request at least two units to advance.
 
 No-document context returns a null document. Closed windows, revoked sessions, foreign document IDs, malformed arguments, and unavailable services produce errors rather than falling back to another window or disk content.
+
+### Using diagnostics
+
+Ask a connected agent: **“Read TextMate's diagnostics for the current file, explain the errors and warnings, and include source locations.”** To inspect other files, the agent can list open documents and call `get_diagnostics` for each loaded document ID.
+
+`get_diagnostics` accepts `offset` (default 0) and `limit` (default 50, maximum 100). These offsets count diagnostic entries, not text characters. Follow `nextOffset` while `truncated` is true. Pass the returned `reportId` with subsequent pages; an updated or cleared report produces `diagnostics_changed`, and the agent should restart at offset 0 without that ID. Capture the returned `documentId` when paging the current file so switching editor tabs cannot change the target.
+
+`status` is `reported` when a report has been received, including a report with zero diagnostics; `pending` when a language server is starting or running without a report; and `unavailable` when no report or active server exists. `serverStatus` independently reports `starting`, `running`, `indexing`, or `unavailable`, including when an older report is cached after a server stops. `pendingChanges` indicates edits still waiting to be sent to the server. `freshness` is `unknown`: a cached diagnostic report is not guaranteed to match the current buffer revision, even when there are no pending changes. The document revision describes the buffer at query time, not the version used to produce diagnostics.
+
+Messages are capped at 4,096 UTF-16 units, source/code strings at 256, and location strings at 2,048, preserving surrogate pairs. Each page has a combined 32,768-unit string budget and may contain fewer entries than requested. `textTruncated` on an entry and on the response flags shortened fields; it is independent of page `truncated`. Opaque code-action data is not exported.
+
+This reads the same language-server reports used by TextMate's inline diagnostics. It does not launch a server, trigger analysis, run a build, or parse output from terminal commands or bundle build actions. No diagnostics available is not evidence that a build succeeds. All four editor tools remain read-only.
 
 ## Implementation
 

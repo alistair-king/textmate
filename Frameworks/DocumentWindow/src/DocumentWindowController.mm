@@ -1,9 +1,11 @@
 #include <cmath>
 #import "EditorContextService.h"
 #import "EditorContextBuffer.h"
+#import "EditorContextDiagnostics.h"
 #import "SelectionExplanation.h"
 #import <EditorContextProtocol.h>
 #import <document/OakDocument Private.h>
+#import <lsp/LSPManager.h>
 #import "DocumentWindowController.h"
 #import "ProjectLayoutView.h"
 #import "TerminalPanelViewController.h"
@@ -213,12 +215,21 @@ static NSDictionary* ContextDocument(OakDocument* document)
         return [EditorContextSnapshot response:result];
     }
     OakDocument* document = self.selectedDocument;
-    if([method isEqual:@"read_document"]) {
+    if([method isEqual:@"read_document"] || ([method isEqual:@"get_diagnostics"] && arguments[@"documentId"])) {
         document = nil;
         for(OakDocument* candidate in self.documents)
             if([candidate.identifier.UUIDString isEqual:arguments[@"documentId"]]) { document = candidate; break; }
         if(!document || !document.isLoaded)
             return [EditorContextSnapshot response:editor_context::failure(@"Document is not loaded in this window", @"document_unavailable")];
+    }
+    if([method isEqual:@"get_diagnostics"]) {
+        if(!document || !document.isLoaded)
+            return [EditorContextSnapshot response:editor_context::failure(@"Document is not loaded in this window", @"document_unavailable")];
+        NSDictionary* metadata = ContextDocument(document);
+        NSDictionary* report = [LSPManager.sharedManager diagnosticReportForDocument:document];
+        return [EditorContextSnapshot renderer:^NSDictionary*(double deadline){
+            return EditorContextDiagnostics(report, base, metadata, arguments, deadline);
+        }];
     }
     if(!document || !document.isLoaded) {
         NSMutableDictionary* result = [base mutableCopy];
