@@ -209,6 +209,28 @@ private final class TerminalContainer: NSView {
         terminal.startProcess(executable: shell, args: ["-l"], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
     }
 
+    // Run before AppKit's key-equivalent search: the editor and global bundle menu
+    // can otherwise claim a terminal shortcut before the focused view sees it.
+    func handleTerminalKeyEvent(_ event: NSEvent, source: LocalProcessTerminalView) -> Bool {
+        guard event.type == .keyDown, let window = source.window,
+              event.window === window, window.firstResponder === source,
+              terminal === source else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers.contains(.control) && !modifiers.contains(.command) {
+            source.keyDown(with: event)
+            return true
+        }
+        if modifiers == [.command] && event.charactersIgnoringModifiers == "k" {
+            clearTerminal()
+            return true
+        }
+        if modifiers == [.command, .option] && (event.keyCode == 123 || event.keyCode == 124) {
+            selectAdjacentSession(forward: event.keyCode == 124)
+            return true
+        }
+        return false
+    }
+
     @objc public func focusTerminal() {
         view.window?.makeFirstResponder(terminal ?? view)
     }
