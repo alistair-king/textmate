@@ -36,7 +36,10 @@ static NSDictionary* diagnostic_entry(NSDictionary* diagnostic, NSDictionary* do
             result[@"range"] = @{ @"start": @{ @"line": @(line+1), @"column": @(column+1) },
                                   @"end": @{ @"line": @(endLine+1), @"column": @(endColumn+1) } };
             if([document[@"path"] isKindOfClass:NSString.class]) {
-                NSString* location = [NSString stringWithFormat:@"%@:%lu:%lu", document[@"path"], (unsigned long)(line+1), (unsigned long)(column+1)];
+                // Terminal file links use TextMate's native byte columns, while
+                // diagnostics use UTF-16. Link to the line without reinterpreting
+                // a cached column against a potentially changed buffer.
+                NSString* location = [NSString stringWithFormat:@"%@:%lu", document[@"path"], (unsigned long)(line+1)];
                 result[@"location"] = bounded_string(location, 2048, &truncated);
             }
         }

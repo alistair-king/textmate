@@ -204,6 +204,9 @@ void test_editor_context_diagnostics_reports_and_window_boundary ()
         client.running = client.initialized = YES;
         NSMutableDictionary* clients = [manager valueForKey:@"documentClients"];
         clients[document.identifier] = client;
+        clients[foreign.identifier] = client;
+        OAK_ASSERT([[manager diagnosticReportForDocument:foreign][@"status"] isEqual:@"unavailable"]);
+        [clients removeObjectForKey:foreign.identifier];
         result = [window testEditorContextForMethod:@"get_diagnostics" arguments:@{}];
         OAK_ASSERT([result[@"status"] isEqual:@"pending"]);
         OAK_ASSERT([result[@"serverStatus"] isEqual:@"running"]);
@@ -227,7 +230,7 @@ void test_editor_context_diagnostics_reports_and_window_boundary ()
         OAK_ASSERT([first[@"severity"] isEqual:@"error"] && [first[@"code"] integerValue] == 123);
         OAK_ASSERT([first[@"source"] isEqual:@"test-server"] && first[@"data"] == nil);
         OAK_ASSERT([first[@"range"][@"start"][@"line"] integerValue] == 1 && [first[@"range"][@"start"][@"column"] integerValue] == 4);
-        OAK_ASSERT([first[@"location"] isEqual:[path stringByAppendingString:@":1:4"]]);
+        OAK_ASSERT([first[@"location"] isEqual:[path stringByAppendingString:@":1"]]);
         OAK_ASSERT([result[@"freshness"] isEqual:@"unknown"]);
         capturedReport = result[@"reportId"];
         OAK_ASSERT(![capturedReport isEqual:emptyReport]);
