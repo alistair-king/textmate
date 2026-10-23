@@ -47,3 +47,11 @@ The tool reports whether diagnostics have been received and whether a server is 
 Ask an agent **“Show me that function in TextMate”**, **“Open this file at line 42”**, or **“Select the code for that diagnostic.”** Its `navigate_editor` tool opens or reuses an editor tab in the terminal's window, moves to a line, or selects a passage. It works with unsaved and untitled documents already in that window, as well as existing local files supplied by absolute path.
 
 Keyboard focus stays in the terminal so you can keep chatting. Ask the agent to focus the editor if you want to start editing. Navigation preserves document contents and existing tabs. The agent can use current document revisions to avoid stale locations, and coordinates handle Unicode correctly. See [Navigate from the conversation](editor-context-mcp.md#navigate-from-the-conversation) for the tool arguments and file-loading behavior.
+
+## Follow editor changes
+
+Agents can follow file switches, selections, unsaved edits, open tabs, metadata, and diagnostics. Clients supporting MCP resource subscriptions can subscribe to `textmate://editor/context` and receive coalesced change notifications. The client decides whether to refresh context or wake the model when a notification arrives.
+
+For clients that use tools, ask **“Follow my current file and selection, using get_editor_changes to refresh when they change.”** This tool returns a cursor with the current context. Subsequent calls with that cursor omit unchanged text and return a fresh snapshot when something changes. Following stays within the terminal's owning window, including after moving the terminal to another window.
+
+Subscriptions are optional, and there are no background editor queries without a subscriber. The feature does not automatically start model turns or recurring calls in tool-only clients. See [Follow editor changes](editor-context-mcp.md#follow-editor-changes) for the subscription protocol and cursor behavior.

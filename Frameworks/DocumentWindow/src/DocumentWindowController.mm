@@ -3,6 +3,7 @@
 #import "EditorContextService.h"
 #import "EditorContextBuffer.h"
 #import "EditorContextDiagnostics.h"
+#import "EditorContextChanges.h"
 #import "SelectionExplanation.h"
 #import <EditorContextProtocol.h>
 #import <document/OakDocument Private.h>
@@ -101,6 +102,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) TerminalPanelViewController* terminalPanelController;
 @property (nonatomic) BOOL preparingSelectionExplanation;
 @property (nonatomic) NSUInteger editorNavigationGeneration;
+@property (nonatomic) EditorContextChanges* editorChanges;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -181,7 +183,7 @@ namespace
 	}
 }
 
-static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontScaleFactor", @"textView.themeUUID", @"selectedDocument.fileType", @"selectedDocument", @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
+static NSArray* const kObservedKeyPaths = @[ @"textView.selectionString", @"textView.font", @"textView.fontScaleFactor", @"textView.themeUUID", @"selectedDocument.fileType", @"selectedDocument", @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
 
 @implementation DocumentWindowController
 
@@ -201,7 +203,23 @@ static NSDictionary* ContextDocument(OakDocument* document)
     if(NSString* error = editor_context::validate_arguments(method, arguments))
         return [EditorContextSnapshot response:editor_context::failure(error, @"invalid_arguments")];
     if([method isEqual:@"navigate_editor"]) return [self editorNavigation:arguments];
+    if([method isEqual:@"get_editor_change_token"])
+        return [EditorContextSnapshot response:@{ @"cursor": self.editorChanges.cursor, @"windowId": self.identifier.UUIDString }];
+    if([method isEqual:@"get_editor_changes"]) {
+        NSMutableDictionary* changes = [[self.editorChanges changesAfter:arguments[@"cursor"]] mutableCopy];
+        changes[@"windowId"] = self.identifier.UUIDString;
+        if(![changes[@"changed"] boolValue]) return [EditorContextSnapshot response:changes];
+        EditorContextSnapshot* context = [self editorContextForMethod:@"get_editor_context" arguments:@{}];
+        return [EditorContextSnapshot renderer:^NSDictionary*(double deadline){
+            NSDictionary* rendered = [context renderBefore:deadline];
+            if(rendered[@"error"]) return rendered;
+            NSMutableDictionary* result = [changes mutableCopy];
+            result[@"context"] = rendered;
+            return result;
+        }];
+    }
     NSDictionary* base = @{ @"windowId": self.identifier.UUIDString,
+                            @"changeCursor": self.editorChanges.cursor,
                             @"projectPath": self.projectPath ?: (id)NSNull.null,
                             @"coordinateEncoding": @"utf-16",
                             @"offsetBase": @0, @"lineBase": @1, @"columnBase": @1 };
@@ -349,6 +367,9 @@ static NSDictionary* ContextDocument(OakDocument* document)
 {
 	if((self = [super init]))
 	{
+		self.editorChanges = [[EditorContextChanges alloc] init];
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(editorContextDocumentChanged:) name:OakDocumentContentDidChangeNotification object:nil];
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(editorContextDiagnosticsChanged:) name:LSPDiagnosticsDidChangeNotification object:nil];
 		self.identifier = [NSUUID UUID];
 
 		self.tabBarView = [[OakTabBarView alloc] initWithFrame:NSZeroRect];
@@ -984,6 +1005,15 @@ static NSDictionary* ContextDocument(OakDocument* document)
 
 - (void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)anObject change:(NSDictionary*)change context:(void*)context
 {
+	if([keyPath isEqual:@"textView.selectionString"])
+	{
+		[self.editorChanges record:@"selection" documentId:self.selectedDocument.identifier.UUIDString];
+		return;
+	}
+	if([keyPath isEqual:@"selectedDocument"])
+		[self.editorChanges record:@"document" documentId:self.selectedDocument.identifier.UUIDString];
+	else if([keyPath hasPrefix:@"selectedDocument."] || [keyPath hasPrefix:@"arrayController.arrangedObjects."])
+		[self.editorChanges record:@"metadata" documentId:nil];
 	if([keyPath isEqualToString:@"textView.font"] || [keyPath isEqualToString:@"textView.fontScaleFactor"] || [keyPath isEqualToString:@"textView.themeUUID"] || [keyPath isEqualToString:@"selectedDocument.fileType"] || [keyPath isEqualToString:@"selectedDocument"])
 	{
 		// Theme notifications can arrive while OakTextView is replacing its document view.
@@ -1012,6 +1042,21 @@ static NSDictionary* ContextDocument(OakDocument* document)
 		[self.tabBarView reloadData];
 		[[self class] scheduleSessionBackup:self];
 	}
+}
+
+- (void)editorContextDocumentChanged:(NSNotification*)notification
+{
+	OakDocument* document = notification.object;
+	if([self.documents containsObject:document])
+		[self.editorChanges record:@"content" documentId:document.identifier.UUIDString];
+}
+
+- (void)editorContextDiagnosticsChanged:(NSNotification*)notification
+{
+	NSString* uri = notification.userInfo[@"uri"];
+	for(OakDocument* document in self.documents)
+		if(document.path && [[NSURL fileURLWithPath:document.path].absoluteString isEqual:uri])
+			[self.editorChanges record:@"diagnostics" documentId:document.identifier.UUIDString];
 }
 
 - (BOOL)isDocumentSticky:(OakDocument*)aDocument
@@ -1722,6 +1767,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 
 - (void)setDocuments:(NSArray<OakDocument*>*)newDocuments
 {
+	if(![_documents isEqualToArray:newDocuments]) [self.editorChanges record:@"documents" documentId:nil];
 	for(OakDocument* document in newDocuments)
 	{
 		document.keepBackupFile = YES;
