@@ -18,7 +18,10 @@ if(BUILD_TESTING)
     DEPENDS "${_context_test_source}" "${CMAKE_SOURCE_DIR}/bin/gen_test")
   add_executable(EditorContext_tests "${_context_test_runner}")
   target_link_libraries(EditorContext_tests PRIVATE DocumentWindow ${TEXTMATE_DEBUG_LIBS})
-  add_test(NAME EditorContext COMMAND EditorContext_tests)
+  # Fixtures share AppKit and the singleton service. Running all fixtures in
+  # parallel can starve nested blocking socket calls in the global thread pool;
+  # concurrency is exercised explicitly inside the routing/transfer tests.
+  add_test(NAME EditorContext COMMAND EditorContext_tests --no-parallel)
 endif()
 
 # Bridge the native terminal panel to the Swift component.

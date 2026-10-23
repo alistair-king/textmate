@@ -105,6 +105,7 @@ The helper runs without arguments as an MCP stdio server. Standard output contai
 - `read_document`: reads a loaded document by `documentId`, with optional `offset` (default 0) and `length` (default 16,384; maximum 32,768). Returns text, total length, next offset, revision, and truncation status. It does not open arbitrary paths or load inactive buffers.
 - `get_diagnostics`: cached language-server diagnostics for the current document, or an optional `documentId` from `list_open_documents`. The document must be loaded in the terminal's window. Returns document metadata, messages, severity (`error`, `warning`, `information`, `hint`, or `unknown`), optional source and code, and one-based UTF-16 ranges with exclusive ends. A `location` such as `/path/to/file:12` can be repeated in the agent's reply and Command-clicked in the terminal to jump to the source line. The link intentionally targets the line: terminal links use native byte columns, while diagnostic ranges retain UTF-16 columns. Invalid server ranges are explicitly marked instead of inventing a location.
 - `navigate_editor`: switches to an open `documentId` in the terminal's window, or opens an existing local file by absolute `path`. Optional line/column and range coordinates position the cursor or select text. This tool changes editor UI state, is annotated `readOnlyHint: false`, and does not edit or save document text.
+- `get_editor_changes`: initial context and an opaque cursor, or changes since an optional previous `cursor`. Changed responses include a fresh context snapshot; unchanged responses omit document text. This is the tool-based fallback for clients that do not subscribe to MCP resources.
 
 Offsets and lengths count **UTF-16 code units**, starting at zero. Line and column numbers start at one; lines split on LF. Ranges are half-open. Text boundaries preserve surrogate pairs, and reads reject offsets inside a pair. Continue with the returned `nextOffset` and compare document ID and revision between requests, since the user can edit between calls. A requested length of one at a supplementary character may return no text; request at least two units to advance.
 
@@ -120,7 +121,7 @@ Ask a connected agent: **“Read TextMate's diagnostics for the current file, ex
 
 Messages are capped at 4,096 UTF-16 units, source/code strings at 256, and location strings at 2,048, preserving surrogate pairs. Each page has a combined 32,768-unit string budget and may contain fewer entries than requested. `textTruncated` on an entry and on the response flags shortened fields; it is independent of page `truncated`. Opaque code-action data is not exported.
 
-This reads the same language-server reports used by TextMate's inline diagnostics. It does not launch a server, trigger analysis, run a build, or parse output from terminal commands or bundle build actions. No diagnostics available is not evidence that a build succeeds. The four query tools remain read-only; `navigate_editor` changes editor UI state.
+This reads the same language-server reports used by TextMate's inline diagnostics. It does not launch a server, trigger analysis, run a build, or parse output from terminal commands or bundle build actions. No diagnostics available is not evidence that a build succeeds. The five query tools remain read-only; `navigate_editor` changes editor UI state.
 
 ### Navigate from the conversation
 
@@ -145,6 +146,22 @@ The agent can pass the document's opaque `revision` from a query to reject stale
 Document IDs are accepted only from the terminal's own window. An explicit path can open an existing regular local file, making that file accessible to subsequent context queries in this window; it is not restricted to the project directory. Relative paths, URLs, missing files, directories, devices, and FIFOs are rejected. File loading does not request encoding or authorization dialogs; files needing such interaction should be opened manually first.
 
 Navigation follows the same three-second deadline as queries. Deferred work rechecks the terminal registration, owning window, document revision, and request generation before changing the UI. Closing or transferring the terminal, closing the window, expiration, or a newer navigation request prevents an older pending request from changing its former target. Cancellation suppresses the MCP reply; it does not undo a navigation that already completed.
+
+### Follow editor changes
+
+The server advertises MCP resource subscriptions and one JSON resource, `textmate://editor/context`. `resources/read` returns the same current-file, selection, cursor, and surrounding-text snapshot as `get_editor_context`, including `changeCursor`. `resources/list` discovers it; `resources/templates/list` returns an empty list. A client can subscribe with `resources/subscribe`, receive `notifications/resources/updated` with this URI, and then reread the resource when needed. `resources/unsubscribe` stops updates.
+
+Events cover active-document switches, selection/cursor changes, unsaved content edits (including inactive documents open in the same window), tab-list changes, document metadata, and diagnostics. Notifications contain only the resource URI, not document text or credentials. Changes are coalesced by observing an inexpensive opaque token at most every 500 ms while subscribed; context is fetched only when requested. An initial update after subscription establishes a fresh baseline. Unchanged tokens emit no further notifications. Without a subscriber, the helper performs no background editor queries. EOF stops the subscription worker, and unsubscribing prevents further updates after its acknowledgement.
+
+For a client that only uses tools, ask **“Follow the file and selection as I work; use get_editor_changes to refresh only when something changes.”** Call `get_editor_changes` without arguments for an initial `context` and `cursor`. Pass the returned cursor, or `changeCursor` from an ordinary context/resource read, on later calls:
+
+```json
+{"cursor":"opaque cursor returned by TextMate"}
+```
+
+When `changed` is false, the response contains no context text. When true, it includes recent `events`, a fresh `context`, and the next `cursor`. Each event has a type and optional document ID, never the edited text. The per-window journal retains at most 128 events. `reset: true` means an initial, invalid, foreign-window, or expired-history cursor; use the complete included context rather than reconstructing old state. Rapid edits may be coalesced for notification delivery, and this is not a lossless keystroke history. A terminal transfer switches to the destination window's cursor and forces a refresh; closing a terminal revokes its access.
+
+MCP resources are [application-driven](https://modelcontextprotocol.io/specification/2025-11-25/server/resources): the client decides whether to subscribe, reread changed resources, add them to model context, or start another model turn. Advertising subscriptions does not force Codex, Claude Code, or OpenCode to wake an idle model. The tool fallback is available to all three, but requires the agent to call it; it is not itself a background subscription. No agent-specific channel flags, hidden prompts, or recurring model calls are installed.
 
 ## Implementation
 
