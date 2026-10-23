@@ -86,8 +86,38 @@ inline bool integer(id value, double maximum) {
 }
 inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
     if(![arguments isKindOfClass:NSDictionary.class]) return @"Expected object arguments";
-    if([method isEqual:@"get_editor_context"] || [method isEqual:@"list_open_documents"] || [method isEqual:@"get_connection_status"])
+    if([method isEqual:@"get_editor_context"] || [method isEqual:@"list_open_documents"] || [method isEqual:@"get_connection_status"] || [method isEqual:@"get_editor_change_token"])
         return arguments.count ? @"This tool takes no arguments" : nil;
+    if([method isEqual:@"get_editor_changes"]) {
+        for(NSString* key in arguments) if(![key isEqual:@"cursor"]) return @"Unknown argument";
+        if(arguments[@"cursor"] && (![arguments[@"cursor"] isKindOfClass:NSString.class] || ![arguments[@"cursor"] length] || [arguments[@"cursor"] length] > 256)) return @"cursor must be a nonempty string of at most 256 characters";
+        return nil;
+    }
+    if([method isEqual:@"navigate_editor"]) {
+        for(NSString* key in arguments)
+            if(![@[@"documentId", @"path", @"line", @"column", @"endLine", @"endColumn", @"revision", @"focus"] containsObject:key]) return @"Unknown argument";
+        if(!!arguments[@"documentId"] == !!arguments[@"path"]) return @"Provide exactly one of documentId or path";
+        for(NSString* key in @[@"documentId", @"path", @"revision"])
+            if(arguments[key] && (![arguments[key] isKindOfClass:NSString.class] || ![arguments[key] length] || [arguments[key] rangeOfString:[NSString stringWithFormat:@"%C", (unichar)0]].location != NSNotFound)) return @"documentId, path, and revision must be nonempty strings without NUL characters";
+        if(arguments[@"path"] && ![arguments[@"path"] hasPrefix:@"/"]) return @"path must be an absolute local file path";
+        for(NSString* key in @[@"line", @"column", @"endLine", @"endColumn"])
+            if(arguments[key] && (!integer(arguments[key], 9007199254740991.0) || [arguments[key] doubleValue] < 1)) return @"Lines and columns must be positive integers";
+        if(!arguments[@"line"] && (arguments[@"column"] || arguments[@"endLine"] || arguments[@"endColumn"])) return @"line is required when specifying columns or a range";
+        if(!!arguments[@"endLine"] != !!arguments[@"endColumn"]) return @"endLine and endColumn must be provided together";
+        if(arguments[@"endLine"] && ([arguments[@"endLine"] doubleValue] < [arguments[@"line"] doubleValue] ||
+           ([arguments[@"endLine"] isEqual:arguments[@"line"]] && [arguments[@"endColumn"] doubleValue] < (arguments[@"column"] ? [arguments[@"column"] doubleValue] : 1)))) return @"The range end must not precede its start";
+        if(arguments[@"focus"] && (![arguments[@"focus"] isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)arguments[@"focus"]) != CFBooleanGetTypeID())) return @"focus must be a boolean";
+        return nil;
+    }
+    if([method isEqual:@"get_diagnostics"]) {
+        for(NSString* key in arguments)
+            if(![@[@"documentId", @"offset", @"limit", @"reportId"] containsObject:key]) return @"Unknown argument";
+        for(NSString* key in @[@"documentId", @"reportId"])
+            if(arguments[key] && (![arguments[key] isKindOfClass:NSString.class] || ![arguments[key] length])) return @"documentId and reportId must be nonempty strings when provided";
+        if(arguments[@"offset"] && !integer(arguments[@"offset"], 9007199254740991.0)) return @"offset must be a nonnegative integer";
+        if(arguments[@"limit"] && (!integer(arguments[@"limit"], 100) || [arguments[@"limit"] integerValue] == 0)) return @"limit must be an integer between 1 and 100";
+        return nil;
+    }
     if(![method isEqual:@"read_document"]) return @"Unknown tool";
     for(NSString* key in arguments)
         if(![@[@"documentId", @"offset", @"length"] containsObject:key]) return @"Unknown argument";

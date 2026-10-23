@@ -18,6 +18,7 @@ extern NSString* const kUserDefaultsTerminalPanelHeightKey;
 @property (nonatomic, copy) void (^detachSessionHandler)(NSUUID*);
 @property (nonatomic, copy) void (^openTerminalFile)(NSURL*, NSInteger, NSInteger);
 - (void)startTerminalInDirectory:(NSString*)directory;
+- (BOOL)startCommand:(NSString*)executable arguments:(NSArray<NSString*>*)arguments title:(NSString*)title inDirectory:(NSString*)directory;
 - (void)focusTerminal;
 - (void)applyTerminalFont:(NSFont*)font;
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection;

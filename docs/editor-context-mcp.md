@@ -1,6 +1,8 @@
 # Querying TextMate from a terminal agent
 
-TextMate bundles a read-only MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`), Claude Code (`tm-claude`), and OpenCode (`tm-opencode`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
+TextMate bundles an editor MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`), Claude Code (`tm-claude`), and OpenCode (`tm-opencode`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
+
+For a ready-made explanation, select text and choose **Edit → Explain Selection…** (**⌃⌥⌘E**). Choose an agent to start a new terminal conversation with a snapshot of the selection, including unsaved text. See [Explain Selection](embedded-terminal.md#explain-selection) for details.
 
 ## Start Codex
 
@@ -101,10 +103,65 @@ The helper runs without arguments as an MCP stdio server. Standard output contai
 - `get_editor_context`: current document metadata, cursor, selections and selected text, plus roughly 2,048 UTF-16 code units around the cursor. Selected text has an 8,192-unit combined budget; at most 128 ranges are returned. Column selections expand into rows with the limit applied during expansion. Truncation is explicit.
 - `list_open_documents`: up to 256 document IDs and metadata in the associated window. Includes path (null for untitled documents), name, language, modified state, loaded state, and an opaque content revision.
 - `read_document`: reads a loaded document by `documentId`, with optional `offset` (default 0) and `length` (default 16,384; maximum 32,768). Returns text, total length, next offset, revision, and truncation status. It does not open arbitrary paths or load inactive buffers.
+- `get_diagnostics`: cached language-server diagnostics for the current document, or an optional `documentId` from `list_open_documents`. The document must be loaded in the terminal's window. Returns document metadata, messages, severity (`error`, `warning`, `information`, `hint`, or `unknown`), optional source and code, and one-based UTF-16 ranges with exclusive ends. A `location` such as `/path/to/file:12` can be repeated in the agent's reply and Command-clicked in the terminal to jump to the source line. The link intentionally targets the line: terminal links use native byte columns, while diagnostic ranges retain UTF-16 columns. Invalid server ranges are explicitly marked instead of inventing a location.
+- `navigate_editor`: switches to an open `documentId` in the terminal's window, or opens an existing local file by absolute `path`. Optional line/column and range coordinates position the cursor or select text. This tool changes editor UI state, is annotated `readOnlyHint: false`, and does not edit or save document text.
+- `get_editor_changes`: initial context and an opaque cursor, or changes since an optional previous `cursor`. Changed responses include a fresh context snapshot; unchanged responses omit document text. This is the tool-based fallback for clients that do not subscribe to MCP resources.
 
 Offsets and lengths count **UTF-16 code units**, starting at zero. Line and column numbers start at one; lines split on LF. Ranges are half-open. Text boundaries preserve surrogate pairs, and reads reject offsets inside a pair. Continue with the returned `nextOffset` and compare document ID and revision between requests, since the user can edit between calls. A requested length of one at a supplementary character may return no text; request at least two units to advance.
 
 No-document context returns a null document. Closed windows, revoked sessions, foreign document IDs, malformed arguments, and unavailable services produce errors rather than falling back to another window or disk content.
+
+### Using diagnostics
+
+Ask a connected agent: **“Read TextMate's diagnostics for the current file, explain the errors and warnings, and include source locations.”** To inspect other files, the agent can list open documents and call `get_diagnostics` for each loaded document ID.
+
+`get_diagnostics` accepts `offset` (default 0) and `limit` (default 50, maximum 100). These offsets count diagnostic entries, not text characters. Follow `nextOffset` while `truncated` is true. Pass the returned `reportId` with subsequent pages; an updated or cleared report produces `diagnostics_changed`, and the agent should restart at offset 0 without that ID. Capture the returned `documentId` when paging the current file so switching editor tabs cannot change the target.
+
+`status` is `reported` when a report has been received, including a report with zero diagnostics; `pending` when a language server is starting or running without a report; and `unavailable` when no report or active server exists. `serverStatus` independently reports `starting`, `running`, `indexing`, or `unavailable`, including when an older report is cached after a server stops. `pendingChanges` indicates edits still waiting to be sent to the server. `freshness` is `unknown`: a cached diagnostic report is not guaranteed to match the current buffer revision, even when there are no pending changes. The document revision describes the buffer at query time, not the version used to produce diagnostics.
+
+Messages are capped at 4,096 UTF-16 units, source/code strings at 256, and location strings at 2,048, preserving surrogate pairs. Each page has a combined 32,768-unit string budget and may contain fewer entries than requested. `textTruncated` on an entry and on the response flags shortened fields; it is independent of page `truncated`. Opaque code-action data is not exported.
+
+This reads the same language-server reports used by TextMate's inline diagnostics. It does not launch a server, trigger analysis, run a build, or parse output from terminal commands or bundle build actions. No diagnostics available is not evidence that a build succeeds. The five query tools remain read-only; `navigate_editor` changes editor UI state.
+
+### Navigate from the conversation
+
+Ask the agent **“Open the file containing that error and select the affected code in TextMate”**, **“Show line 42 of this file”**, or **“Switch to my untitled document.”** The agent uses `navigate_editor` with exactly one of `documentId` or `path`.
+
+For an open document, including an unsaved or untitled buffer:
+
+```json
+{"documentId":"ID from get_editor_context or list_open_documents","line":12,"column":4,"endLine":14,"endColumn":1}
+```
+
+For a file not yet open:
+
+```json
+{"path":"/absolute/project/src/example.py","line":42}
+```
+
+Coordinates are one-based UTF-16, matching the query tools and diagnostic ranges. `column` defaults to 1 when `line` is given. Supplying both `endLine` and `endColumn` selects a half-open range; omitting them moves the cursor. Omitting all coordinates retains the document's selection. Out-of-range coordinates, reversed ranges, and positions inside a surrogate pair fail without changing the visible tab or selection. Tabs and multibyte characters are converted to native editor coordinates without treating UTF-16 columns as byte columns.
+
+The agent can pass the document's opaque `revision` from a query to reject stale coordinates. Navigation also detects edits between locating and applying a range. `focus` defaults to false so the terminal retains keyboard focus; setting it to true raises the window and focuses the editor. Existing tabs are reused, and opening a file appends a tab without closing existing tabs or discarding unsaved work. The result contains `status: "navigated"`, window/document metadata, `opened`, `focused`, and the applied `range` (null when no coordinates were supplied).
+
+Document IDs are accepted only from the terminal's own window. An explicit path can open an existing regular local file, making that file accessible to subsequent context queries in this window; it is not restricted to the project directory. Relative paths, URLs, missing files, directories, devices, and FIFOs are rejected. File loading does not request encoding or authorization dialogs; files needing such interaction should be opened manually first.
+
+Navigation follows the same three-second deadline as queries. Deferred work rechecks the terminal registration, owning window, document revision, and request generation before changing the UI. Closing or transferring the terminal, closing the window, expiration, or a newer navigation request prevents an older pending request from changing its former target. Cancellation suppresses the MCP reply; it does not undo a navigation that already completed.
+
+### Follow editor changes
+
+The server advertises MCP resource subscriptions and one JSON resource, `textmate://editor/context`. `resources/read` returns the same current-file, selection, cursor, and surrounding-text snapshot as `get_editor_context`, including `changeCursor`. `resources/list` discovers it; `resources/templates/list` returns an empty list. A client can subscribe with `resources/subscribe`, receive `notifications/resources/updated` with this URI, and then reread the resource when needed. `resources/unsubscribe` stops updates.
+
+Events cover active-document switches, selection/cursor changes, unsaved content edits (including inactive documents open in the same window), tab-list changes, document metadata, and diagnostics. Notifications contain only the resource URI, not document text or credentials. Changes are coalesced by observing an inexpensive opaque token at most every 500 ms while subscribed; context is fetched only when requested. An initial update after subscription establishes a fresh baseline. Unchanged tokens emit no further notifications. Without a subscriber, the helper performs no background editor queries. EOF stops the subscription worker, and unsubscribing prevents further updates after its acknowledgement.
+
+For a client that only uses tools, ask **“Follow the file and selection as I work; use get_editor_changes to refresh only when something changes.”** Call `get_editor_changes` without arguments for an initial `context` and `cursor`. Pass the returned cursor, or `changeCursor` from an ordinary context/resource read, on later calls:
+
+```json
+{"cursor":"opaque cursor returned by TextMate"}
+```
+
+When `changed` is false, the response contains no context text. When true, it includes recent `events`, a fresh `context`, and the next `cursor`. Each event has a type and optional document ID, never the edited text. The per-window journal retains at most 128 events. `reset: true` means an initial, invalid, foreign-window, or expired-history cursor; use the complete included context rather than reconstructing old state. Rapid edits may be coalesced for notification delivery, and this is not a lossless keystroke history. A terminal transfer switches to the destination window's cursor and forces a refresh; closing a terminal revokes its access.
+
+MCP resources are [application-driven](https://modelcontextprotocol.io/specification/2025-11-25/server/resources): the client decides whether to subscribe, reread changed resources, add them to model context, or start another model turn. Advertising subscriptions does not force Codex, Claude Code, or OpenCode to wake an idle model. The tool fallback is available to all three, but requires the agent to call it; it is not itself a background subscription. No agent-specific channel flags, hidden prompts, or recurring model calls are installed.
 
 ## Implementation
 

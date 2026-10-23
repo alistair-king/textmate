@@ -37,6 +37,9 @@ extern NSString* const LSPServerStatusDidChangeNotification;
 - (BOOL)hasClientForDocument:(OakDocument*)document;
 - (NSDictionary<NSString*, NSNumber*>*)diagnosticCountsForDocument:(OakDocument*)document;
 - (NSArray<NSDictionary*>*)diagnosticsForDocument:(OakDocument*)document;
+// Cached report only. A received empty report differs from no report yet.
+// Call on the main thread; does not start or contact a language server.
+- (NSDictionary*)diagnosticReportForDocument:(OakDocument*)document;
 - (NSString*)serverStatusForDocument:(OakDocument*)document;
 - (NSString*)serverNameForDocument:(OakDocument*)document;
 - (void)restartServerForDocument:(OakDocument*)document;

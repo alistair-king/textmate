@@ -12,6 +12,7 @@ import contextlib
 import time
 import shutil
 import tomllib
+import queue
 
 EXECUTABLE = str(Path(sys.argv.pop(1)).resolve())
 
@@ -84,8 +85,9 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-11-25")
         tools = replies[1]["result"]["tools"]
         self.assertEqual([t["name"] for t in tools],
-                         ["get_editor_context", "list_open_documents", "read_document"])
-        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools))
+                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "navigate_editor", "get_editor_changes"])
+        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools if t["name"] != "navigate_editor"))
+        self.assertFalse(next(t for t in tools if t["name"] == "navigate_editor")["annotations"]["readOnlyHint"])
         self.assertEqual(replies[2]["result"], {})
         self.assertEqual(replies[3]["error"]["code"], -32601)
         self.assertEqual(replies[4]["error"]["code"], -32602)
@@ -96,6 +98,124 @@ class MCPTests(unittest.TestCase):
                                   request(1, "initialize", protocolVersion="future", capabilities={}, clientInfo={"name": "test", "version": "1"})])
         self.assertEqual(replies[0]["error"]["code"], -32000)
         self.assertEqual(replies[1]["result"]["protocolVersion"], "2025-11-25")
+
+    def test_diagnostic_forwarding_and_argument_validation(self):
+        received = []
+        expected = {"documentId": "open-document", "offset": 2, "limit": 3, "reportId": "report-1"}
+        def report(message, _):
+            received.append(message)
+            return {"status": "reported", "diagnostics": [{"severity": "warning", "message": "Example 😀"}], "reportId": "report-1"}
+        with context_server(report) as environment:
+            replies = self.run_server([INITIALIZE, READY, request(2, "tools/call", name="get_diagnostics", arguments=expected),
+                                       request(3, "tools/call", name="get_diagnostics")], environment)
+        self.assertEqual({m["method"] for m in received}, {"get_diagnostics"})
+        self.assertCountEqual([m["arguments"] for m in received], [expected, {}])
+        by_id = {reply["id"]: reply for reply in replies}
+        value = json.loads(by_id[2]["result"]["content"][0]["text"])
+        self.assertEqual(value["diagnostics"][0]["message"], "Example 😀")
+        self.assertFalse(by_id[2]["result"]["isError"])
+        invalid = [{"documentId": ""}, {"documentId": 1}, {"reportId": ""}, {"reportId": False},
+                   {"offset": True}, {"offset": -1}, {"offset": 0.5}, {"limit": 0}, {"limit": 101},
+                   {"limit": True}, {"severity": "error"}]
+        replies = self.run_server([INITIALIZE, READY] + [
+            request(index + 2, "tools/call", name="get_diagnostics", arguments=arguments)
+            for index, arguments in enumerate(invalid)])
+        self.assertEqual(len(replies), 1 + len(invalid))
+        self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
+
+    def test_navigation_forwarding_and_argument_validation(self):
+        expected = {"path": "/tmp/a file 😀.txt", "line": 2, "column": 2, "endLine": 3, "endColumn": 1, "focus": False, "revision": "opaque"}
+        received = []
+        def navigate(message, _):
+            received.append(message)
+            return {"status": "navigated", "opened": True, "focused": False}
+        with context_server(navigate) as environment:
+            replies = self.run_server([INITIALIZE, READY, request(2, "tools/call", name="navigate_editor", arguments=expected)], environment)
+        self.assertEqual(received[0]["method"], "navigate_editor")
+        self.assertEqual(received[0]["arguments"], expected)
+        self.assertEqual(json.loads(replies[1]["result"]["content"][0]["text"])["status"], "navigated")
+        invalid = [{}, {"documentId": "x", "path": "/tmp/x"}, {"path": "relative.txt"}, {"path": "file:///tmp/x"},
+                   {"path": "/tmp/x\0hidden"}, {"documentId": ""}, {"documentId": "x", "focus": "true"},
+                   {"documentId": "x", "focus": 1}, {"documentId": "x", "line": True},
+                   {"documentId": "x", "line": 0}, {"documentId": "x", "line": 1.5},
+                   {"documentId": "x", "column": 2}, {"documentId": "x", "line": 2, "endLine": 2},
+                   {"documentId": "x", "line": 2, "endLine": 1, "endColumn": 1},
+                   {"documentId": "x", "line": 2, "column": 4, "endLine": 2, "endColumn": 2},
+                   {"documentId": "x", "revision": ""}, {"documentId": "x", "unexpected": True}]
+        replies = self.run_server([INITIALIZE, READY] + [
+            request(index+2, "tools/call", name="navigate_editor", arguments=arguments)
+            for index, arguments in enumerate(invalid)])
+        self.assertEqual(len(replies), 1+len(invalid))
+        self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
+
+    def test_resource_discovery_reads_and_change_tool(self):
+        received = []
+        def respond(message, _):
+            received.append(message)
+            return {"changeCursor": "window/1", "text": "unsaved 😀"}
+        uri = "textmate://editor/context"
+        with context_server(respond) as environment:
+            replies = self.run_server([INITIALIZE, READY, request(2, "resources/list"), request(3, "resources/templates/list"),
+                request(4, "resources/read", uri=uri), request(5, "tools/call", name="get_editor_changes", arguments={"cursor": "window/0"}),
+                request(6, "resources/read", uri="file:///arbitrary"), request(7, "resources/subscribe", uri="bad"),
+                request(8, "tools/call", name="get_editor_changes", arguments={"cursor": ""}),
+                request(9, "tools/call", name="get_editor_changes", arguments={"cursor": 1}),
+                request(10, "tools/call", name="get_editor_changes", arguments={"cursor": "x"*257}),
+                request(11, "tools/call", name="get_editor_changes", arguments={"extra": True})], environment)
+        by_id = {r["id"]: r for r in replies}
+        self.assertTrue(by_id[1]["result"]["capabilities"]["resources"]["subscribe"])
+        self.assertEqual(by_id[2]["result"]["resources"][0]["uri"], uri)
+        self.assertEqual(by_id[3]["result"]["resourceTemplates"], [])
+        self.assertEqual(json.loads(by_id[4]["result"]["contents"][0]["text"])["text"], "unsaved 😀")
+        self.assertCountEqual([(m["method"], m["arguments"]) for m in received], [("get_editor_context", {}), ("get_editor_changes", {"cursor": "window/0"})])
+        for identifier in [6, 7]: self.assertEqual(by_id[identifier]["error"]["code"], -32002)
+        for identifier in [8, 9, 10, 11]: self.assertEqual(by_id[identifier]["error"]["code"], -32602)
+
+    def test_resource_subscription_updates_unsubscribe_and_idle(self):
+        token = ["window/0"]
+        queried = []
+        def respond(message, _):
+            queried.append(message["method"])
+            return {"cursor": token[0], "windowId": "w"}
+        uri = "textmate://editor/context"
+        with context_server(respond) as environment:
+            process = subprocess.Popen([EXECUTABLE], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+            messages = queue.Queue()
+            def read_output():
+                for line in process.stdout: messages.put(json.loads(line))
+            reader = threading.Thread(target=read_output)
+            reader.start()
+            def send(message):
+                process.stdin.write(json.dumps(message)+"\n")
+                process.stdin.flush()
+            def receive(): return messages.get(timeout=5)
+            try:
+                send(INITIALIZE); self.assertEqual(receive()["id"], 1); send(READY)
+                time.sleep(0.6)
+                self.assertEqual(queried, [])  # No subscriber, no editor polling.
+                send(request(2, "resources/subscribe", uri=uri))
+                self.assertEqual(receive()["id"], 2)
+                self.assertEqual(receive()["method"], "notifications/resources/updated")
+                with self.assertRaises(queue.Empty): messages.get(timeout=0.7)
+                token[0] = "window/1"
+                self.assertEqual(receive()["params"], {"uri": uri})
+                token[0] = "destination/0"  # Session transfer invalidates context.
+                self.assertEqual(receive()["method"], "notifications/resources/updated")
+                send(request(3, "resources/unsubscribe", uri=uri))
+                # Ignore any update already delivered before the acknowledgement.
+                while receive().get("id") != 3: pass
+                calls = len(queried)
+                token[0] = "destination/1"
+                with self.assertRaises(queue.Empty): messages.get(timeout=0.7)
+                self.assertLessEqual(len(queried), calls+1)  # At most an in-flight token query.
+                send(request(4, "ping")); self.assertEqual(receive()["id"], 4)
+                self.assertTrue(all(method == "get_editor_change_token" for method in queried))
+            finally:
+                process.stdin.close()
+                process.wait(timeout=5)
+                reader.join(timeout=5)
+                process.stdout.close(); process.stderr.close()
+            self.assertEqual(process.returncode, 0)
 
     def test_malformed_and_oversized_input_recovers(self):
         data = '{broken\n' + 'x' * (1024 * 1024 + 1) + '\n' + json.dumps(INITIALIZE) + '\n'
