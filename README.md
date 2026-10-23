@@ -2,7 +2,9 @@
 
 ## Description
 - Based on tectiv3/textmate, brionging in his great work on LSP.
-- Adds things I wished textmate had, for years.
+- Adds things I wished textmate had:
+-- a build in terminal panel, with multiple tabs
+-- an MCP, so an AI running in the terminal can interact with the editor
 
 ## Feedback
 

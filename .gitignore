@@ -7,3 +7,4 @@ CMakeUserPresets.json
 build-output.log
 *.bak
 .build
+dist
