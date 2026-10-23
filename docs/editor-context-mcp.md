@@ -1,6 +1,6 @@
 # Querying TextMate from a terminal agent
 
-TextMate bundles a read-only MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`) and Claude Code (`tm-claude`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
+TextMate bundles a read-only MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`), Claude Code (`tm-claude`), and OpenCode (`tm-opencode`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
 
 ## Start Codex
 
@@ -46,11 +46,34 @@ The launcher searches PATH, `~/.local/bin/claude`, the older `~/.claude/local/cl
 "${TM_MCP_SERVER%/*}/tm-claude"
 ```
 
+## Start OpenCode
+
+Install and configure [OpenCode](https://opencode.ai/docs/), then open a new TextMate terminal and run:
+
+```sh
+tm-opencode
+# Or run a prompt without the terminal UI:
+tm-opencode run "Explain the selected text in TextMate"
+```
+
+The launcher adds a local `textmate` MCP server through OpenCode's [`OPENCODE_CONFIG_CONTENT` runtime configuration](https://opencode.ai/docs/config/#precedence-order). Existing inline JSON/JSONC settings, other MCP servers, provider settings, permissions, and arguments are preserved. Only the inline `mcp.textmate` entry is replaced for the current terminal. Malformed inline configuration produces an error without echoing or replacing its contents.
+
+The server's `environment` fields use OpenCode's [`{env:VARIABLE}` references](https://opencode.ai/docs/config/#env-vars), so connection credentials remain in environment variables rather than arguments or configuration files. Global and project settings continue to load normally, and administrator-managed settings retain OpenCode's usual precedence.
+
+The launcher searches PATH, `~/.opencode/bin/opencode`, `~/.local/bin/opencode`, and common Homebrew locations. Set `TM_OPENCODE_COMMAND` to another absolute executable path if needed. To launch by full path when shell startup files replace PATH:
+
+```sh
+"${TM_MCP_SERVER%/*}/tm-opencode"
+```
+
+Use `tm-opencode --check` to test the editor connection without starting OpenCode. Commands that attach to an already running remote OpenCode server use that server's configuration; start a local OpenCode session for this terminal's editor context.
+
 ## Check the connection
 
 ```sh
 tm-codex --check
 tm-claude --check
+tm-opencode --check
 # or:
 "$TM_MCP_SERVER" --check
 ```
@@ -95,7 +118,7 @@ The native helper implements MCP's stdio tools capability for protocol revisions
 
 ## Verification
 
-Build with `make debug` or `make release`. The MCP helper and both launchers are embedded and signed inside the application bundle. Run the native and executable regression tests with:
+Build with `make debug` or `make release`. The MCP helper and all three launchers are embedded and signed inside the application bundle. Run the native and executable regression tests with:
 
 ```sh
 ctest --test-dir build-debug -R '^(EditorContext|DocumentWindow|selection|textmate-mcp)$' --output-on-failure
@@ -122,3 +145,10 @@ python3 Applications/textmate-mcp/tests/test_claude_cli.py \
 ```
 
 This check uses isolated temporary settings and a local API stub that rejects inference. It verifies the actual launcher's inline configuration, environment expansion, and MCP startup without logging in or sending a request to a real model.
+
+An optional real-OpenCode check verifies the launcher, configuration references, and MCP discovery using isolated temporary settings, with no login or model inference:
+
+```sh
+python3 Applications/textmate-mcp/tests/test_opencode_cli.py \
+  build-debug/Applications/textmate-mcp/textmate-mcp /absolute/path/to/opencode
+```

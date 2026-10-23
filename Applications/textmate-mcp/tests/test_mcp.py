@@ -325,5 +325,78 @@ class MCPTests(unittest.TestCase):
             self.assertIn("TM_CLAUDE_COMMAND", process.stderr)
 
 
+    def test_opencode_launcher_preserves_inline_configuration_and_arguments(self):
+        launcher = str(Path(EXECUTABLE).with_name("tm-opencode"))
+        retained = {"model": "existing/model", "instructions": ["https://example.test/path/*literal*/"],
+                    "mcp": {"other": {"type": "local", "command": ["other-server"], "enabled": False},
+                            "textmate": {"type": "remote", "url": "https://old-server.test"}}}
+        commented = '// inline settings\n' + json.dumps(retained, indent=2).replace('\n}', ',\n}')
+        with tempfile.TemporaryDirectory(prefix="tm-opencode-", dir="/tmp") as directory:
+            app = Path(directory) / 'app "quoted" 😀'
+            app.mkdir()
+            shutil.copy2(EXECUTABLE, app / "textmate-mcp")
+            shutil.copy2(launcher, app / "tm-opencode")
+            stub = Path(directory) / "opencode-stub"
+            stub.write_text("#!" + sys.executable + "\n" +
+                "import json, os, subprocess, sys\n" +
+                "config = json.loads(os.environ['OPENCODE_CONFIG_CONTENT'])\n" +
+                "server = config['mcp']['textmate']\n" +
+                "environment = dict(os.environ)\n" +
+                "for key, value in server['environment'].items(): environment[key] = os.environ[value[5:-1]]\n" +
+                "probe = subprocess.run(server['command'] + ['--check'], env=environment, text=True, capture_output=True)\n" +
+                "print(json.dumps({'args': sys.argv[1:], 'cwd': os.getcwd(), 'config': config, 'probe': probe.returncode}))\n" +
+                "sys.exit(23)\n")
+            stub.chmod(0o700)
+            arguments = ["run", "--model", "provider/model", "--", "prompt with spaces"]
+            for inline in [None, json.dumps(retained), commented]:
+                with self.subTest(inline=inline), context_server(lambda message, _: {"windowId": "opencode-window", "documentName": "test"}) as environment:
+                    environment["TM_OPENCODE_COMMAND"] = str(stub)
+                    environment.pop("OPENCODE_CONFIG_CONTENT", None)
+                    if inline is not None: environment["OPENCODE_CONFIG_CONTENT"] = inline
+                    process = subprocess.run([str(app / "tm-opencode"), *arguments], cwd=directory,
+                                             env=environment, text=True, capture_output=True, timeout=5)
+                    self.assertEqual(process.returncode, 23, process.stderr)
+                    actual = json.loads(process.stdout)
+                    self.assertEqual(actual["args"], arguments)
+                    self.assertEqual(actual["cwd"], os.path.realpath(directory))
+                    self.assertEqual(actual["probe"], 0)
+                    server = actual["config"]["mcp"]["textmate"]
+                    self.assertEqual(server["command"], [str((app / "textmate-mcp").resolve())])
+                    self.assertEqual(server["type"], "local")
+                    self.assertTrue(server["enabled"])
+                    self.assertNotIn("url", server)
+                    self.assertEqual(server["environment"]["TM_CONTEXT_TOKEN"], "{env:TM_CONTEXT_TOKEN}")
+                    self.assertNotIn(environment["TM_CONTEXT_TOKEN"], json.dumps(actual))
+                    if inline is not None:
+                        self.assertEqual(actual["config"]["model"], retained["model"])
+                        self.assertEqual(actual["config"]["instructions"], retained["instructions"])
+                        self.assertEqual(actual["config"]["mcp"]["other"], retained["mcp"]["other"])
+
+    def test_opencode_launcher_help_check_and_missing_installation(self):
+        launcher = str(Path(EXECUTABLE).with_name("tm-opencode"))
+        result = subprocess.run([launcher, "--help"], text=True, capture_output=True, check=True)
+        self.assertIn("TM_OPENCODE_COMMAND", result.stdout)
+        with context_server(lambda message, _: {"windowId": "opencode-window", "documentName": "test"}) as environment:
+            environment["TM_OPENCODE_COMMAND"] = "/tmp/nonexistent-opencode-installation"
+            result = subprocess.run([launcher, "--check"], env=environment, text=True, capture_output=True, check=True)
+            self.assertIn("opencode-window", result.stdout)
+            result = subprocess.run([launcher], env=environment, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("OpenCode CLI was not found", result.stderr)
+            self.assertIn("TM_OPENCODE_COMMAND", result.stderr)
+
+    def test_opencode_launcher_rejects_invalid_existing_configuration(self):
+        launcher = str(Path(EXECUTABLE).with_name("tm-opencode"))
+        with context_server(lambda message, _: {"windowId": "opencode-window", "documentName": "test"}) as environment:
+            environment["TM_OPENCODE_COMMAND"] = sys.executable
+            for inline in ['{broken', '[]', '{"mcp": []}', '/*unterminated']:
+                with self.subTest(inline=inline):
+                    environment["OPENCODE_CONFIG_CONTENT"] = inline
+                    result = subprocess.run([launcher], env=environment, text=True, capture_output=True, timeout=5)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("OPENCODE_CONFIG_CONTENT must contain", result.stderr)
+                    self.assertIn("Existing configuration was not replaced", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
