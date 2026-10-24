@@ -21,7 +21,7 @@ extern NSString* const kUserDefaultsTerminalPanelHeightKey;
 - (BOOL)startCommand:(NSString*)executable arguments:(NSArray<NSString*>*)arguments title:(NSString*)title inDirectory:(NSString*)directory;
 - (void)focusTerminal;
 - (void)applyTerminalFont:(NSFont*)font;
-- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection;
+- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection syntaxColors:(NSArray<NSColor*>*)syntaxColors;
 - (BOOL)confirmTerminalClose;
 - (void)stopTerminal;
 - (instancetype)initWithContentView:(NSView*)contentView;

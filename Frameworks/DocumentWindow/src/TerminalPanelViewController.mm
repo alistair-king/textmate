@@ -28,6 +28,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 @property (nonatomic) TerminalTabBarController* terminalTabBarController;
 #endif
 @property (nonatomic) NSArray<NSColor*>* terminalColors;
+@property (nonatomic) NSArray<NSColor*>* terminalSyntaxColors;
 @property (nonatomic) NSFont* terminalFont;
 @property (nonatomic) NSView* contentView;
 @property (nonatomic) NSView* contentContainer;
@@ -114,7 +115,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	if(_terminalFont)
 		[_terminalController applyFont:_terminalFont];
 	if(_terminalColors)
-		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3]];
+		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3] syntaxColors:_terminalSyntaxColors];
 #endif
 }
 
@@ -144,11 +145,12 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 #endif
 }
 
-- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection
+- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection syntaxColors:(NSArray<NSColor*>*)syntaxColors
 {
 	self.terminalColors = @[ background, foreground, caret, selection ];
+	self.terminalSyntaxColors = syntaxColors;
 #if HAVE_OAK_SWIFTUI
-	[_terminalController applyThemeWithBackground:background foreground:foreground caret:caret selection:selection];
+	[_terminalController applyThemeWithBackground:background foreground:foreground caret:caret selection:selection syntaxColors:syntaxColors];
 #endif
 }
 

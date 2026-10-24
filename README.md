@@ -376,4 +376,4 @@ TextMate is a trademark of Allan Odgaard.
 
 # MCP
 - works for codex, claude and opencode.
-- easily access by running tm-codex, tm-claude, or tm-popencode.
+- easily access by running tm-codex, tm-claude, or tm-opencode.
