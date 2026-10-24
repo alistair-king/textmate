@@ -157,8 +157,10 @@ private final class TerminalContainer: NSView {
             view.layer?.backgroundColor = colors.background.cgColor
             (view as? TerminalContainer)?.emptyLabel.textColor = colors.foreground
         }
+        let palette = terminalPalette(background: colors.background, foreground: colors.foreground, syntaxColors: colors.syntaxColors)
         for session in sessions {
             let terminal = session.terminal
+            terminal.installColors(palette)
             terminal.nativeBackgroundColor = colors.background
             terminal.nativeForegroundColor = colors.foreground
             terminal.caretColor = colors.caret

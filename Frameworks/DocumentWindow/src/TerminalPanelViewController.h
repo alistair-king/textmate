@@ -40,7 +40,7 @@ extern NSString* const kTerminalPanelPositionBottom;
 - (BOOL)startCommand:(NSString*)executable arguments:(NSArray<NSString*>*)arguments title:(NSString*)title inDirectory:(NSString*)directory;
 - (void)focusTerminal;
 - (void)applyTerminalFont:(NSFont*)font;
-- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection;
+- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection syntaxColors:(NSArray<NSColor*>*)syntaxColors;
 @property (nonatomic, readonly) BOOL terminalHasRunningWork; // a session is running a foreground program
 - (void)confirmTerminalCloseInWindow:(NSWindow*)window completionHandler:(void(^)(BOOL canClose))callback; // sheet on window; immediate when idle
 - (void)stopTerminal;
