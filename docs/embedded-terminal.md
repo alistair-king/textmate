@@ -16,6 +16,8 @@ SwiftTerm 1.99.1 is pinned in Frameworks/OakSwiftUI/Package.swift and Package.re
 
 The terminal bridge is OakTerminalPanelController. TerminalPanelViewController owns the bridge independently of its position/visibility, and DocumentWindowController supplies the initial directory and handles close/quit checks.
 
+Terminal sessions inherit the editor’s background, foreground, caret, and selection colours. The sixteen ANSI colours are derived from common syntax roles (strings, numbers, functions, keywords, and types), with tinted fallbacks for unstyled roles and contrast adjustments for light and dark backgrounds. Applications that emit explicit RGB colours still choose their own colours.
+
 Terminal sessions follow the active editor’s font family, size, and zoom level. Font changes update all tabs, including hidden sessions; new and transferred sessions use the destination editor’s font.
 
 ## Opening files from terminal output

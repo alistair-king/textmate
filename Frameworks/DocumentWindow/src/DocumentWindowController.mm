@@ -2149,10 +2149,18 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	{
 		auto const& styles = theme->styles_for_scope(scope::scope_t(to_s(self.selectedDocument.fileType)));
 		NSColor* foreground = [NSColor colorWithCGColor:styles.foreground() ?: theme->foreground()];
+		// ANSI red, green, yellow, blue, magenta, cyan borrow common syntax roles.
+		NSMutableArray<NSColor*>* syntaxColors = [NSMutableArray array];
+		for(char const* syntaxScope : { "invalid", "string", "constant.numeric", "entity.name.function", "keyword", "support.type" })
+		{
+			auto const& syntax = theme->styles_for_scope(scope::scope_t(to_s(self.selectedDocument.fileType) + " " + syntaxScope));
+			[syntaxColors addObject:syntax.foreground() ? [NSColor colorWithCGColor:syntax.foreground()] : foreground];
+		}
 		[self.terminalPanelController applyTerminalBackground:[NSColor colorWithCGColor:theme->background(to_s(self.selectedDocument.fileType))]
 			foreground:foreground
 			caret:styles.caret() ? [NSColor colorWithCGColor:styles.caret()] : foreground
-			selection:styles.selection() ? [NSColor colorWithCGColor:styles.selection()] : NSColor.selectedTextBackgroundColor];
+			selection:styles.selection() ? [NSColor colorWithCGColor:styles.selection()] : NSColor.selectedTextBackgroundColor
+			syntaxColors:syntaxColors];
 	}
 }
 
