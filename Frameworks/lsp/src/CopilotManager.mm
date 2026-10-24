@@ -157,10 +157,15 @@ static settings_t settingsForCopilotDocument(OakDocument* document)
 	// Native copilot-language-server requires editorInfo in initializationOptions
 	NSString* initOpts = @"{\"editorInfo\":{\"name\":\"TextMate\",\"version\":\"2.1\"},\"editorPluginInfo\":{\"name\":\"textmate-copilot\",\"version\":\"1.0\"}}";
 
+	// npm launchers use /usr/bin/env node. Fall back to the launcher's bin
+	// directory without overriding a runtime already on the configured PATH.
+	// Keep the symlink directory: version managers install node beside it.
+	NSString* fallbackPath = serverPath.isAbsolutePath ? serverPath.stringByDeletingLastPathComponent : nil;
 	_client = [[LSPClient alloc] initWithCommand:serverPath
 	                                   arguments:@[@"--stdio"]
 	                            workingDirectory:NSHomeDirectory()
-	                                 initOptions:initOpts];
+	                                 initOptions:initOpts
+	                                fallbackPath:fallbackPath];
 	_client.delegate = self;
 
 	if(!_client.running)

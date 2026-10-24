@@ -9,6 +9,7 @@
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <lsp/LSPClient.h>
+#import <io/environment.h>
 
 #include <cstdio>
 #include <string>
@@ -455,6 +456,71 @@ static TestOutcome RunF8Close (NSString* fixture)
 
 // MARK: - main
 
+static TestOutcome RunInterpreterPath (NSString* fixture, BOOL useFallback, BOOL configuredRuntime)
+{
+	NSFileManager* fm = NSFileManager.defaultManager;
+	NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+	[fm createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:NULL];
+	NSString* server = [directory stringByAppendingPathComponent:@"test-server"];
+	NSString* packageDirectory = [directory stringByAppendingPathComponent:@"package"];
+	[fm createDirectoryAtPath:packageDirectory withIntermediateDirectories:YES attributes:nil error:NULL];
+	NSString* scriptPath = [packageDirectory stringByAppendingPathComponent:@"server.py"];
+	NSString* interpreter = [directory stringByAppendingPathComponent:@"textmate-test-python"];
+	NSString* configuredDirectory = [directory stringByAppendingPathComponent:@"configured"];
+	[fm createDirectoryAtPath:configuredDirectory withIntermediateDirectories:YES attributes:nil error:NULL];
+	NSString* configuredInterpreter = [configuredDirectory stringByAppendingPathComponent:@"textmate-test-python"];
+	NSString* runtimeScript = @"#!/bin/sh\nprintf used > \"$0.used\"\nexec /usr/bin/python3 \"$@\"\n";
+	NSString* result = [directory stringByAppendingPathComponent:@"result.txt"];
+	NSString* source = [NSString stringWithContentsOfFile:fixture encoding:NSUTF8StringEncoding error:NULL];
+	NSRange firstLine = [source rangeOfString:@"\n"];
+	NSString* script = [@"#!/usr/bin/env textmate-test-python\n" stringByAppendingString:[source substringFromIndex:NSMaxRange(firstLine)]];
+	BOOL prepared = [script writeToFile:scriptPath atomically:YES encoding:NSUTF8StringEncoding error:NULL]
+		&& [fm setAttributes:@{ NSFilePosixPermissions: @0755 } ofItemAtPath:scriptPath error:NULL]
+		&& [fm createSymbolicLinkAtPath:server withDestinationPath:scriptPath error:NULL]
+		&& [runtimeScript writeToFile:interpreter atomically:YES encoding:NSUTF8StringEncoding error:NULL]
+		&& [fm setAttributes:@{ NSFilePosixPermissions: @0755 } ofItemAtPath:interpreter error:NULL]
+		&& [runtimeScript writeToFile:configuredInterpreter atomically:YES encoding:NSUTF8StringEncoding error:NULL]
+		&& [fm setAttributes:@{ NSFilePosixPermissions: @0755 } ofItemAtPath:configuredInterpreter error:NULL];
+	if(!prepared)
+	{
+		[fm removeItemAtPath:directory error:NULL];
+		return { false, "could not create server fixture" };
+	}
+
+	// Reproduce an absolute npm launcher path whose sibling runtime is absent
+	// from TextMate's configured PATH. Preserve the launcher symlink directory.
+	auto savedEnvironment = oak::basic_environment();
+	auto environment = savedEnvironment;
+	environment["PATH"] = configuredRuntime ? ToStd([configuredDirectory stringByAppendingString:@":/usr/bin:/bin"]) : "/usr/bin:/bin";
+	oak::set_basic_environment(environment);
+	LSPClient* client;
+	if(useFallback)
+		client = [[LSPClient alloc] initWithCommand:server
+	                                          arguments:@[ @"f7_no_provider", result ]
+	                                   workingDirectory:directory
+	                                        initOptions:nil
+	                                       fallbackPath:directory];
+	else
+		client = [[LSPClient alloc] initWithCommand:server
+	                                          arguments:@[ @"f7_no_provider", result ]
+	                                   workingDirectory:directory
+	                                        initOptions:nil];
+	oak::set_basic_environment(savedEnvironment);
+	BOOL initialized = client && WaitUntil(10.0, ^{ return client.initialized || !client.running; }) && client.initialized;
+	[client shutdown];
+	WaitUntil(5.0, ^{ return !client.running; });
+	BOOL siblingUsed = [fm fileExistsAtPath:[interpreter stringByAppendingString:@".used"]];
+	BOOL configuredUsed = [fm fileExistsAtPath:[configuredInterpreter stringByAppendingString:@".used"]];
+	BOOL passed = client && initialized == (useFallback || configuredRuntime)
+		&& siblingUsed == (useFallback && !configuredRuntime) && configuredUsed == configuredRuntime;
+	[fm removeItemAtPath:directory error:NULL];
+	return { (bool)passed, "initialized=" + std::to_string(initialized) + " sibling=" + std::to_string(siblingUsed) + " configured=" + std::to_string(configuredUsed) };
+}
+
+static TestOutcome RunSiblingInterpreter (NSString* fixture) { return RunInterpreterPath(fixture, YES, NO); }
+static TestOutcome RunConfiguredInterpreter (NSString* fixture) { return RunInterpreterPath(fixture, YES, YES); }
+static TestOutcome RunDefaultInterpreterPath (NSString* fixture) { return RunInterpreterPath(fixture, NO, NO); }
+
 int main ()
 {
 	int failures = 0;
@@ -469,6 +535,9 @@ int main ()
 		}
 
 		struct { char const* name; TestOutcome (*run)(NSString*); } const cases[] = {
+			{ "sibling_runtime", RunSiblingInterpreter },
+			{ "configured_runtime", RunConfiguredInterpreter },
+			{ "default_path", RunDefaultInterpreterPath },
 			{ "f0_register",    RunF0Register    },
 			{ "f1_full_empty",  RunF1FullEmpty   },
 			{ "f2_unchanged",   RunF2Unchanged   },

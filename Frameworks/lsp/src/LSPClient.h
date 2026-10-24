@@ -36,6 +36,8 @@ extern NSString* const LSPShowMessageRequestNotification;
 @property (nonatomic, readonly) BOOL codeActionResolveProvider;
 @property (nonatomic, readonly) NSArray<NSString*>* executeCommands;
 - (instancetype)initWithCommand:(NSString*)command arguments:(NSArray<NSString*>*)arguments workingDirectory:(NSString*)workingDirectory initOptions:(NSString*)initOptionsJSON;
+// Optional PATH fallback, searched after all configured entries.
+- (instancetype)initWithCommand:(NSString*)command arguments:(NSArray<NSString*>*)arguments workingDirectory:(NSString*)workingDirectory initOptions:(NSString*)initOptionsJSON fallbackPath:(NSString*)fallbackPath;
 - (void)openDocument:(OakDocument*)document languageId:(NSString*)languageId;
 - (void)documentDidChange:(OakDocument*)document version:(int)version;
 - (void)documentDidSave:(OakDocument*)document;

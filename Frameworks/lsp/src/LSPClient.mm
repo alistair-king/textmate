@@ -200,6 +200,11 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 
 - (instancetype)initWithCommand:(NSString*)command arguments:(NSArray<NSString*>*)arguments workingDirectory:(NSString*)workingDirectory initOptions:(NSString*)initOptionsJSON
 {
+	return [self initWithCommand:command arguments:arguments workingDirectory:workingDirectory initOptions:initOptionsJSON fallbackPath:nil];
+}
+
+- (instancetype)initWithCommand:(NSString*)command arguments:(NSArray<NSString*>*)arguments workingDirectory:(NSString*)workingDirectory initOptions:(NSString*)initOptionsJSON fallbackPath:(NSString*)fallbackPath
+{
 	if(self = [super init])
 	{
 		_serverName = command.lastPathComponent;
@@ -242,6 +247,12 @@ static void extractExtensionsFromGlob (NSString* pattern, NSMutableSet<NSString*
 					break;
 				}
 			}
+		}
+
+		if(fallbackPath.length)
+		{
+			NSString* path = env[@"PATH"] ?: @"/usr/bin:/bin:/usr/sbin:/sbin";
+			env[@"PATH"] = [path stringByAppendingFormat:@":%@", fallbackPath];
 		}
 
 		_task = [[NSTask alloc] init];
