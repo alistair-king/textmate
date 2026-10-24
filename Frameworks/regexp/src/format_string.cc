@@ -143,7 +143,9 @@ struct expand_visitor
 	static std::string capitalize (std::string const& src)
 	{
 		static regexp::pattern_t const words  = "\\A\\p{^Lower}+\\z|\\b\\p{Upper}\\p{^Upper}+?\\b";
-		static regexp::pattern_t const upcase = "^([\\W\\d]*)(\\w[-\\w]*)|\\b((?!(?:else|from|over|then|when)\\b)\\w[-\\w]{3,}|\\w[-\\w]*[\\W\\d]*$)";
+		// Use \\p{Word} rather than \\w so that words starting with a non-ASCII
+		// letter (e.g. “æblegrød”) are not treated as leading non-word junk.
+		static regexp::pattern_t const upcase = "^([\\p{^Word}\\d]*)(\\p{Word}[-\\p{Word}]*)|\\b((?!(?:else|from|over|then|when)\\b)\\p{Word}[-\\p{Word}]{3,}|\\p{Word}[-\\p{Word}]*[\\p{^Word}\\d]*$)";
 		return format_string::replace(format_string::replace(src, words, "${0:/downcase}"), upcase, "${1:?$1\\u$2:\\u$0}");
 	}
 

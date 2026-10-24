@@ -160,7 +160,9 @@ namespace command
 	{
 		NSData* data = [NSData dataWithBytesNoCopy:(void*)command.data() length:command.size() freeWhenDone:NO];
 
-		NSString* scriptPath = [NSString pathWithComponents:@[ NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject, NSBundle.mainBundle.bundleIdentifier, @"Scripts", hash(data) ]];
+		// bundleIdentifier is nil for executables without an app bundle (e.g. unit tests)
+		NSString* const bundleID = NSBundle.mainBundle.bundleIdentifier ?: @"TextMate";
+		NSString* scriptPath = [NSString pathWithComponents:@[ NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject, bundleID, @"Scripts", hash(data) ]];
 		if(![NSFileManager.defaultManager isExecutableFileAtPath:scriptPath])
 		{
 			[NSFileManager.defaultManager createDirectoryAtPath:scriptPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nullptr];
@@ -280,8 +282,11 @@ namespace command
 				CFRunLoopStop(runLoop);
 			});
 
+			// Run in bounded slices: if CFRunLoopStop() fires between the flag
+			// check and CFRunLoopRun(), the stop would be lost and an unbounded
+			// CFRunLoopRun() would never return.
 			while(shouldWait)
-				CFRunLoopRun();
+				CFRunLoopRunInMode(kCFRunLoopDefaultMode, 5, true);
 		}
 		else
 		{

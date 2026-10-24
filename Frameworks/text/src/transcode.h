@@ -5,36 +5,43 @@ namespace text
 {
 	struct transcode_t
 	{
-		transcode_t (std::string fromCharset, std::string toCharset)
+	transcode_t (std::string fromCharset, std::string toCharset)
+	{
+		std::string const kBOMCharacter = "\uFEFF";
+
+		_buffer = new char[_buffer_size];
+		reset_buffer();
+
+		bool readBOM = false;
+		fromCharset = parse_charset(fromCharset, &readBOM);
+		if(readBOM)
 		{
-			std::string const kBOMCharacter = "\uFEFF";
-
-			_buffer = new char[_buffer_size];
-			reset_buffer();
-
-			bool readBOM = false;
-			fromCharset = parse_charset(fromCharset, &readBOM);
-			if(readBOM)
-			{
-				if(auto bomWriter = transcode_t("UTF-8", fromCharset))
-					bomWriter(kBOMCharacter.data(), kBOMCharacter.data() + kBOMCharacter.size(), back_inserter(_skip_prefix));
-			}
-
-			bool writeBOM = false;
-			toCharset = parse_charset(toCharset, &writeBOM);
-			if(writeBOM)
-			{
-				if(auto bomWriter = transcode_t("UTF-8", toCharset))
-				{
-					_dest = bomWriter(kBOMCharacter.data(), kBOMCharacter.data() + kBOMCharacter.size(), _dest);
-					_left = _buffer_size - (_dest - _buffer);
-				}
-			}
-
-			_handle = iconv_open(toCharset.c_str(), fromCharset.c_str());
-			if(_handle == (iconv_t)-1)
-				perrorf("transcode_t: iconv_open(\"%s\", \"%s\")", toCharset.c_str(), fromCharset.c_str());
+			if(auto bomWriter = transcode_t("UTF-8", fromCharset))
+				bomWriter(kBOMCharacter.data(), kBOMCharacter.data() + kBOMCharacter.size(), back_inserter(_skip_prefix));
 		}
+
+		bool writeBOM = false;
+		toCharset = parse_charset(toCharset, &writeBOM);
+		if(writeBOM)
+		{
+			if(auto bomWriter = transcode_t("UTF-8", toCharset))
+			{
+				_dest = bomWriter(kBOMCharacter.data(), kBOMCharacter.data() + kBOMCharacter.size(), _dest);
+				_left = _buffer_size - (_dest - _buffer);
+			}
+		}
+
+		_from_charset = fromCharset;
+		_to_charset   = toCharset;
+		// macOS libiconv corrupts //TRANSLIT output from the 3rd transliteration
+		// performed by a single iconv_t, so for UTF-8 sources we convert each
+		// non-ASCII character through a fresh descriptor (see operator() below).
+		_per_char_translit = toCharset.find("//TRANSLIT") != std::string::npos && is_utf8(fromCharset);
+
+		_handle = iconv_open(toCharset.c_str(), fromCharset.c_str());
+		if(_handle == (iconv_t)-1)
+			perrorf("transcode_t: iconv_open(\"%s\", \"%s\")", toCharset.c_str(), fromCharset.c_str());
+	}
 
 		~transcode_t ()
 		{
@@ -71,6 +78,39 @@ namespace text
 
 		template <typename _OutputIter>
 		_OutputIter operator() (char const* first, char const* last, _OutputIter out)
+		{
+			if(!_per_char_translit)
+				return convert(first, last, out);
+
+			while(first != last)
+			{
+				if(!(*first & 0x80))
+				{
+					char const* runEnd = first;
+					while(runEnd != last && !(*runEnd & 0x80))
+						++runEnd;
+					out = convert(first, runEnd, out);
+					first = runEnd;
+				}
+				else if(size_t const len = utf8_sequence_length(*first), avail = last - first; len == 0 || len > avail)
+				{
+					// Invalid lead byte, or truncated at end of input: let convert()
+					// report it via EILSEQ or buffer it via EINVAL, like the streaming path.
+					out = convert(first, first + 1, out);
+					++first;
+				}
+				else
+				{
+					reopen();
+					out = convert(first, first + len, out);
+					first += len;
+				}
+			}
+			return out;
+		}
+
+		template <typename _OutputIter>
+		_OutputIter convert (char const* first, char const* last, _OutputIter out)
 		{
 			ASSERT_NE(_handle, (iconv_t)-1);
 
@@ -177,6 +217,30 @@ namespace text
 			return charset;
 		}
 
+		static bool is_utf8 (std::string const& charset)
+		{
+			std::string lower;
+			for(char c : charset)
+				lower += (c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c;
+			return lower == "utf-8" || lower == "utf8";
+		}
+
+		static size_t utf8_sequence_length (char ch)
+		{
+			unsigned char const c = ch;
+			if(c >= 0xC2 && c <= 0xDF) return 2;
+			if(c >= 0xE0 && c <= 0xEF) return 3;
+			if(c >= 0xF0 && c <= 0xF4) return 4;
+			return 0; // continuation byte, overlong lead, or invalid lead
+		}
+
+		void reopen ()
+		{
+			if(_handle != (iconv_t)-1)
+				iconv_close(_handle);
+			_handle = iconv_open(_to_charset.c_str(), _from_charset.c_str());
+		}
+
 		void reset_buffer ()
 		{
 			_dest = _buffer;
@@ -185,6 +249,9 @@ namespace text
 
 		iconv_t _handle = (iconv_t)-1;
 		size_t _invalid_count = 0;
+
+		std::string _from_charset, _to_charset;
+		bool _per_char_translit = false;
 
 		std::string _skip_prefix;
 		size_t _skip_offset = 0;

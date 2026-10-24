@@ -23,7 +23,13 @@ void test_attributes ()
 	OAK_ASSERT_EQ(path::get_attr(file, "buz"), "jazz");
 	OAK_ASSERT_EQ(path::get_attr(file, "new"), "value");
 
-	OAK_ASSERT_EQ(path::attributes(file).size(), 2);
+	// macOS may add system attributes (e.g. com.apple.provenance), so check
+	// the attributes we set rather than the total count.
+	std::map<std::string, std::string> const attributes = path::attributes(file);
+	auto const attr = [&attributes](std::string const& name){ auto it = attributes.find(name); return it != attributes.end() ? it->second : NULL_STR; };
+	OAK_ASSERT_EQ(attr("new"), "value");
+	OAK_ASSERT_EQ(attr("buz"), "jazz");
+	OAK_ASSERT_EQ(attr("foo"), NULL_STR);
 
 	OAK_ASSERT_EQ(path::content(file), "«some content»");
 }

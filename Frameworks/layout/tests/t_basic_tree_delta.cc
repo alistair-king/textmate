@@ -69,8 +69,14 @@ void test_basic_tree_delta ()
 	OAK_ASSERT_EQ(buf, buffer);
 
 	buf = "";
-	riterate(it, tree)
-		buf.insert(0, buffer.substr(it->offset.buffer_size, it->key.buffer_size));
+	// The tree’s iterator returns references into itself (a “stashing”
+	// iterator), so std::reverse_iterator would dereference a dead temporary.
+	// Walk backwards with a live iterator instead — still exercises operator--.
+	for(auto it = tree.end(); it != tree.begin(); )
+	{
+		auto const& info = *--it;
+		buf.insert(0, buffer.substr(info.offset.buffer_size, info.key.buffer_size));
+	}
 	OAK_ASSERT_EQ(buf, buffer);
 
 	// test secondary key

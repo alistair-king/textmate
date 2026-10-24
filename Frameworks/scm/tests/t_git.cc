@@ -13,6 +13,10 @@ struct setup_t
 		std::string const script = text::format("{ cd '%1$s' && '%2$s' init && '%2$s' config user.email 'test@example.com' && '%2$s' config user.name 'Test Test' && '%2$s' config commit.gpgsign false && touch .dummy && '%2$s' add .dummy && '%2$s' commit .dummy -mGetHead && %3$s ; } >/dev/null", jail.path().c_str(), git.c_str(), cmd.c_str());
 		if(io::exec("/bin/sh", "-c", script.c_str(), nullptr) != NULL_STR)
 		{
+			std::string const head = io::exec("/bin/sh", "-c", text::format("{ cd '%1$s' && '%2$s' symbolic-ref --short HEAD ; }", jail.path().c_str(), git.c_str()).c_str(), nullptr);
+			if(head != NULL_STR)
+				_branch = head.substr(0, head.find("\n"));
+
 			if(info = scm::info(jail.path()))
 			{
 				wait_for_status(info);
@@ -39,9 +43,14 @@ struct setup_t
 		return vars.find(var) != vars.end() ? vars[var] : NULL_STR;
 	}
 
+	// Branch name of the setup repo, i.e. whatever the local git uses as
+	// init.defaultBranch (“master”, “main”, …), so tests need not hardcode it.
+	std::string const& branch () const { return _branch; }
+
 private:
 	test::jail_t jail;
 	scm::info_ptr info;
+	std::string _branch;
 };
 
 // =================
@@ -52,7 +61,7 @@ void test_variables ()
 {
 	setup_t wc("true");
 	OAK_ASSERT_EQ(wc.variable("TM_SCM_NAME"),   "git");
-	OAK_ASSERT_EQ(wc.variable("TM_SCM_BRANCH"), "master");
+	OAK_ASSERT_EQ(wc.variable("TM_SCM_BRANCH"), wc.branch());
 }
 
 void test_empty_folder ()

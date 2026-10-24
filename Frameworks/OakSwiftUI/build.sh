@@ -44,4 +44,25 @@ cp "$DYLIB_PATH" "$LIB_DIR/"
 # Set install name for @rpath resolution at runtime
 install_name_tool -id "@rpath/libOakSwiftUI.dylib" "$LIB_DIR/libOakSwiftUI.dylib"
 
+# Stage the generated ObjC bridging header where CMake expects it
+# (.build/<triple>/<config>/OakSwiftUI.build/include). SwiftPM's output
+# layout moved between toolchain versions, so locate the header wherever
+# this toolchain put it and copy it to the stable path.
+STABLE_HDR=".build/arm64-apple-macosx/${SWIFT_CONFIG}/OakSwiftUI.build/include/OakSwiftUI-Swift.h"
+for CAND in \
+    ".build/out/Intermediates.noindex/OakSwiftUI.build/${SWIFT_CONFIG}"/OakSwiftUI-t.build/Objects-normal/*/OakSwiftUI-Swift.h \
+    ".build/out/Intermediates.noindex/GeneratedModuleMaps/OakSwiftUI-Swift.h"
+do
+    if [ -f "$CAND" ] && [ "$CAND" != "$STABLE_HDR" ]; then
+        mkdir -p "$(dirname "$STABLE_HDR")"
+        cp "$CAND" "$STABLE_HDR"
+        break
+    fi
+done
+
+if [ ! -f "$STABLE_HDR" ]; then
+    echo "Error: generated OakSwiftUI-Swift.h not found after build"
+    exit 1
+fi
+
 echo "OakSwiftUI built: $LIB_DIR/libOakSwiftUI.dylib"

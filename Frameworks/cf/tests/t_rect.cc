@@ -27,12 +27,14 @@ static CGRect from_str (std::string const& s)
 {
 	size_t x0 = 3, x1 = 0;
 	size_t y0 = 3, y1 = 0;
+	bool found = false;
 	for(size_t y = 0; y < 3; ++y)
 	{
 		for(size_t x = 0; x < 3; ++x)
 		{
 			if(s[3*y + x] == 'x')
 			{
+				found = true;
 				x0 = std::min(x0, x);
 				x1 = std::max(x1, x+1);
 				y0 = std::min(y0, y);
@@ -40,7 +42,9 @@ static CGRect from_str (std::string const& s)
 			}
 		}
 	}
-	return CGRectMake(x0, y0, x1 - x0, y1 - y0);
+	// With no ‘x’ cells, x1 - x0 and y1 - y0 would wrap around (size_t) and
+	// produce a rect with astronomic dimensions.
+	return found ? CGRectMake(x0, y0, x1 - x0, y1 - y0) : CGRectZero;
 }
 
 static std::string xor_rects (std::string const& lhs, std::string const& rhs)
