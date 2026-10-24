@@ -7,6 +7,7 @@
 #import "FileItemTableCellView.h"
 #import "SCMManager.h"
 #import <io/FSEventsManager.h>
+#import <io/path.h>
 #import "OFB/OFBHeaderView.h"
 #import "OFB/OFBActionsView.h"
 #import "OFB/OFBFinderTagsChooser.h"
@@ -512,6 +513,7 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 		{ /* -------- */ },
 		{ @"Copy",                    @selector(copy:)                                                                            },
 		{ @"Copy as Pathname",        @selector(copyAsPathname:),      @"",  NSEventModifierFlagOption, .tag = kRequiresSelectionTag, .alternate = YES },
+		{ @"Copy Relative Path",      @selector(copyRelativePath:), .tag = kRequiresSelectionTag },
 		{ @"Paste",                   @selector(paste:),                      },
 		{ @"Move Items Here",         @selector(pasteNext:),                  },
 		{ @"Create Link to Items",    @selector(createLinkToPasteboardItems:) },
@@ -793,6 +795,29 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 	[NSPasteboard.generalPasteboard writeObjects:pathnames];
 }
 
+- (void)copyRelativePath:(id)sender
+{
+	NSString* basePath = self.path;
+	if(!basePath.length)
+		return;
+
+	NSMutableArray<NSString*>* pathnames = [NSMutableArray array];
+	for(FileItem* item in self.previewableItems)
+	{
+		if(NSString* path = item.URL.filePathURL.path)
+		{
+			std::string relativePath = path::relative_to(to_s(path), to_s(basePath));
+			[pathnames addObject:relativePath.empty() ? @"." : to_ns(relativePath)];
+		}
+	}
+
+	if(pathnames.count)
+	{
+		[NSPasteboard.generalPasteboard clearContents];
+		[NSPasteboard.generalPasteboard setString:[pathnames componentsJoinedByString:@"\n"] forType:NSPasteboardTypeString];
+	}
+}
+
 - (void)paste:(id)sender
 {
 	BOOL hasOperation = [[NSPasteboard.generalPasteboard availableTypeFromArray:@[ @"OakFileBrowserOperation" ]] isEqualToString:@"OakFileBrowserOperation"];
@@ -1038,6 +1063,8 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 		hideAndDisable = previewableItems.count == 0;
 	else if(menuItem.action == @selector(copyAsPathname:))
 		hideAndDisable = previewableItems.count == 0;
+	else if(menuItem.action == @selector(copyRelativePath:))
+		hideAndDisable = previewableItems.count == 0 || !self.path.length;
 	else if(menuItem.action == @selector(paste:))
 		hideAndDisable = self.canPaste == NO;
 	else if(menuItem.action == @selector(pasteNext:))
