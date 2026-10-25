@@ -72,6 +72,8 @@ NSDictionary* EditorLanguageNormalize(NSString* method, id raw, NSDictionary* do
 		if(raw == NSNull.null) return @{ @"items": @[], @"hover": NSNull.null };
 		if(![raw isKindOfClass:NSDictionary.class]) return editor_context::failure(@"Invalid hover response from the language server.", @"invalid_language_response");
 		id content = raw[@"contents"];
+		// An empty MarkedString array is a valid hover with no information.
+		if([content isKindOfClass:NSArray.class] && ![content count]) return @{ @"items": @[], @"hover": NSNull.null };
 		NSArray* parts = [content isKindOfClass:NSArray.class] ? content : content ? @[content] : @[];
 		NSMutableArray* texts = [NSMutableArray array];
 		NSUInteger remaining = 8192;

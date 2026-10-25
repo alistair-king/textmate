@@ -889,6 +889,22 @@ void test_editor_language_normalization_bounds_and_server_data ()
     OAK_ASSERT((EditorLanguageNormalize(@"get_definition", @[], metadata, editor_context::now()-1)[@"error"] != nil));
 }
 
+void test_editor_hover_empty_contents_and_malformed_responses ()
+{
+    NSDictionary* metadata = @{ @"path": @"/tmp/hover.txt" };
+    for(id raw in @[NSNull.null, @{ @"contents": @[] }]) {
+        NSDictionary* result = EditorLanguageNormalize(@"get_hover", raw, metadata, editor_context::now()+3);
+        OAK_ASSERT(!result[@"error"] && result[@"hover"] == NSNull.null);
+        OAK_ASSERT([result[@"items"] count] == 0);
+    }
+    for(id raw in @[@[], @{}, @{ @"contents": NSNull.null }, @{ @"contents": @{} }, @{ @"contents": @[@7] }]) {
+        NSDictionary* result = EditorLanguageNormalize(@"get_hover", raw, metadata, editor_context::now()+3);
+        OAK_ASSERT([result[@"code"] isEqual:@"invalid_language_response"]);
+    }
+    NSDictionary* result = EditorLanguageNormalize(@"get_hover", @{ @"contents": @[@"Type information"] }, metadata, editor_context::now()+3);
+    OAK_ASSERT([result[@"hover"][@"text"] isEqual:@"Type information"]);
+}
+
 void test_editor_language_queries_real_server_and_session_boundary ()
 {
     NSString* path = [@"/tmp/textmate-language-" stringByAppendingString:NSUUID.UUID.UUIDString];
