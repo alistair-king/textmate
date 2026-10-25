@@ -220,6 +220,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 					}
 				},
 				{ @"Explain Selection…", @selector(explainSelection:), @"e", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
+				{ @"Fix Selection…", @selector(fixSelection:) },
 				{ /* -------- */ },
 				{ @"Spelling",
 					.submenuRef = &spellingMenu, .submenu = {
@@ -245,6 +246,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 				},
 				{ @"Show File Browser",      @selector(toggleFileBrowser:),    @"d", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
 				{ @"Show Terminal Panel", @selector(toggleTerminalPanel:), @"`", .modifierFlags = NSEventModifierFlagCommand },
+				{ @"Show Project Changes", @selector(showProjectChanges:) },
 				{ @"Terminal Panel Position", .submenu = {
 					{ @"Left", @selector(takeTerminalPanelPositionFrom:), .representedObject = @"left" },
 					{ @"Right", @selector(takeTerminalPanelPositionFrom:), .representedObject = @"right" },
