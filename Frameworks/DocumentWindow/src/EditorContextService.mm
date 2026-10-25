@@ -27,13 +27,13 @@
 - (NSDictionary*)renderBefore:(double)deadline {
     if(editor_context::now() >= deadline) return editor_context::failure(@"The editor request timed out.", @"timeout");
     if(_action) {
-        if(NSThread.isMainThread) return editor_context::failure(@"Navigation must be awaited on a worker thread.", @"invalid_request");
+        if(NSThread.isMainThread) return editor_context::failure(@"Editor actions must be awaited on a worker thread.", @"invalid_request");
         __block NSDictionary* result;
         dispatch_semaphore_t finished = dispatch_semaphore_create(0);
         dispatch_async(dispatch_get_main_queue(), ^{
             BOOL (^canCommit)(void) = ^{ return editor_context::now() < deadline && (!self.authorization || self.authorization()); };
             if(!canCommit()) {
-                result = editor_context::failure(@"Navigation expired or its terminal session changed.", @"navigation_cancelled");
+                result = editor_context::failure(@"The editor action expired or its terminal session changed.", @"navigation_cancelled");
                 dispatch_semaphore_signal(finished);
                 return;
             }

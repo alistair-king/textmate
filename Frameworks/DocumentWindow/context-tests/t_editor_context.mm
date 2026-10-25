@@ -3,6 +3,7 @@
 #import "../src/EditorContextService.h"
 #import "../src/EditorContextBuffer.h"
 #import "../src/EditorContextDiagnostics.h"
+#import "../src/EditorLanguageIntelligence.h"
 #import "../src/EditorContextChanges.h"
 #import "../src/SelectionExplanation.h"
 #import "../src/SelectionFix.h"
@@ -528,7 +529,7 @@ void test_editor_context_large_immutable_snapshot ()
     OAK_ASSERT([context[@"cursor"][@"line"] unsignedIntegerValue] == repetitions+1);
     NSDictionary* timeout = [snapshot responseForMethod:@"read_document" arguments:@{} base:@{} document:@{}
         ranges:ng::ranges_t() caret:0 deadline:editor_context::now()-1];
-    OAK_ASSERT([timeout[@"code"] isEqual:@"timeout"]);
+    OAK_MASSERT([timeout.description UTF8String] ?: "No timeout response was received", [timeout[@"code"] isEqual:@"timeout"]);
     dispatch_sync(dispatch_get_main_queue(), ^{ [document close]; });
 }
 
@@ -819,4 +820,109 @@ void test_project_changes_unsaved_snapshot_and_navigation ()
         [review close]; [document close];
     });
     OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:directory error:nil]);
+}
+
+
+void test_editor_language_normalization_bounds_and_server_data ()
+{
+    NSDictionary* range = @{ @"start": @{ @"line": @0, @"character": @3 }, @"end": @{ @"line": @0, @"character": @4 } };
+    NSDictionary* metadata = @{ @"path": @"/tmp/language 😀.txt" };
+    NSDictionary* link = @{ @"targetUri": @"file:///tmp/other.txt", @"targetSelectionRange": range };
+    NSDictionary* result = EditorLanguageNormalize(@"get_definition", @[link, @{}, @7], metadata, editor_context::now()+3);
+    OAK_ASSERT([result[@"items"] count] == 1 && [result[@"invalidCount"] integerValue] == 2);
+    OAK_ASSERT([result[@"items"][0][@"range"][@"start"][@"column"] integerValue] == 4);
+    OAK_ASSERT([result[@"items"][0][@"location"] isEqual:@"/tmp/other.txt:1"]);
+    OAK_ASSERT(([EditorLanguageNormalize(@"get_definition", NSNull.null, metadata, editor_context::now()+3)[@"items"] count] == 0));
+    OAK_ASSERT((EditorLanguageNormalize(@"find_references", @{}, metadata, editor_context::now()+3)[@"error"] != nil));
+    NSDictionary* unresolved = @{ @"name": @"Unresolved", @"kind": @12, @"location": @{ @"uri": @"file:///tmp/other.txt" } };
+    result = EditorLanguageNormalize(@"search_workspace_symbols", @[unresolved], metadata, editor_context::now()+3);
+    OAK_ASSERT([result[@"items"][0][@"unresolved"] boolValue] && result[@"items"][0][@"range"] == NSNull.null);
+    NSMutableArray* many = [NSMutableArray array];
+    for(int i = 0; i < 1100; ++i) [many addObject:link];
+    result = EditorLanguageNormalize(@"get_definition", many, metadata, editor_context::now()+3);
+    OAK_ASSERT([result[@"items"] count] <= 1000 && [result[@"resultsTruncated"] boolValue]);
+    NSString* large = [[@"a" stringByPaddingToLength:8191 withString:@"a" startingAtIndex:0] stringByAppendingString:@"😀"];
+    result = EditorLanguageNormalize(@"get_hover", @{ @"contents": large }, metadata, editor_context::now()+3);
+    OAK_ASSERT([result[@"hover"][@"textTruncated"] boolValue]);
+    OAK_ASSERT([result[@"hover"][@"text"] length] == 8191);
+    OAK_ASSERT((EditorLanguageNormalize(@"get_definition", @[], metadata, editor_context::now()-1)[@"error"] != nil));
+}
+
+void test_editor_language_queries_real_server_and_session_boundary ()
+{
+    NSString* path = [@"/tmp/textmate-language-" stringByAppendingString:NSUUID.UUID.UUIDString];
+    OAK_ASSERT([@"A😀B\n" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    __block OakDocument* document;
+    __block DocumentWindowController* window;
+    __block LSPClient* client;
+    __block NSDictionary* environment;
+    NSUUID* session = NSUUID.UUID;
+    dispatch_semaphore_t loaded = dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        document = [OakDocument documentWithPath:path]; document.fileType = @"text.plain";
+        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+            OAK_ASSERT(status == OakDocumentIOResultSuccess); dispatch_semaphore_signal(loaded);
+        }];
+        NSString* fixture = [@(__FILE__).stringByDeletingLastPathComponent stringByAppendingPathComponent:@"language_server.py"];
+        client = [[LSPClient alloc] initWithCommand:@"/usr/bin/python3" arguments:@[fixture] workingDirectory:@"/tmp" initOptions:nil];
+    });
+    OAK_ASSERT(dispatch_semaphore_wait(loaded, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
+    __block BOOL initialized = NO;
+    for(int i = 0; i < 500; ++i) {
+        dispatch_sync(dispatch_get_main_queue(), ^{ initialized = client.initialized; });
+        if(initialized) break;
+        usleep(10000);
+    }
+    OAK_ASSERT(initialized);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setDocuments:@[document]]; [window setSelectedDocument:document];
+        [client openDocument:document languageId:@"plaintext"];
+        LSPManager* manager = LSPManager.sharedManager;
+        [manager valueForKey:@"documentClients"][document.identifier] = client;
+        [[manager valueForKey:@"openDocuments"] addObject:document.identifier];
+        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString* method, NSDictionary* args){ return [window editorContextForMethod:method arguments:args]; }];
+        document.content = @"A😀B unsaved\n";
+        window.textView.selectionString = @"1:6";
+    });
+    NSDictionary* definition = context_test_query(environment, @"get_definition");
+    OAK_ASSERT(!definition[@"error"] && [definition[@"items"] count] == 1);
+    OAK_ASSERT([definition[@"items"][0][@"range"][@"start"][@"column"] integerValue] == 4);
+    OAK_ASSERT([context_test_query(environment, @"get_definition", @{ @"line": @1, @"column": @3 })[@"code"] isEqual:@"invalid_position"]);
+    OAK_ASSERT([context_test_query(environment, @"get_definition", @{ @"documentId": NSUUID.UUID.UUIDString })[@"code"] isEqual:@"document_unavailable"]);
+    NSDictionary* hover = context_test_query(environment, @"get_hover");
+    NSDictionary* echoed = editor_context::parse([hover[@"hover"][@"text"] dataUsingEncoding:NSUTF8StringEncoding]);
+    OAK_ASSERT([echoed[@"text"] isEqual:@"A😀B unsaved\n"]);
+    OAK_ASSERT([echoed[@"position"][@"character"] integerValue] == 3); // byte 5 → UTF-16 3
+    NSDictionary* references = context_test_query(environment, @"find_references", @{ @"limit": @100 });
+    OAK_ASSERT(!references[@"error"] && [references[@"items"] count] == 100 && [references[@"availableCount"] integerValue] == 205);
+    NSDictionary* page = context_test_query(environment, @"find_references", @{ @"resultId": references[@"resultId"], @"offset": @100, @"limit": @100 });
+    OAK_ASSERT([page[@"items"] count] == 100 && [page[@"nextOffset"] integerValue] == 200);
+    page = context_test_query(environment, @"find_references", @{ @"resultId": references[@"resultId"], @"offset": @200 });
+    OAK_ASSERT([page[@"items"] count] == 5 && page[@"nextOffset"] == NSNull.null);
+    NSDictionary* symbols = context_test_query(environment, @"get_document_symbols");
+    OAK_ASSERT([symbols[@"items"] count] == 2 && [symbols[@"items"][1][@"container"] isEqual:@"Outer"]);
+    NSDictionary* workspace = context_test_query(environment, @"search_workspace_symbols", @{ @"query": @"Example" });
+    OAK_ASSERT([workspace[@"items"][0][@"location"] isEqual:@"/tmp/workspace-symbol.txt:5"]);
+    OAK_ASSERT([context_test_query(environment, @"search_workspace_symbols", @{ @"query": @"error" })[@"code"] isEqual:@"language_request_failed"]);
+    NSDictionary* timeout = context_test_query(environment, @"search_workspace_symbols", @{ @"query": @"timeout" });
+    OAK_MASSERT([timeout.description UTF8String] ?: "No timeout response was received", [timeout[@"code"] isEqual:@"timeout"]);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100*NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ document.content = @"changed while querying"; });
+    });
+    OAK_ASSERT([context_test_query(environment, @"search_workspace_symbols", @{ @"query": @"slow" })[@"code"] isEqual:@"document_changed"]);
+    OAK_ASSERT([context_test_query(environment, @"find_references", @{ @"resultId": references[@"resultId"], @"offset": @100 })[@"code"] isEqual:@"result_expired"]);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100*NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ [EditorContextService.sharedService revokeSession:session]; });
+    });
+    OAK_ASSERT([context_test_query(environment, @"search_workspace_symbols", @{ @"query": @"slow" })[@"error"] isKindOfClass:NSString.class]);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [LSPManager.sharedManager documentWillClose:document];
+        [client shutdown];
+        [window setSelectedDocument:nil]; [window setDocuments:@[]]; [document close]; [window close];
+        [DocumentWindowController enableSessionSave];
+    });
+    OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:path error:nil]);
 }
