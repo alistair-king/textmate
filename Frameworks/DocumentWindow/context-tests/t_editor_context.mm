@@ -773,6 +773,30 @@ void test_selection_fix_mcp_review_and_window_boundary ()
 }
 
 
+void test_project_changes_without_project_directory ()
+{
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        DocumentWindowController* window = [[DocumentWindowController alloc] init];
+        OAK_ASSERT(window.terminalStartDirectory == nil);
+        NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:@"Show Project Changes" action:@selector(showProjectChanges:) keyEquivalent:@""];
+        OAK_ASSERT(![(id<NSMenuItemValidation>)window validateMenuItem:item]);
+        window.defaultProjectPath = NSTemporaryDirectory();
+        OAK_ASSERT([(id<NSMenuItemValidation>)window validateMenuItem:item]);
+        window.defaultProjectPath = nil;
+        OAK_ASSERT(![(id<NSMenuItemValidation>)window validateMenuItem:item]);
+        // Direct action calls bypass menu validation and still need a safe directory.
+        [window showProjectChanges:nil];
+        ProjectChangesWindowController* review = [window valueForKey:@"projectChangesController"];
+        OAK_ASSERT(review.window.isVisible);
+        OAK_ASSERT([[review valueForKey:@"directory"] isEqual:NSHomeDirectory()]);
+        [window close];
+        OAK_ASSERT(!review.window.isVisible);
+        [DocumentWindowController enableSessionSave];
+    });
+}
+
 void test_project_changes_unsaved_snapshot_and_navigation ()
 {
     NSString* directory = [@"/tmp/textmate-changes-buffer-" stringByAppendingString:NSUUID.UUID.UUIDString];

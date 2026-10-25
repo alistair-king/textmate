@@ -15,6 +15,7 @@ static NSDictionary* Error(NSString* message) { return @{ @"error": message }; }
 
 static NSDictionary* Git(NSString* directory, NSArray<NSString*>* arguments)
 {
+	if(!directory.length) return Error(@"Open a folder in a Git repository to review its changes.");
 	NSTask* task = [[NSTask alloc] init];
 	task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/git"];
 	task.arguments = [@[@"--no-optional-locks", @"-c", @"core.fsmonitor=false", @"-C", directory] arrayByAddingObjectsFromArray:arguments];

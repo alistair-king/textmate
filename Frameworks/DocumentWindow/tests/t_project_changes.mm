@@ -80,6 +80,8 @@ void test_project_changes_git_baseline_and_special_files ()
 
 void test_project_changes_without_commit_and_outside_repository ()
 {
+	OAK_ASSERT((ProjectChangesSnapshot(nil, @{})[@"error"] != nil));
+	OAK_ASSERT((ProjectChangesSnapshot(@"", @{})[@"error"] != nil));
 	NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
 	OAK_ASSERT([NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil]);
 	OAK_ASSERT((ProjectChangesSnapshot(directory, @{})[@"error"] != nil));

@@ -2323,7 +2323,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 {
 	if(!self.projectChangesController) {
 		__weak DocumentWindowController* weakSelf = self;
-		self.projectChangesController = [[ProjectChangesWindowController alloc] initWithDirectory:self.projectPath ?: self.terminalStartDirectory buffers:^NSDictionary*{
+		self.projectChangesController = [[ProjectChangesWindowController alloc] initWithDirectory:self.projectPath ?: self.terminalStartDirectory ?: NSHomeDirectory() buffers:^NSDictionary*{
 			NSMutableDictionary* buffers = [NSMutableDictionary dictionary];
 			for(OakDocument* document in weakSelf.documents)
 				if(document.path && document.isLoaded && document.isDocumentEdited)
@@ -2810,6 +2810,8 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	BOOL active = YES;
 	if([menuItem action] == @selector(toggleTerminalPanel:))
 		[menuItem setTitle:self.terminalPanelController.panelVisible ? @"Hide Terminal Panel" : @"Show Terminal Panel"];
+	else if([menuItem action] == @selector(showProjectChanges:))
+		active = (self.projectPath ?: self.terminalStartDirectory).length > 0;
 	else if([menuItem action] == @selector(explainSelection:) || [menuItem action] == @selector(fixSelection:))
 		active = [self canExplainSelection];
 	else if([menuItem action] == @selector(takeTerminalPanelPositionFrom:))

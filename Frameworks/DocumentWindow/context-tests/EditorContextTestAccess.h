@@ -11,6 +11,8 @@
 @end
 @interface DocumentWindowController (EditorContextTests)
 @property OakTextView* textView;
+- (NSString*)terminalStartDirectory;
+- (IBAction)showProjectChanges:(id)sender;
 - (void)setDocuments:(NSArray*)documents;
 - (void)setSelectedDocument:(OakDocument*)document;
 - (EditorContextSnapshot*)editorContextForMethod:(NSString*)method arguments:(NSDictionary*)arguments;
