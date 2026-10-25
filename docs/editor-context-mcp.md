@@ -209,3 +209,12 @@ An optional real-OpenCode check verifies the launcher, configuration references,
 python3 Applications/textmate-mcp/tests/test_opencode_cli.py \
   build-debug/Applications/textmate-mcp/textmate-mcp /absolute/path/to/opencode
 ```
+
+## Proposed selection fixes
+
+**Edit → Fix Selection…** creates an opaque `fixId` and includes it with immutable document/selection metadata, selected text, and cached diagnostics in the agent's initial prompt. This is the entry point for proposing changes; an MCP client cannot create an arbitrary edit request.
+
+- `propose_selection_fix`: requires `fixId`, `summary` (1–2,048 UTF-16 units), and `replacements` (one complete string for each nonempty captured selection, in snapshot order; combined maximum 32,768 UTF-16 units). Empty strings delete selected code. Unknown requests, changed/closed documents, overlapping selections, unchanged proposals, and replacement-count mismatches are rejected. A busy review window returns `review_unavailable`; retry after closing its dialog. This tool is marked `readOnlyHint: false` because it opens a review sheet, but never applies or saves text itself.
+- `get_selection_fix_status`: requires `fixId`. Returns `awaiting_proposal`, `pending_review`, `applied`, `discarded`, or `stale`. Unknown or superseded requests return `fix_unavailable`. Query when needed rather than polling repeatedly.
+
+The proposal call returns `pending_review` and `applied: false` promptly, within the normal socket deadline. Human review happens separately without holding an MCP request open. The user applies all proposed selection replacements together or discards them. Apply checks document identity and revision again, changes only the live buffer, and groups the replacements as one undoable edit. It never saves a file. There is one retained request per window, and applied/discarded/stale requests cannot be replayed. A request belongs to its original editor window; moving a terminal does not move the request.

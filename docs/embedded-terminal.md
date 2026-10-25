@@ -57,3 +57,13 @@ Agents can follow file switches, selections, unsaved edits, open tabs, metadata,
 For clients that use tools, ask **“Follow my current file and selection, using get_editor_changes to refresh when they change.”** This tool returns a cursor with the current context. Subsequent calls with that cursor omit unchanged text and return a fresh snapshot when something changes. Following stays within the terminal's owning window, including after moving the terminal to another window.
 
 Subscriptions are optional, and there are no background editor queries without a subscriber. The feature does not automatically start model turns or recurring calls in tool-only clients. See [Follow editor changes](editor-context-mcp.md#follow-editor-changes) for the subscription protocol and cursor behavior.
+
+## Fix Selection
+
+Select code and choose **Edit → Fix Selection…**. Choose Codex, Claude Code, or OpenCode. The agent investigates the selected code to identify what needs fixing. TextMate opens a new terminal conversation with a snapshot of the selected passages and available cached LSP diagnostics. The agent must already be installed and signed in.
+
+The agent submits a proposed replacement through MCP. TextMate displays a **Review Selection Fix** sheet with a unified diff and **Apply Fix** / **Discard** buttons. Minus lines are removed; plus lines are added. Applying updates the live editor buffer, including unsaved or untitled documents, as one undoable action. Save when ready. Discard leaves the buffer untouched.
+
+Proposals are restricted to the captured selections. Moving the cursor or switching tabs does not retarget the fix. Any change to the document before application makes the request stale; invoke Fix Selection again using the current code. Multiple and rectangular selections are supported within the same 128-range / 8,192 UTF-16-unit snapshot limits as Explain Selection. A replacement can be empty to remove selected code; combined replacements are limited to 32,768 UTF-16 units.
+
+One Fix Selection request is retained per window; starting another replaces the previous request. Closing the document or window invalidates the pending fix. The prompt instructs the agent to propose through MCP rather than edit files on disk; the agent's own CLI permissions still apply. If the required fix extends beyond the selected passages, the agent is asked to explain and request a larger selection.
