@@ -382,6 +382,21 @@ static std::string detectWorkspaceRoot (std::string const& filePath)
 	}];
 }
 
+- (dispatch_block_t)requestLanguageQuery:(NSString*)method forDocument:(OakDocument*)document params:(NSDictionary*)params completion:(void(^)(id, NSString*))callback
+{
+	NSAssert(NSThread.isMainThread, @"Language queries run on the main thread");
+	LSPClient* client = _documentClients[document.identifier];
+	if(!client || !client.running || ![_openDocuments containsObject:document.identifier]) { callback(nil, @"server_unavailable"); return nil; }
+	if(!client.initialized) { callback(nil, @"server_starting"); return nil; }
+	if(![client supportsLanguageQuery:method]) { callback(nil, @"unsupported_capability"); return nil; }
+	[self flushPendingChangesForDocument:document];
+	int requestId = [client sendCustomRequest:method params:params completion:^(id result){
+		callback(result, result ? nil : @"language_request_failed");
+	}];
+	__weak LSPClient* originalClient = client;
+	return ^{ [originalClient cancelRequest:requestId]; };
+}
+
 - (void)requestDefinitionForDocument:(OakDocument*)document line:(NSUInteger)line character:(NSUInteger)character completion:(void(^)(NSArray<NSDictionary*>*))callback
 {
 	NSUUID* docId = document.identifier;

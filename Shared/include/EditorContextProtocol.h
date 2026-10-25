@@ -93,6 +93,26 @@ inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
         if(arguments[@"cursor"] && (![arguments[@"cursor"] isKindOfClass:NSString.class] || ![arguments[@"cursor"] length] || [arguments[@"cursor"] length] > 256)) return @"cursor must be a nonempty string of at most 256 characters";
         return nil;
     }
+    if([@[@"get_definition", @"find_references", @"get_document_symbols", @"search_workspace_symbols", @"get_hover"] containsObject:method]) {
+        BOOL position = [@[@"get_definition", @"find_references", @"get_hover"] containsObject:method];
+        NSMutableArray* keys = [@[@"documentId", @"revision", @"limit", @"offset", @"resultId"] mutableCopy];
+        if(position) [keys addObjectsFromArray:@[@"line", @"column"]];
+        if([method isEqual:@"find_references"]) [keys addObject:@"includeDeclaration"];
+        if([method isEqual:@"search_workspace_symbols"]) [keys addObject:@"query"];
+        for(NSString* key in arguments) if(![keys containsObject:key]) return @"Unknown argument";
+        for(NSString* key in @[@"documentId", @"revision", @"resultId"])
+            if(arguments[key] && (![arguments[key] isKindOfClass:NSString.class] || ![arguments[key] length] || [arguments[key] length] > 256)) return @"documentId, revision, and resultId must be nonempty strings of at most 256 characters";
+        for(NSString* key in @[@"line", @"column"])
+            if(arguments[key] && (!integer(arguments[key], 2147483647) || [arguments[key] integerValue] < 1)) return @"Lines and columns must be positive integers";
+        if(arguments[@"column"] && !arguments[@"line"]) return @"line is required with column";
+        if(arguments[@"offset"] && !integer(arguments[@"offset"], 1000)) return @"offset must be an integer between 0 and 1000";
+        if([arguments[@"offset"] integerValue] && !arguments[@"resultId"]) return @"resultId is required to page a previous result";
+        if(arguments[@"limit"] && (!integer(arguments[@"limit"], 100) || [arguments[@"limit"] integerValue] < 1)) return @"limit must be an integer between 1 and 100";
+        if(arguments[@"includeDeclaration"] && (![arguments[@"includeDeclaration"] isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)arguments[@"includeDeclaration"]) != CFBooleanGetTypeID())) return @"includeDeclaration must be a boolean";
+        if([method isEqual:@"search_workspace_symbols"] && (!arguments[@"resultId"] || arguments[@"query"]))
+            if(![arguments[@"query"] isKindOfClass:NSString.class] || ![arguments[@"query"] length] || [arguments[@"query"] length] > 256) return @"query must contain between 1 and 256 characters";
+        return nil;
+    }
     if([method isEqual:@"propose_selection_fix"] || [method isEqual:@"get_selection_fix_status"]) {
         BOOL proposal = [method isEqual:@"propose_selection_fix"];
         NSArray* keys = proposal ? @[@"fixId", @"replacements", @"summary"] : @[@"fixId"];

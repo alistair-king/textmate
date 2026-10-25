@@ -3,7 +3,7 @@
 typedef void (^EditorContextAction)(double deadline, BOOL (^canCommit)(void), void (^completion)(NSDictionary*));
 
 // Capture on the main thread; await on a worker thread. Query snapshots render
-// there; navigation actions asynchronously return to the main thread to commit.
+// there; asynchronous editor actions return to the main thread to query or commit.
 @interface EditorContextSnapshot : NSObject
 + (instancetype)response:(NSDictionary*)response;
 + (instancetype)renderer:(NSDictionary* (^)(double deadline))renderer;
