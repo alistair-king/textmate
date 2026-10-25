@@ -40,7 +40,7 @@ const transport = new StdioClientTransport({command: resolve(process.argv[3]),
 try {
   await client.connect(transport);
   const list = await client.listTools();
-  assert.deepEqual(list.tools.map(tool => tool.name), ['get_editor_context','list_open_documents','read_document','get_diagnostics','get_definition','find_references','get_document_symbols','search_workspace_symbols','get_hover','navigate_editor','propose_selection_fix','get_selection_fix_status','get_editor_changes']);
+  assert.deepEqual(list.tools.map(tool => tool.name), ['get_editor_context','list_open_documents','read_document','get_diagnostics','get_definition','find_references','get_document_symbols','search_workspace_symbols','get_hover','navigate_editor','propose_document_edits','get_edit_proposal_status','propose_selection_fix','get_selection_fix_status','get_editor_changes']);
   assert.equal(list.tools.find(tool => tool.name === 'navigate_editor').annotations.readOnlyHint, false);
   const result = await client.callTool({name: 'get_editor_context', arguments: {}});
   assert.equal(result.isError, false);

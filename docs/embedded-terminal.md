@@ -62,8 +62,18 @@ Subscriptions are optional, and there are no background editor queries without a
 
 Select code and choose **Edit → Fix Selection…**. Choose Codex, Claude Code, or OpenCode. The agent investigates the selected code to identify what needs fixing. TextMate opens a new terminal conversation with a snapshot of the selected passages and available cached LSP diagnostics. The agent must already be installed and signed in.
 
-The agent submits a proposed replacement through MCP. TextMate displays a **Review Selection Fix** sheet with a unified diff and **Apply Fix** / **Discard** buttons. Minus lines are removed; plus lines are added. Applying updates the live editor buffer, including unsaved or untitled documents, as one undoable action. Save when ready. Discard leaves the buffer untouched.
+The agent submits a proposed replacement through MCP. TextMate displays a **Review Selection Fix** window with a unified diff and **Apply Fix** / **Discard** buttons. Minus lines are removed; plus lines are added. Applying updates the live editor buffer, including unsaved or untitled documents, as one undoable action. Save when ready. Discard leaves the buffer untouched.
 
 Proposals are restricted to the captured selections. Moving the cursor or switching tabs does not retarget the fix. Any change to the document before application makes the request stale; invoke Fix Selection again using the current code. Multiple and rectangular selections are supported within the same 128-range / 8,192 UTF-16-unit snapshot limits as Explain Selection. A replacement can be empty to remove selected code; combined replacements are limited to 32,768 UTF-16 units.
 
 One Fix Selection request is retained per window; starting another replaces the previous request. Closing the document or window invalidates the pending fix. The prompt instructs the agent to propose through MCP rather than edit files on disk; the agent's own CLI permissions still apply. If the required fix extends beyond the selected passages, the agent is asked to explain and request a larger selection.
+
+## Agent-proposed buffer edits
+
+While chatting with an agent started through `tm-codex`, `tm-claude`, or `tm-opencode`, ask it to propose changes to an open buffer. For example: **“Simplify this function and propose the edits in TextMate for review.”** A prior Fix Selection command is not required.
+
+The agent reads the current live text and submits `propose_document_edits`. Review its diff in the **Review Buffer Edits** window and choose **Apply Edits** or **Discard**. This supports unsaved and untitled documents, insertions, replacements, and deletions. Apply groups the changes into one undo action; save the document when ready. If you change the target buffer while the agent works, the stale proposal cannot overwrite your newer edits.
+
+See [Propose edits to live buffers](editor-context-mcp.md#propose-edits-to-live-buffers) for coordinates, limits, and proposal status.
+
+Edit review windows (Fix Selection and agent-proposed buffer edits) can be moved and resized independently of the editor. The diff expands with the window. Closing a review window discards the proposal; Apply still checks that the buffer has not changed.

@@ -209,6 +209,35 @@ static char contextBufferCacheKey;
     catch(context_timeout const&) { return editor_context::failure(@"The editor request timed out.", @"timeout"); }
 }
 
+- (NSDictionary*)editPlanForArguments:(NSDictionary*)arguments document:(NSDictionary*)document deadline:(double)deadline
+{
+    if(NSString* error = editor_context::validate_arguments(@"propose_document_edits", arguments)) return editor_context::failure(error, @"invalid_arguments");
+    try {
+        _buffer->index(deadline);
+        auto const& buffer = *_buffer;
+        NSMutableArray* edits = [NSMutableArray array];
+        std::vector<std::pair<size_t, size_t>> ranges;
+        for(NSDictionary* edit in arguments[@"edits"]) {
+            if(editor_context::now() >= deadline) throw context_timeout();
+            size_t offset = [edit[@"offset"] unsignedIntegerValue], length = [edit[@"length"] unsignedIntegerValue];
+            if(offset > buffer.finish.units || length > buffer.finish.units-offset)
+                return editor_context::failure(@"An edit range is beyond the end of the buffer.", @"invalid_range");
+            size_t start = buffer.byte_at(offset), end = buffer.byte_at(offset+length);
+            if(start == NSNotFound || end == NSNotFound)
+                return editor_context::failure(@"An edit boundary splits a UTF-16 surrogate pair.", @"invalid_range");
+            ranges.emplace_back(start, end);
+            [edits addObject:@{ @"startByte": @(start), @"endByte": @(end), @"start": position_json(buffer.position(start)),
+                @"text": buffer.string(start, end), @"replacement": edit[@"text"] }];
+        }
+        std::sort(ranges.begin(), ranges.end());
+        for(size_t i = 1; i < ranges.size(); ++i)
+            if(ranges[i].first < ranges[i-1].second || ranges[i].first == ranges[i-1].first)
+                return editor_context::failure(@"Edit ranges must not overlap or share a start offset. Combine insertions at the same offset into one edit.", @"overlapping_edits");
+        return @{ @"document": document, @"edits": edits };
+    }
+    catch(context_timeout const&) { return editor_context::failure(@"The editor request timed out.", @"timeout"); }
+}
+
 - (NSDictionary*)navigationForArguments:(NSDictionary*)arguments deadline:(double)deadline
 {
     try {
