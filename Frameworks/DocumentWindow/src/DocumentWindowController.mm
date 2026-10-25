@@ -5,6 +5,9 @@
 #import "EditorContextDiagnostics.h"
 #import "EditorContextChanges.h"
 #import "SelectionExplanation.h"
+#import "SelectionFix.h"
+#import "ProjectChangesWindowController.h"
+#import <selection/selection.h>
 #import <EditorContextProtocol.h>
 #import <document/OakDocument Private.h>
 #import <lsp/LSPManager.h>
@@ -106,6 +109,8 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) BOOL                         terminalCloseConfirmed; // set once the user approved ending running shells, so the re-issued close does not ask again
 @property (nonatomic) BOOL                         terminalOnlyWindow; // created by detaching a terminal tab; closes with its last session while the placeholder document is untouched
 @property (nonatomic) BOOL preparingSelectionExplanation;
+@property (nonatomic) SelectionFix* selectionFix;
+@property (nonatomic) ProjectChangesWindowController* projectChangesController;
 @property (nonatomic) NSUInteger editorNavigationGeneration;
 @property (nonatomic) EditorContextChanges* editorChanges;
 @property (nonatomic) OakTabBarView*              tabBarView;
@@ -136,6 +141,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 
 - (EditorContextSnapshot*)editorContextForMethod:(NSString*)method arguments:(NSDictionary*)arguments;
 - (EditorContextSnapshot*)editorNavigation:(NSDictionary*)arguments;
+- (EditorContextSnapshot*)editorSelectionFix:(NSString*)method arguments:(NSDictionary*)arguments;
 - (void)loadNavigationDocument:(OakDocument*)document arguments:(NSDictionary*)arguments deadline:(double)deadline canCommit:(BOOL(^)(void))canCommit completion:(void(^)(NSDictionary*))completion;
 + (void)scheduleSessionBackup:(id)sender;
 
@@ -208,6 +214,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
     if(NSString* error = editor_context::validate_arguments(method, arguments))
         return [EditorContextSnapshot response:editor_context::failure(error, @"invalid_arguments")];
     if([method isEqual:@"navigate_editor"]) return [self editorNavigation:arguments];
+    if([method isEqual:@"propose_selection_fix"] || [method isEqual:@"get_selection_fix_status"]) return [self editorSelectionFix:method arguments:arguments];
     if([method isEqual:@"get_editor_change_token"])
         return [EditorContextSnapshot response:@{ @"cursor": self.editorChanges.cursor, @"windowId": self.identifier.UUIDString }];
     if([method isEqual:@"get_editor_changes"]) {
@@ -271,6 +278,45 @@ static NSDictionary* ContextDocument(OakDocument* document)
     return [EditorContextSnapshot renderer:^NSDictionary*(double deadline){
         return [buffer responseForMethod:method arguments:arguments base:base document:metadata ranges:ranges caret:caret deadline:deadline];
     }];
+}
+
+- (EditorContextSnapshot*)editorSelectionFix:(NSString*)method arguments:(NSDictionary*)arguments
+{
+	SelectionFix* fix = self.selectionFix;
+	if(!fix || ![fix.identifier isEqual:arguments[@"fixId"]])
+		return [EditorContextSnapshot response:editor_context::failure(@"This Fix Selection request is no longer available in this window. Invoke Fix Selection again.", @"fix_unavailable")];
+	__weak DocumentWindowController* weakSelf = self;
+	return [EditorContextSnapshot action:^(double deadline, BOOL (^canCommit)(void), void (^completion)(NSDictionary*)){
+		DocumentWindowController* controller = weakSelf;
+		if(!canCommit() || controller.selectionFix != fix) { completion(editor_context::failure(@"The fix request is no longer available.", @"fix_unavailable")); return; }
+		OakDocument* document = nil;
+		for(OakDocument* candidate in controller.documents)
+			if([candidate.identifier.UUIDString isEqual:fix.documentId]) { document = candidate; break; }
+		BOOL active = [fix.status isEqual:@"awaiting_proposal"] || [fix.status isEqual:@"pending_review"];
+		if(active && ![fix matchesDocument:document]) [fix markStale];
+		if([method isEqual:@"get_selection_fix_status"]) {
+			completion(@{ @"fixId": fix.identifier, @"status": fix.status });
+			return;
+		}
+		if([fix.status isEqual:@"stale"]) { completion(editor_context::failure(@"The document changed or closed. Invoke Fix Selection again.", @"document_changed")); return; }
+		if(controller.window.attachedSheet || !controller.window.isVisible) { completion(editor_context::failure(@"The editor cannot show the review now. Close its current dialog and try again.", @"review_unavailable")); return; }
+		NSString* error = [fix prepareReplacements:arguments[@"replacements"] summary:arguments[@"summary"]];
+		if(error) { completion(editor_context::failure(error, @"invalid_proposal")); return; }
+		NSAlert* alert = [fix reviewAlert];
+		if(!canCommit()) { [fix discard]; completion(editor_context::failure(@"The fix proposal expired before review. Invoke Fix Selection again.", @"fix_unavailable")); return; }
+		[alert beginSheetModalForWindow:controller.window completionHandler:^(NSModalResponse response){
+			DocumentWindowController* owner = weakSelf;
+			BOOL available = owner.selectionFix == fix && [owner.documents containsObject:document];
+			if(response != NSAlertFirstButtonReturn) { [fix discard]; return; }
+			if(!available || ![fix applyToDocument:document]) {
+				[fix markStale];
+				if(owner.window.isVisible)
+					[[NSAlert tmAlertWithMessageText:@"Fix Could Not Be Applied" informativeText:@"The document changed or closed while the fix was being prepared. Select the current code and invoke Fix Selection again." buttons:@"OK", nil] beginSheetModalForWindow:owner.window completionHandler:nil];
+				return;
+			}
+		}];
+		completion(@{ @"fixId": fix.identifier, @"status": @"pending_review", @"applied": @NO });
+	}];
 }
 
 - (EditorContextSnapshot*)editorNavigation:(NSDictionary*)arguments
@@ -557,6 +603,8 @@ static NSDictionary* ContextDocument(OakDocument* document)
 
 - (void)windowWillClose:(NSNotification*)aNotification
 {
+	[self.projectChangesController close];
+	self.projectChangesController = nil;
 	[self.terminalPanelController stopTerminal];
 	if((([self.window styleMask] & NSWindowStyleMaskFullScreen) != NSWindowStyleMaskFullScreen) && !self.window.isZoomed)
 		[NSUserDefaults.standardUserDefaults setObject:NSStringFromRect([self windowFrame]) forKey:@"DocumentControllerWindowFrame"];
@@ -2297,22 +2345,46 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	return NO;
 }
 
-- (IBAction)explainSelection:(id)sender
+- (IBAction)showProjectChanges:(id)sender
+{
+	if(!self.projectChangesController) {
+		__weak DocumentWindowController* weakSelf = self;
+		self.projectChangesController = [[ProjectChangesWindowController alloc] initWithDirectory:self.projectPath ?: self.terminalStartDirectory buffers:^NSDictionary*{
+			NSMutableDictionary* buffers = [NSMutableDictionary dictionary];
+			for(OakDocument* document in weakSelf.documents)
+				if(document.path && document.isLoaded && document.isDocumentEdited)
+					buffers[document.path.stringByStandardizingPath] = [ProjectChangesBuffer captureDocument:document];
+			return buffers;
+		} openFile:^(NSString* path, NSUInteger line){
+			[weakSelf openItems:@[@{ @"path": path, @"selectionString": [NSString stringWithFormat:@"%lu:1", (unsigned long)line] }] closingOtherTabs:NO activate:YES];
+		}];
+	}
+	[self.projectChangesController showWindow:sender];
+}
+
+- (IBAction)explainSelection:(id)sender { [self startSelectionAgentAction:NO]; }
+- (IBAction)fixSelection:(id)sender { [self startSelectionAgentAction:YES]; }
+
+- (void)startSelectionAgentAction:(BOOL)fixing
 {
 	if(![self canExplainSelection]) { NSBeep(); return; }
 	// Capture before displaying the sheet or moving focus to the terminal.
 	EditorContextSnapshot* snapshot = [self editorContextForMethod:@"get_editor_context" arguments:@{}];
+	EditorContextSnapshot* diagnostics = fixing ? [self editorContextForMethod:@"get_diagnostics" arguments:@{}] : nil;
+	ng::ranges_t ranges = fixing ? ng::dissect_columnar([self.selectedDocument buffer], [self.textView editorContextByteRanges], 129) : ng::ranges_t();
 	NSString* directory = [self.terminalStartDirectory copy];
 	self.preparingSelectionExplanation = YES;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NSString* error = nil;
-		NSString* prompt = SelectionExplanationPrompt([snapshot renderBefore:editor_context::now()+3], &error);
+		NSDictionary* context = [snapshot renderBefore:editor_context::now()+3];
+		SelectionFix* fix = fixing ? [[SelectionFix alloc] initWithContext:context byteRanges:ranges diagnostics:[diagnostics renderBefore:editor_context::now()+3] error:&error] : nil;
+		NSString* prompt = fixing ? (fix ? @"" : nil) : SelectionExplanationPrompt(context, &error);
 		dispatch_async(dispatch_get_main_queue(), ^{
 			self.preparingSelectionExplanation = NO;
 			if(!self.window.isVisible || self.window.attachedSheet) return;
 			if(!prompt)
 			{
-				[[NSAlert tmAlertWithMessageText:@"Cannot Explain Selection" informativeText:error buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
+				[[NSAlert tmAlertWithMessageText:fixing ? @"Cannot Fix Selection" : @"Cannot Explain Selection" informativeText:error buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
 				return;
 			}
 			NSArray* agents = @[@"codex", @"claude", @"opencode"];
@@ -2321,7 +2393,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 			choices.accessibilityLabel = @"Agent";
 			NSUInteger index = [agents indexOfObject:[NSUserDefaults.standardUserDefaults stringForKey:@"selectionExplanationAgent"] ?: @"codex"];
 			[choices selectItemAtIndex:index == NSNotFound ? 0 : index];
-			NSAlert* alert = [NSAlert tmAlertWithMessageText:@"Explain Selection" informativeText:@"Choose an installed agent to explain the selected text in a new terminal tab." buttons:@"Explain", @"Cancel", nil];
+			NSAlert* alert = [NSAlert tmAlertWithMessageText:fixing ? @"Fix Selection" : @"Explain Selection" informativeText:fixing ? @"Choose an installed agent to investigate the selected code and available diagnostics. You will review the proposed changes before applying them." : @"Choose an installed agent to explain the selected text in a new terminal tab." buttons:fixing ? @"Find Fix" : @"Explain", @"Cancel", nil];
 			alert.accessoryView = choices;
 			[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
 				if(response != NSAlertFirstButtonReturn) return;
@@ -2335,8 +2407,19 @@ static NSDictionary* ContextDocument(OakDocument* document)
 				[NSUserDefaults.standardUserDefaults setObject:agent forKey:@"selectionExplanationAgent"];
 				self.terminalPanelController.panelVisible = YES;
 				[self updateTerminalTheme];
-				NSString* title = [NSString stringWithFormat:@"Explain · %@", choices.titleOfSelectedItem];
-				if(![self.terminalPanelController startCommand:launcher arguments:SelectionExplanationArguments(agent, prompt) title:title inDirectory:directory])
+				NSString* title = [NSString stringWithFormat:@"%@ · %@", fixing ? @"Fix" : @"Explain", choices.titleOfSelectedItem];
+				if(fixing) {
+					OakDocument* target = nil;
+					for(OakDocument* candidate in self.documents)
+						if([candidate.identifier.UUIDString isEqual:fix.documentId]) { target = candidate; break; }
+					if(![fix matchesDocument:target]) {
+						[[NSAlert tmAlertWithMessageText:@"Selection Changed" informativeText:@"The document changed while preparing the request. Select the code and invoke Fix Selection again." buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
+						return;
+					}
+					self.selectionFix = fix;
+				}
+				NSString* requestPrompt = fixing ? [fix prompt] : prompt;
+				if(![self.terminalPanelController startCommand:launcher arguments:SelectionExplanationArguments(agent, requestPrompt) title:title inDirectory:directory])
 				{
 					[[NSAlert tmAlertWithMessageText:@"Cannot Start Agent" informativeText:@"The terminal could not start the agent launcher." buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
 					return;
@@ -2758,7 +2841,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 		active = NO; // built without the Swift terminal component
 #endif
 	}
-	else if([menuItem action] == @selector(explainSelection:))
+	else if([menuItem action] == @selector(explainSelection:) || [menuItem action] == @selector(fixSelection:))
 		active = [self canExplainSelection];
 	else if([menuItem action] == @selector(takeTerminalPanelPositionFrom:))
 	{

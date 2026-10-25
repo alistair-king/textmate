@@ -22,6 +22,14 @@ if(BUILD_TESTING)
   # parallel can starve nested blocking socket calls in the global thread pool;
   # concurrency is exercised explicitly inside the routing/transfer tests.
   add_test(NAME EditorContext COMMAND EditorContext_tests --no-parallel)
+
+  # Optional standalone preview: the production view without restoring or
+  # saving a user's running TextMate session.
+  add_executable(ProjectChangesPreview MACOSX_BUNDLE EXCLUDE_FROM_ALL context-tests/project_changes_preview.mm)
+  target_link_libraries(ProjectChangesPreview PRIVATE DocumentWindow ${TEXTMATE_DEBUG_LIBS})
+  set_target_properties(ProjectChangesPreview PROPERTIES
+    MACOSX_BUNDLE_GUI_IDENTIFIER "org.textmate.ProjectChangesPreview"
+    MACOSX_BUNDLE_BUNDLE_NAME "Project Changes Preview")
 endif()
 
 # Bridge the native terminal panel to the Swift component.
