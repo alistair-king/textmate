@@ -73,6 +73,31 @@ class MCPTests(unittest.TestCase):
                                  text=True, capture_output=True, env=environment, timeout=10, check=True)
         return [json.loads(line) for line in process.stdout.splitlines()]
 
+    def test_language_tools_forward_and_validate(self):
+        names = ["get_definition", "find_references", "get_document_symbols", "search_workspace_symbols", "get_hover"]
+        received = []
+        def serve(message, _):
+            received.append(message)
+            return {"items": [], "resultId": "result", "truncated": False}
+        calls = [{"documentId": "doc", "line": 2, "column": 4, "revision": "r"},
+                 {"line": 3, "includeDeclaration": True}, {}, {"query": "Example"}, {}]
+        with context_server(serve) as environment:
+            replies = self.run_server([INITIALIZE, READY] + [
+                request(i+2, "tools/call", name=name, arguments=args)
+                for i, (name, args) in enumerate(zip(names, calls))], environment)
+        self.assertEqual({m["method"]: m["arguments"] for m in received}, dict(zip(names, calls)))
+        self.assertTrue(all(not r["result"]["isError"] for r in replies[1:]))
+        invalid = [
+            ("get_definition", {"line": 0}), ("get_definition", {"line": True}),
+            ("find_references", {"column": 2}), ("find_references", {"includeDeclaration": 1}),
+            ("get_document_symbols", {"line": 1}), ("search_workspace_symbols", {}),
+            ("search_workspace_symbols", {"query": ""}), ("search_workspace_symbols", {"query": "x"*257}),
+            ("get_hover", {"limit": 101}), ("get_hover", {"offset": 1}),
+            ("get_hover", {"resultId": ""}), ("get_definition", {"path": "/tmp/file"})]
+        replies = self.run_server([INITIALIZE, READY] + [request(i+2, "tools/call", name=name, arguments=args)
+            for i, (name, args) in enumerate(invalid)])
+        self.assertTrue(all(r["error"]["code"] == -32602 for r in replies[1:]))
+
     def test_selection_fix_proposal_and_status(self):
         received = []
         def propose(message, _):
@@ -114,7 +139,7 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-11-25")
         tools = replies[1]["result"]["tools"]
         self.assertEqual([t["name"] for t in tools],
-                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "navigate_editor", "propose_selection_fix", "get_selection_fix_status", "get_editor_changes"])
+                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "get_definition", "find_references", "get_document_symbols", "search_workspace_symbols", "get_hover", "navigate_editor", "propose_selection_fix", "get_selection_fix_status", "get_editor_changes"])
         self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools if t["name"] not in ("navigate_editor", "propose_selection_fix")))
         self.assertFalse(next(t for t in tools if t["name"] == "navigate_editor")["annotations"]["readOnlyHint"])
         self.assertEqual(replies[2]["result"], {})

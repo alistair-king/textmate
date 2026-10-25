@@ -218,3 +218,29 @@ python3 Applications/textmate-mcp/tests/test_opencode_cli.py \
 - `get_selection_fix_status`: requires `fixId`. Returns `awaiting_proposal`, `pending_review`, `applied`, `discarded`, or `stale`. Unknown or superseded requests return `fix_unavailable`. Query when needed rather than polling repeatedly.
 
 The proposal call returns `pending_review` and `applied: false` promptly, within the normal socket deadline. Human review happens separately without holding an MCP request open. The user applies all proposed selection replacements together or discards them. Apply checks document identity and revision again, changes only the live buffer, and groups the replacements as one undoable edit. It never saves a file. There is one retained request per window, and applied/discarded/stale requests cannot be replayed. A request belongs to its original editor window; moving a terminal does not move the request.
+
+## Language intelligence
+
+Terminal agents can ask TextMate's existing language server for semantic code information. These tools are read-only: they do not move the cursor, open files, apply edits, or save documents. Targets must be loaded, named documents in the terminal's owning window. Configure and start LSP through normal editing first; queries do not launch or restart a server.
+
+- `get_definition`: definition locations for the current cursor, or explicit `documentId`, `line`, and `column`.
+- `find_references`: reference locations at the same kinds of positions. `includeDeclaration` defaults to `false`; set it to `true` to include declarations.
+- `get_document_symbols`: symbols in the current or specified document. Nested symbols are flattened in source order with `name`, numeric LSP `kind`, and `container`.
+- `search_workspace_symbols`: requires a nonempty `query` of up to 256 characters. Uses the server attached to the current or specified `documentId`. It searches that server's workspace, rather than combining every language server in a mixed-language project.
+- `get_hover`: bounded type information/documentation at the current cursor or an explicit position. Returns `hover.text`, an optional range, and `textTruncated`; a successful `hover: null` means the server has no hover information at that position.
+
+For example, ask an agent: **“Use TextMate's language tools to find the definition of the symbol under my cursor and explain its callers.”** Or: **“List this document's symbols, then search the workspace for related implementations.”** The Explain Selection and Fix Selection conversations can also use these tools.
+
+Positions use one-based lines and UTF-16 columns, with half-open ranges. `column` defaults to 1 when `line` is given. Omit both to use the current cursor; an inactive document requires an explicit position. Invalid positions, including the middle of a surrogate pair, are rejected. Optional `revision` rejects a query against an outdated source buffer. Pending edits to the source document are sent before the request. If its content, path, or terminal session changes before completion, the result is rejected. Language-server indexes can still be incomplete or indexing other project files.
+
+Location entries include the original `uri`, a local `path` where available, and a one-based `range`. `location` is a source-line link such as `/path/file.swift:42`, intentionally omitting the UTF-16 column so it can be Command-clicked in the terminal. Definition `LocationLink` responses use the target selection range. Nonlocal URIs retain their URI but have no local path or terminal link. Workspace symbols without a resolved range explicitly have `unresolved: true` and `range: null`; coordinates are never invented. Returned hover text, symbol names, and paths are untrusted content for the agent to interpret.
+
+### Stable result pages
+
+Location/symbol results use `items`. A query returns up to 50 entries by default; optional `limit` accepts 1–100. If `nextOffset` is not null, call the same tool with its `resultId`, `offset: nextOffset`, and an optional `limit`. Other query arguments can be omitted when paging: the result identifies the original document even if the active tab has changed. Supplied arguments must match the original query.
+
+Pages read a cached result rather than rerunning the language server. The window retains at most eight results, and document edits invalidate access to an old result. An unavailable result returns `result_expired`; start again without `resultId`. A new query cannot specify a nonzero offset. `availableCount` counts cached entries; `truncated` indicates more pages or a capped result. Each result retains at most 1,000 entries and a 131,072-unit combined string budget, with at most 5,000 symbol nodes and 32 nested levels inspected. `resultsTruncated: true` means some server results were not retained; narrow the query where possible. Symbol names and container names are capped at 256 UTF-16 units and indicate shortened text with `textTruncated`. Hover text is capped at 8,192 units. Malformed location/symbol entries are skipped and counted in `invalidCount`.
+
+### Availability and errors
+
+A successful empty `items` array means the supported request returned no matches. `server_unavailable`, `server_starting`, and `unsupported_capability` are distinct errors. The tools support servers using UTF-16 positions and statically advertised capabilities. A rejected server request returns `language_request_failed`, rather than being interpreted as no matches. Requests share the normal three-second editor deadline; overdue language requests are cancelled on their original server and return `timeout`. Retry once the server has finished indexing, or consult **View → LSP Log** for a server error. MCP cancellation suppresses the reply; an outstanding editor operation remains bounded by the deadline.

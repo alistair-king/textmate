@@ -3,6 +3,7 @@
 #import "EditorContextService.h"
 #import "EditorContextBuffer.h"
 #import "EditorContextDiagnostics.h"
+#import "EditorLanguageIntelligence.h"
 #import "EditorContextChanges.h"
 #import "SelectionExplanation.h"
 #import "SelectionFix.h"
@@ -108,6 +109,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) ProjectChangesWindowController* projectChangesController;
 @property (nonatomic) NSUInteger editorNavigationGeneration;
 @property (nonatomic) EditorContextChanges* editorChanges;
+@property (nonatomic) EditorLanguageIntelligence* languageIntelligence;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -208,6 +210,12 @@ static NSDictionary* ContextDocument(OakDocument* document)
 {
     if(NSString* error = editor_context::validate_arguments(method, arguments))
         return [EditorContextSnapshot response:editor_context::failure(error, @"invalid_arguments")];
+    if([@[@"get_definition", @"find_references", @"get_document_symbols", @"search_workspace_symbols", @"get_hover"] containsObject:method]) {
+        if(!self.languageIntelligence) self.languageIntelligence = [[EditorLanguageIntelligence alloc] init];
+        __weak DocumentWindowController* owner = self;
+        return [self.languageIntelligence snapshotForMethod:method arguments:arguments documents:^NSArray*{ return owner.documents; }
+            current:self.selectedDocument caret:[self.textView editorContextCaretByteOffset] windowId:self.identifier.UUIDString];
+    }
     if([method isEqual:@"navigate_editor"]) return [self editorNavigation:arguments];
     if([method isEqual:@"propose_selection_fix"] || [method isEqual:@"get_selection_fix_status"]) return [self editorSelectionFix:method arguments:arguments];
     if([method isEqual:@"get_editor_change_token"])
