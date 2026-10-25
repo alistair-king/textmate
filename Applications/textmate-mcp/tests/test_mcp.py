@@ -98,6 +98,32 @@ class MCPTests(unittest.TestCase):
             for i, (name, args) in enumerate(invalid)])
         self.assertTrue(all(r["error"]["code"] == -32602 for r in replies[1:]))
 
+    def test_document_edits_forwarding_and_validation(self):
+        received = []
+        expected = {"documentId": "buffer", "revision": "r1", "summary": "Update code",
+                    "edits": [{"offset": 2, "length": 0, "text": "😀"}, {"offset": 10, "length": 4, "text": ""}]}
+        def serve(message, _):
+            received.append(message)
+            return {"proposalId": "proposal", "status": "pending_review", "applied": False}
+        with context_server(serve) as environment:
+            replies = self.run_server([INITIALIZE, READY,
+                request(2, "tools/call", name="propose_document_edits", arguments=expected),
+                request(3, "tools/call", name="get_edit_proposal_status", arguments={"proposalId": "proposal"})], environment)
+        calls = {message["method"]: message["arguments"] for message in received}
+        self.assertEqual(calls["propose_document_edits"], expected)
+        self.assertEqual(calls["get_edit_proposal_status"], {"proposalId": "proposal"})
+        proposal = next(reply for reply in replies if reply["id"] == 2)
+        self.assertFalse(json.loads(proposal["result"]["content"][0]["text"])["applied"])
+        bad_edits = [[], {}, [{"offset": True, "length": 0, "text": "x"}],
+                     [{"offset": -1, "length": 0, "text": "x"}], [{"offset": 0, "length": 1.5, "text": "x"}],
+                     [{"offset": 0, "length": 131073, "text": ""}], [{"offset": 0, "length": 0, "text": "x"*32769}],
+                     [{"offset": 0, "length": 0, "text": 1}], [{"offset": 0, "length": 0, "text": "x", "path": "/tmp/file"}],
+                     [{"offset": 0, "length": 0, "text": "x"}]*129]
+        invalid = [dict(expected, edits=edits) for edits in bad_edits] + [dict(expected, revision=""), dict(expected, documentId=""), dict(expected, summary=""), dict(expected, path="/tmp/file")]
+        replies = self.run_server([INITIALIZE, READY] + [request(i+2, "tools/call", name="propose_document_edits", arguments=args)
+            for i, args in enumerate(invalid)])
+        self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
+
     def test_selection_fix_proposal_and_status(self):
         received = []
         def propose(message, _):
@@ -139,8 +165,8 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-11-25")
         tools = replies[1]["result"]["tools"]
         self.assertEqual([t["name"] for t in tools],
-                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "get_definition", "find_references", "get_document_symbols", "search_workspace_symbols", "get_hover", "navigate_editor", "propose_selection_fix", "get_selection_fix_status", "get_editor_changes"])
-        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools if t["name"] not in ("navigate_editor", "propose_selection_fix")))
+                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "get_definition", "find_references", "get_document_symbols", "search_workspace_symbols", "get_hover", "navigate_editor", "propose_document_edits", "get_edit_proposal_status", "propose_selection_fix", "get_selection_fix_status", "get_editor_changes"])
+        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools if t["name"] not in ("navigate_editor", "propose_selection_fix", "propose_document_edits")))
         self.assertFalse(next(t for t in tools if t["name"] == "navigate_editor")["annotations"]["readOnlyHint"])
         self.assertEqual(replies[2]["result"], {})
         self.assertEqual(replies[3]["error"]["code"], -32601)
