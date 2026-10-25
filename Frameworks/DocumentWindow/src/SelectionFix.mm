@@ -16,6 +16,7 @@ static NSString* FixRevision(OakDocument* document)
 {
 	NSDictionary* _context;
 	NSDictionary* _diagnostics;
+	BOOL _isBufferEdit;
 	std::vector<std::pair<size_t, size_t>> _ranges;
 	NSArray<NSString*>* _replacements;
 }
@@ -61,6 +62,29 @@ static NSString* FixRevision(OakDocument* document)
 	return self;
 }
 
+- (instancetype)initWithEditPlan:(NSDictionary*)plan summary:(NSString*)summary error:(NSString**)error
+{
+	if(error) *error = nil;
+	if((self = [super init])) {
+		_isBufferEdit = YES;
+		_identifier = NSUUID.UUID.UUIDString;
+		_documentId = plan[@"document"][@"documentId"];
+		_status = @"awaiting_proposal";
+		_diagnostics = @{};
+		NSMutableArray* selections = [NSMutableArray array];
+		NSMutableArray* replacements = [NSMutableArray array];
+		for(NSDictionary* edit in plan[@"edits"]) {
+			_ranges.emplace_back([edit[@"startByte"] unsignedIntegerValue], [edit[@"endByte"] unsignedIntegerValue]);
+			[selections addObject:@{ @"start": edit[@"start"], @"text": edit[@"text"] }];
+			[replacements addObject:edit[@"replacement"]];
+		}
+		_context = @{ @"document": plan[@"document"], @"selections": selections };
+		NSString* problem = [self prepareReplacements:replacements summary:summary];
+		if(problem) { if(error) *error = problem; return nil; }
+	}
+	return self;
+}
+
 - (NSString*)prompt
 {
 	NSDictionary* request = @{ @"fixId": self.identifier, @"document": _context[@"document"],
@@ -72,7 +96,8 @@ static NSString* FixRevision(OakDocument* document)
 - (BOOL)matchesDocument:(OakDocument*)document
 {
 	return document.isLoaded && [document.identifier.UUIDString isEqual:self.documentId] &&
-		[FixRevision(document) isEqual:_context[@"document"][@"revision"]];
+		[FixRevision(document) isEqual:_context[@"document"][@"revision"]] &&
+		[_context[@"document"][@"path"] isEqual:document.path ?: (id)NSNull.null];
 }
 
 - (NSString*)prepareReplacements:(NSArray<NSString*>*)replacements summary:(NSString*)summary
@@ -86,7 +111,7 @@ static NSString* FixRevision(OakDocument* document)
 		NSString* original = _context[@"selections"][i][@"text"];
 		if([original isEqual:replacements[i]]) continue;
 		changed = YES;
-		[diff appendFormat:@"Selection %lu · line %@\n--- Original\n+++ Proposed\n", (unsigned long)i+1, _context[@"selections"][i][@"start"][@"line"]];
+		[diff appendFormat:@"%@ %lu · line %@\n--- Original\n+++ Proposed\n", _isBufferEdit ? @"Edit" : @"Selection", (unsigned long)i+1, _context[@"selections"][i][@"start"][@"line"]];
 		std::string before = to_s(original), after = to_s(replacements[i]), output;
 		mmfile_t a = { before.data(), (long)before.size() }, b = { after.data(), (long)after.size() };
 		xpparam_t parameters = {};
@@ -104,7 +129,7 @@ static NSString* FixRevision(OakDocument* document)
 		[diff appendString:to_ns(output)];
 		[diff appendString:@"\n"];
 	}
-	if(!changed) return @"The proposal does not change the selected code.";
+	if(!changed) return @"The proposal does not change the buffer text.";
 	_replacements = [replacements copy];
 	_summary = [summary copy];
 	_diff = diff;
@@ -138,20 +163,10 @@ static NSString* FixRevision(OakDocument* document)
 - (void)discard { if([self.status isEqual:@"pending_review"]) _status = @"discarded"; }
 - (void)markStale { _status = @"stale"; }
 
-- (NSAlert*)reviewAlert
+- (EditReviewWindowController*)reviewControllerWithCompletion:(void (^)(NSModalResponse))completion
 {
-	NSAlert* alert = [[NSAlert alloc] init];
-	alert.messageText = @"Review Selection Fix";
-	alert.informativeText = [NSString stringWithFormat:@"%@\nApply changes the editor buffer. Save the document when you are ready.", _context[@"document"][@"name"]];
-	[alert addButtonWithTitle:@"Apply Fix"];
-	[alert addButtonWithTitle:@"Discard"];
-	// A proposal can arrive while the user is typing in the terminal. Require
-	// an explicit click or Command-Return rather than accepting a plain Return.
-	alert.buttons[0].keyEquivalent = @"\r";
-	alert.buttons[0].keyEquivalentModifierMask = NSEventModifierFlagCommand;
-	NSScrollView* scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 680, 360)];
-	scroll.hasVerticalScroller = YES;
-	scroll.hasHorizontalScroller = YES;
+	EditReviewWindowController* controller = [[EditReviewWindowController alloc] initWithTitle:_isBufferEdit ? @"Review Buffer Edits" : @"Review Selection Fix" documentName:_context[@"document"][@"name"] applyTitle:_isBufferEdit ? @"Apply Edits" : @"Apply Fix" completion:completion];
+	NSScrollView* scroll = controller.diffScrollView;
 	NSTextView* text = [[NSTextView alloc] initWithFrame:scroll.bounds];
 	text.editable = NO;
 	text.richText = NO;
@@ -173,7 +188,69 @@ static NSString* FixRevision(OakDocument* document)
 		offset += line.length+1;
 	}
 	scroll.documentView = text;
-	alert.accessoryView = scroll;
-	return alert;
+	return controller;
+}
+@end
+
+// A separate window keeps the editor usable while the user reads and positions the diff.
+@implementation EditReviewWindowController
+{
+	void (^_completion)(NSModalResponse);
+}
+- (instancetype)initWithTitle:(NSString*)title documentName:(NSString*)name applyTitle:(NSString*)applyTitle completion:(void (^)(NSModalResponse))completion
+{
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 760, 500) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
+	if((self = [super initWithWindow:window])) {
+		_completion = [completion copy];
+		window.title = title;
+		window.releasedWhenClosed = NO;
+		window.contentMinSize = NSMakeSize(440, 260);
+		window.delegate = self;
+		NSView* content = window.contentView;
+		NSTextField* label = [NSTextField labelWithString:name ?: @"Untitled"];
+		label.frame = NSMakeRect(20, 466, 720, 20);
+		label.lineBreakMode = NSLineBreakByTruncatingMiddle;
+		label.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+		[content addSubview:label];
+		_diffScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 64, 720, 390)];
+		_diffScrollView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+		_diffScrollView.hasVerticalScroller = YES;
+		_diffScrollView.hasHorizontalScroller = YES;
+		[content addSubview:_diffScrollView];
+		NSTextField* hint = [NSTextField labelWithString:@"Apply changes the buffer. Save when ready."];
+		hint.frame = NSMakeRect(20, 16, 460, 32);
+		hint.autoresizingMask = NSViewWidthSizable;
+		hint.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+		hint.textColor = NSColor.secondaryLabelColor;
+		[content addSubview:hint];
+		NSButton* discard = [NSButton buttonWithTitle:@"Discard" target:self action:@selector(discard:)];
+		discard.frame = NSMakeRect(500, 18, 110, 32);
+		discard.autoresizingMask = NSViewMinXMargin;
+		discard.keyEquivalent = @"\e";
+		[content addSubview:discard];
+		NSButton* apply = [NSButton buttonWithTitle:applyTitle target:self action:@selector(apply:)];
+		apply.frame = NSMakeRect(620, 18, 120, 32);
+		apply.autoresizingMask = NSViewMinXMargin;
+		// Proposals may arrive while typing: plain Return must never apply edits.
+		apply.keyEquivalent = @"\r";
+		apply.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+		[content addSubview:apply];
+	}
+	return self;
+}
+- (void)finish:(NSModalResponse)response
+{
+	void (^completion)(NSModalResponse) = _completion;
+	_completion = nil;
+	[self close];
+	if(completion) completion(response);
+}
+- (IBAction)apply:(id)sender { [self finish:NSAlertFirstButtonReturn]; }
+- (IBAction)discard:(id)sender { [self finish:NSAlertSecondButtonReturn]; }
+- (void)windowWillClose:(NSNotification*)notification
+{
+	void (^completion)(NSModalResponse) = _completion;
+	_completion = nil;
+	if(completion) completion(NSAlertSecondButtonReturn);
 }
 @end

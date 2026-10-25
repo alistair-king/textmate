@@ -113,6 +113,26 @@ inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
             if(![arguments[@"query"] isKindOfClass:NSString.class] || ![arguments[@"query"] length] || [arguments[@"query"] length] > 256) return @"query must contain between 1 and 256 characters";
         return nil;
     }
+    if([method isEqual:@"propose_document_edits"] || [method isEqual:@"get_edit_proposal_status"]) {
+        BOOL proposal = [method isEqual:@"propose_document_edits"];
+        NSArray* keys = proposal ? @[@"documentId", @"revision", @"summary", @"edits"] : @[@"proposalId"];
+        for(NSString* key in arguments) if(![keys containsObject:key]) return @"Unknown argument";
+        for(NSString* key in proposal ? @[@"documentId", @"revision"] : @[@"proposalId"])
+            if(![arguments[key] isKindOfClass:NSString.class] || ![arguments[key] length] || [arguments[key] length] > 256) return @"Document, revision, and proposal identifiers must be nonempty strings of at most 256 characters";
+        if(!proposal) return nil;
+        if(![arguments[@"summary"] isKindOfClass:NSString.class] || ![arguments[@"summary"] length] || [arguments[@"summary"] length] > 2048) return @"summary must contain between 1 and 2,048 characters";
+        NSArray* edits = arguments[@"edits"];
+        if(![edits isKindOfClass:NSArray.class] || !edits.count || edits.count > 128) return @"edits must contain between 1 and 128 ranges";
+        NSUInteger oldLength = 0, newLength = 0;
+        for(id edit in edits) {
+            if(![edit isKindOfClass:NSDictionary.class] || [edit count] != 3 || !integer(edit[@"offset"], 9007199254740991.0) || !integer(edit[@"length"], 131072)) return @"Each edit must contain a nonnegative UTF-16 offset, length, and replacement text";
+            if(![edit[@"text"] isKindOfClass:NSString.class] || ![edit[@"text"] canBeConvertedToEncoding:NSUTF8StringEncoding]) return @"Each replacement text must be valid Unicode";
+            oldLength += [edit[@"length"] unsignedIntegerValue];
+            newLength += [edit[@"text"] length];
+            if(oldLength > 131072 || newLength > 32768) return @"Edits may replace at most 131,072 UTF-16 units with at most 32,768 replacement units in total";
+        }
+        return nil;
+    }
     if([method isEqual:@"propose_selection_fix"] || [method isEqual:@"get_selection_fix_status"]) {
         BOOL proposal = [method isEqual:@"propose_selection_fix"];
         NSArray* keys = proposal ? @[@"fixId", @"replacements", @"summary"] : @[@"fixId"];

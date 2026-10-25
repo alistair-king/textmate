@@ -106,6 +106,8 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) TerminalPanelViewController* terminalPanelController;
 @property (nonatomic) BOOL preparingSelectionExplanation;
 @property (nonatomic) SelectionFix* selectionFix;
+@property (nonatomic) EditReviewWindowController* editReviewController;
+@property (nonatomic) NSMutableDictionary<NSString*, SelectionFix*>* editProposals;
 @property (nonatomic) ProjectChangesWindowController* projectChangesController;
 @property (nonatomic) NSUInteger editorNavigationGeneration;
 @property (nonatomic) EditorContextChanges* editorChanges;
@@ -139,6 +141,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 - (EditorContextSnapshot*)editorContextForMethod:(NSString*)method arguments:(NSDictionary*)arguments;
 - (EditorContextSnapshot*)editorNavigation:(NSDictionary*)arguments;
 - (EditorContextSnapshot*)editorSelectionFix:(NSString*)method arguments:(NSDictionary*)arguments;
+- (EditorContextSnapshot*)editorDocumentEdits:(NSString*)method arguments:(NSDictionary*)arguments;
 - (void)loadNavigationDocument:(OakDocument*)document arguments:(NSDictionary*)arguments deadline:(double)deadline canCommit:(BOOL(^)(void))canCommit completion:(void(^)(NSDictionary*))completion;
 + (void)scheduleSessionBackup:(id)sender;
 
@@ -216,6 +219,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
         return [self.languageIntelligence snapshotForMethod:method arguments:arguments documents:^NSArray*{ return owner.documents; }
             current:self.selectedDocument caret:[self.textView editorContextCaretByteOffset] windowId:self.identifier.UUIDString];
     }
+    if([method isEqual:@"propose_document_edits"] || [method isEqual:@"get_edit_proposal_status"]) return [self editorDocumentEdits:method arguments:arguments];
     if([method isEqual:@"navigate_editor"]) return [self editorNavigation:arguments];
     if([method isEqual:@"propose_selection_fix"] || [method isEqual:@"get_selection_fix_status"]) return [self editorSelectionFix:method arguments:arguments];
     if([method isEqual:@"get_editor_change_token"])
@@ -283,6 +287,63 @@ static NSDictionary* ContextDocument(OakDocument* document)
     }];
 }
 
+- (EditorContextSnapshot*)editorDocumentEdits:(NSString*)method arguments:(NSDictionary*)arguments
+{
+	if([method isEqual:@"get_edit_proposal_status"]) {
+		SelectionFix* proposal = self.editProposals[arguments[@"proposalId"]];
+		if(!proposal) return [EditorContextSnapshot response:editor_context::failure(@"This edit proposal is no longer available in this window.", @"proposal_unavailable")];
+		OakDocument* target = nil;
+		for(OakDocument* candidate in self.documents)
+			if([candidate.identifier.UUIDString isEqual:proposal.documentId]) { target = candidate; break; }
+		if([proposal.status isEqual:@"pending_review"] && ![proposal matchesDocument:target]) [proposal markStale];
+		return [EditorContextSnapshot response:@{ @"proposalId": proposal.identifier, @"status": proposal.status,
+			@"document": target ? ContextDocument(target) : (id)NSNull.null }];
+	}
+	OakDocument* document = nil;
+	for(OakDocument* candidate in self.documents)
+		if([candidate.identifier.UUIDString isEqual:arguments[@"documentId"]]) { document = candidate; break; }
+	if(!document.isLoaded) return [EditorContextSnapshot response:editor_context::failure(@"The target buffer is not loaded in this terminal's window.", @"document_unavailable")];
+	NSDictionary* metadata = ContextDocument(document);
+	if(![metadata[@"revision"] isEqual:arguments[@"revision"]]) return [EditorContextSnapshot response:editor_context::failure(@"The buffer changed. Read its current text and revision before proposing edits.", @"document_changed")];
+	if(self.editReviewController || self.window.attachedSheet || !self.window.isVisible) return [EditorContextSnapshot response:editor_context::failure(@"Close the editor's current review or dialog and show its window before proposing edits.", @"review_unavailable")];
+	EditorContextBuffer* buffer = [EditorContextBuffer bufferForDocument:document revision:metadata[@"revision"]];
+	__weak DocumentWindowController* weakSelf = self;
+	NSUUID* ownerId = self.identifier;
+	return [EditorContextSnapshot action:^(double deadline, BOOL (^canCommit)(void), void (^completion)(NSDictionary*)){
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			NSDictionary* plan = [buffer editPlanForArguments:arguments document:metadata deadline:deadline];
+			NSString* error = nil;
+			SelectionFix* proposal = plan[@"error"] ? nil : [[SelectionFix alloc] initWithEditPlan:plan summary:arguments[@"summary"] error:&error];
+			dispatch_async(dispatch_get_main_queue(), ^{
+				DocumentWindowController* controller = weakSelf;
+				if(!canCommit() || ![controller.identifier isEqual:ownerId]) { completion(editor_context::failure(@"The proposal expired or its terminal session changed.", @"proposal_cancelled")); return; }
+				if(![controller.documents containsObject:document] || !document.isLoaded || ![metadata isEqual:ContextDocument(document)]) { completion(editor_context::failure(@"The buffer changed or closed while preparing the proposal. Read it again.", @"document_changed")); return; }
+				if(plan[@"error"]) { completion(plan); return; }
+				if(!proposal) { completion(editor_context::failure(error ?: @"The edit proposal could not be prepared.", @"invalid_proposal")); return; }
+				if(controller.editReviewController || controller.window.attachedSheet || !controller.window.isVisible) { completion(editor_context::failure(@"The editor cannot show a review now. Try again after closing its current review or dialog.", @"review_unavailable")); return; }
+				if(!canCommit()) { completion(editor_context::failure(@"The proposal expired before review.", @"proposal_cancelled")); return; }
+				if(!controller.editProposals) controller.editProposals = [NSMutableDictionary dictionary];
+				if(controller.editProposals.count >= 8) [controller.editProposals removeObjectForKey:controller.editProposals.allKeys.firstObject];
+				controller.editProposals[proposal.identifier] = proposal;
+				controller.editReviewController = [proposal reviewControllerWithCompletion:^(NSModalResponse response){
+					DocumentWindowController* owner = weakSelf;
+					owner.editReviewController = nil;
+					if(response != NSAlertFirstButtonReturn) { [proposal discard]; return; }
+					BOOL available = [owner.identifier isEqual:ownerId] && owner.editProposals[proposal.identifier] == proposal && [owner.documents containsObject:document];
+					if(!available || ![proposal applyToDocument:document]) {
+						[proposal markStale];
+						if(owner.window.isVisible)
+							[[NSAlert tmAlertWithMessageText:@"Edits Could Not Be Applied" informativeText:@"The buffer changed or closed after the proposal was prepared. Ask the agent to read the current buffer and propose the changes again." buttons:@"OK", nil] beginSheetModalForWindow:owner.window completionHandler:nil];
+					}
+				}];
+				[controller.editReviewController.window center];
+				[controller.editReviewController showWindow:nil];
+				completion(@{ @"proposalId": proposal.identifier, @"status": @"pending_review", @"applied": @NO, @"document": metadata });
+			});
+		});
+	}];
+}
+
 - (EditorContextSnapshot*)editorSelectionFix:(NSString*)method arguments:(NSDictionary*)arguments
 {
 	SelectionFix* fix = self.selectionFix;
@@ -302,13 +363,13 @@ static NSDictionary* ContextDocument(OakDocument* document)
 			return;
 		}
 		if([fix.status isEqual:@"stale"]) { completion(editor_context::failure(@"The document changed or closed. Invoke Fix Selection again.", @"document_changed")); return; }
-		if(controller.window.attachedSheet || !controller.window.isVisible) { completion(editor_context::failure(@"The editor cannot show the review now. Close its current dialog and try again.", @"review_unavailable")); return; }
+		if(controller.editReviewController || controller.window.attachedSheet || !controller.window.isVisible) { completion(editor_context::failure(@"The editor cannot show the review now. Close its current review or dialog and try again.", @"review_unavailable")); return; }
 		NSString* error = [fix prepareReplacements:arguments[@"replacements"] summary:arguments[@"summary"]];
 		if(error) { completion(editor_context::failure(error, @"invalid_proposal")); return; }
-		NSAlert* alert = [fix reviewAlert];
 		if(!canCommit()) { [fix discard]; completion(editor_context::failure(@"The fix proposal expired before review. Invoke Fix Selection again.", @"fix_unavailable")); return; }
-		[alert beginSheetModalForWindow:controller.window completionHandler:^(NSModalResponse response){
+		controller.editReviewController = [fix reviewControllerWithCompletion:^(NSModalResponse response){
 			DocumentWindowController* owner = weakSelf;
+			owner.editReviewController = nil;
 			BOOL available = owner.selectionFix == fix && [owner.documents containsObject:document];
 			if(response != NSAlertFirstButtonReturn) { [fix discard]; return; }
 			if(!available || ![fix applyToDocument:document]) {
@@ -318,6 +379,8 @@ static NSDictionary* ContextDocument(OakDocument* document)
 				return;
 			}
 		}];
+		[controller.editReviewController.window center];
+		[controller.editReviewController showWindow:nil];
 		completion(@{ @"fixId": fix.identifier, @"status": @"pending_review", @"applied": @NO });
 	}];
 }
@@ -593,6 +656,8 @@ static NSDictionary* ContextDocument(OakDocument* document)
 
 - (void)windowWillClose:(NSNotification*)aNotification
 {
+	[self.editReviewController close];
+	self.editReviewController = nil;
 	[self.projectChangesController close];
 	self.projectChangesController = nil;
 	[self.terminalPanelController stopTerminal];
@@ -2246,7 +2311,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 - (BOOL)canExplainSelection
 {
 #if HAVE_OAK_SWIFTUI
-	if(self.preparingSelectionExplanation || self.window.attachedSheet || !self.selectedDocument.isLoaded)
+	if(self.preparingSelectionExplanation || self.editReviewController || self.window.attachedSheet || !self.selectedDocument.isLoaded)
 		return NO;
 	for(auto const& range : [self.textView editorContextByteRanges])
 		if(range.min().index != range.max().index) return YES;

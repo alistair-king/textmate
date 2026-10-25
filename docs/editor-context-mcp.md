@@ -214,7 +214,7 @@ python3 Applications/textmate-mcp/tests/test_opencode_cli.py \
 
 **Edit → Fix Selection…** creates an opaque `fixId` and includes it with immutable document/selection metadata, selected text, and cached diagnostics in the agent's initial prompt. This is the entry point for proposing changes; an MCP client cannot create an arbitrary edit request.
 
-- `propose_selection_fix`: requires `fixId`, `summary` (1–2,048 UTF-16 units), and `replacements` (one complete string for each nonempty captured selection, in snapshot order; combined maximum 32,768 UTF-16 units). Empty strings delete selected code. Unknown requests, changed/closed documents, overlapping selections, unchanged proposals, and replacement-count mismatches are rejected. A busy review window returns `review_unavailable`; retry after closing its dialog. This tool is marked `readOnlyHint: false` because it opens a review sheet, but never applies or saves text itself.
+- `propose_selection_fix`: requires `fixId`, `summary` (1–2,048 UTF-16 units), and `replacements` (one complete string for each nonempty captured selection, in snapshot order; combined maximum 32,768 UTF-16 units). Empty strings delete selected code. Unknown requests, changed/closed documents, overlapping selections, unchanged proposals, and replacement-count mismatches are rejected. A busy review window returns `review_unavailable`; retry after closing its review or dialog. This tool is marked `readOnlyHint: false` because it opens a review window, but never applies or saves text itself.
 - `get_selection_fix_status`: requires `fixId`. Returns `awaiting_proposal`, `pending_review`, `applied`, `discarded`, or `stale`. Unknown or superseded requests return `fix_unavailable`. Query when needed rather than polling repeatedly.
 
 The proposal call returns `pending_review` and `applied: false` promptly, within the normal socket deadline. Human review happens separately without holding an MCP request open. The user applies all proposed selection replacements together or discards them. Apply checks document identity and revision again, changes only the live buffer, and groups the replacements as one undoable edit. It never saves a file. There is one retained request per window, and applied/discarded/stale requests cannot be replayed. A request belongs to its original editor window; moving a terminal does not move the request.
@@ -244,3 +244,39 @@ Pages read a cached result rather than rerunning the language server. The window
 ### Availability and errors
 
 A successful empty `items` array means the supported request returned no matches. `server_unavailable`, `server_starting`, and `unsupported_capability` are distinct errors. The tools support servers using UTF-16 positions and statically advertised capabilities. A rejected server request returns `language_request_failed`, rather than being interpreted as no matches. Requests share the normal three-second editor deadline; overdue language requests are cancelled on their original server and return `timeout`. Retry once the server has finished indexing, or consult **View → LSP Log** for a server error. MCP cancellation suppresses the reply; an outstanding editor operation remains bounded by the deadline.
+
+## Propose edits to live buffers
+
+Agents can propose changes to any loaded document in their terminal's editor window with `propose_document_edits`. This works with unsaved and untitled buffers, including inactive editor tabs, and does not require invoking Fix Selection first.
+
+First use `get_editor_context`, `list_open_documents`, or `read_document` to identify the buffer and its opaque `revision`. Read the text being edited from the live buffer rather than a disk copy. Then provide `documentId`, the exact `revision`, a short `summary`, and an `edits` array. Each edit contains:
+
+- `offset`: zero-based UTF-16 offset into the original buffer revision.
+- `length`: number of original UTF-16 units to replace; zero inserts text.
+- `text`: complete replacement text; an empty string deletes the original range.
+
+All offsets refer to the same original revision, even when multiple edits are supplied. Edits can be supplied in any order. Ranges must not overlap or share a start offset; combine multiple insertions at one position into one edit. UTF-16 surrogate pairs cannot be split. The maximum is 128 edits, replacing up to 131,072 original UTF-16 units with up to 32,768 replacement units combined. `summary` accepts up to 2,048 units. A proposal containing no text changes is rejected.
+
+For example, to replace the first three units of a buffer and insert text at offset 10:
+
+```json
+{
+  "documentId": "ID returned by TextMate",
+  "revision": "revision returned with the live text",
+  "summary": "Correct the value and add an explanation",
+  "edits": [
+    {"offset": 0, "length": 3, "text": "new"},
+    {"offset": 10, "length": 0, "text": " explanation"}
+  ]
+}
+```
+
+TextMate shows a **Review Buffer Edits** window with a diff and **Apply Edits** / **Discard** buttons. The tool returns promptly with `proposalId`, `status: "pending_review"`, and `applied: false`. Only the user can apply the changes; there is no MCP tool that accepts the review. Applying all edits forms one undo action in the target buffer. It neither saves the file nor switches the current editor tab. Discard leaves the buffer unchanged. Apply requires an explicit click or Command–Return, so a plain Return typed in the terminal cannot accept a newly arrived proposal.
+
+Use `get_edit_proposal_status` with `proposalId` when the user has reviewed it. Status is `pending_review`, `applied`, `discarded`, or `stale`; the current document metadata and revision are included if it remains open. Do not poll repeatedly or claim that pending changes are already applied. Each window retains up to eight proposal records. An unknown, evicted, or foreign-window identifier returns `proposal_unavailable`.
+
+Both preparation and application check the target identity, path, and content revision. Editing or closing the target invalidates a pending proposal. Source coordinates are never silently rebased over newer typing. Other open buffers and the live cursor do not retarget it. A busy or hidden editor window returns `review_unavailable`; close its current dialog or show the window before retrying. Terminal closure or transfer cancels work that has not yet reached review. Once a review is displayed, the user can still make their explicit Apply/Discard choice if the agent exits. Proposals remain in their original window when a terminal moves.
+
+A useful request is: **“Refactor this open buffer and propose the edits in TextMate for me to review.”** The agent's own CLI permissions still apply; this tool supplies a buffer-aware review path rather than restricting every external action that agent can perform.
+
+Edit review windows (Fix Selection and agent-proposed buffer edits) can be moved and resized independently of the editor. The diff expands with the window. Closing a review window discards the proposal; Apply still checks that the buffer has not changed.

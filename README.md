@@ -381,4 +381,5 @@ TextMate is a trademark of Allan Odgaard.
 # MCP
 - works for codex, claude and opencode.
 - easily access by running tm-codex, tm-claude, or tm-opencode.
+- agents can propose reviewed edits to loaded buffers, including unsaved and untitled documents. You apply or discard a diff, with one-step undo. See [Live buffer edits](docs/editor-context-mcp.md#propose-edits-to-live-buffers).
 - agents can use the existing language server for definitions, references, document symbols, workspace symbol searches, and hover information, including unsaved source edits. See [Language intelligence](docs/editor-context-mcp.md#language-intelligence).
