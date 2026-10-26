@@ -2,6 +2,29 @@
 #import <lsp/LSPManager.h>
 #import <document/OakDocument.h>
 #import <layout/layout.h>
+#include <text/utf8.h>
+
+// LSP columns count UTF-16 code units; layout indices count UTF-8 bytes.
+static size_t diagnosticOffset (ng::buffer_api_t const& buffer, NSInteger line, NSInteger character)
+{
+	if(line < 0)
+		return 0;
+	if(line >= buffer.lines())
+		return buffer.size();
+
+	size_t const bol = buffer.begin(line);
+	std::string const text = buffer.substr(bol, buffer.eol(line));
+	size_t units = 0, bytes = 0;
+	for(auto it = utf8::make(text.begin()); it != utf8::make(text.end()); ++it)
+	{
+		size_t const width = *it > 0xFFFF ? 2 : 1;
+		if(units + width > std::max<NSInteger>(0, character))
+			break;
+		units += width;
+		bytes += utf8::to_s(*it).size();
+	}
+	return bol + bytes;
+}
 
 static NSInteger severityOf (NSDictionary* diagnostic)
 {
@@ -259,6 +282,17 @@ static NSSize diagnosticBoxTextSize (NSAttributedString* content, CGFloat maxWid
 	if(grouped.empty())
 		return [self dismissExpandedDiagnosticBox];
 
+	std::vector<std::pair<size_t, size_t>> errorRanges;
+	for(NSDictionary* diagnostic in [[LSPManager sharedManager] diagnosticsForDocument:self.document])
+	{
+		if(severityOf(diagnostic) != 1 || !diagnostic[@"line"] || !diagnostic[@"character"] || !diagnostic[@"endLine"] || !diagnostic[@"endCharacter"])
+			continue;
+		size_t const first = diagnosticOffset(*documentView, [diagnostic[@"line"] integerValue], [diagnostic[@"character"] integerValue]);
+		size_t const last = diagnosticOffset(*documentView, [diagnostic[@"endLine"] integerValue], [diagnostic[@"endCharacter"] integerValue]);
+		if(first <= last)
+			errorRanges.emplace_back(first, last);
+	}
+
 	// Multi-line ghost text shifts every line below the caret down; mirror the
 	// shift so tints and banners stay aligned with the text they annotate.
 	CGFloat ghostSplitY = CGFLOAT_MAX;
@@ -316,6 +350,7 @@ static NSSize diagnosticBoxTextSize (NSAttributedString* content, CGFloat maxWid
 
 	[appearance performAsCurrentDrawingAppearance:^{
 		span_t span;
+		NSBezierPath* errorUnderlines = [NSBezierPath bezierPath];
 
 		// The translucent pill needs a severity coloured glyph, the solid badge a
 		// white one; diagnosticSymbolImage caches both.
@@ -504,6 +539,33 @@ static NSSize diagnosticBoxTextSize (NSAttributedString* content, CGFloat maxWid
 				break;
 			prevLine = std::make_pair(record.line, record.softline);
 
+			// Intersect with each visual row so wrapped and multi-line errors
+			// underline only their text, without crossing the editor's margins.
+			auto rowIndex = self->documentView->index_at_point(CGPointMake(0, (record.top + record.bottom) / 2));
+			auto row = self->documentView->range_for_softline(self->documentView->softline_for_index(rowIndex));
+			for(auto const& error : errorRanges)
+			{
+				size_t const first = std::max(error.first, row.min().index);
+				size_t const last = std::min(error.second, std::min(row.max().index, self->documentView->eol(record.line)));
+				if(first > last || (first == last && error.first != error.second))
+					continue;
+				if(self->documentView->is_line_folded(self->documentView->convert(first).line))
+					continue;
+
+				CGRect rect = self->documentView->rect_for_range(first, last, true);
+				// A zero-length range at a wrap belongs to the following row.
+				if(CGRectGetMinY(rect) != record.top)
+					continue;
+				CGFloat const shift = record.top >= ghostSplitY ? self->_ghostTextExtraHeight : 0;
+				CGFloat const y = record.bottom + shift - 2;
+				NSRect const underlineRect = NSMakeRect(CGRectGetMinX(rect), y - 1, MAX(CGRectGetWidth(rect), 3.0), 2);
+				if(NSIntersectsRect(aRect, underlineRect))
+				{
+					[errorUnderlines moveToPoint:NSMakePoint(NSMinX(underlineRect), y)];
+					[errorUnderlines lineToPoint:NSMakePoint(NSMaxX(underlineRect), y)];
+				}
+			}
+
 			if(record.softline == 0)
 			{
 				emit(span);
@@ -522,6 +584,13 @@ static NSSize diagnosticBoxTextSize (NSAttributedString* content, CGFloat maxWid
 			y = record.bottom;
 		}
 		emit(span);
+
+		[NSColor.systemRedColor setStroke];
+		CGFloat const dash[] = { 0, 3 };
+		[errorUnderlines setLineDash:dash count:2 phase:0];
+		errorUnderlines.lineWidth = 1.5;
+		errorUnderlines.lineCapStyle = NSLineCapStyleRound;
+		[errorUnderlines stroke];
 
 		if(self->_expandedDiagnosticLine != kNoExpandedDiagnostic)
 			[self updateExpandedDiagnosticBoxWithGroups:grouped rightEdge:bannerRightEdge visibleRect:visibleRect font:bannerFont increaseContrast:increaseContrast];
