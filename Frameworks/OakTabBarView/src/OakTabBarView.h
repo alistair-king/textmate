@@ -17,6 +17,7 @@
 @optional
 - (BOOL)tabBarView:(OakTabBarView*)aTabBarView shouldSelectIndex:(NSUInteger)anIndex;
 - (void)tabBarView:(OakTabBarView*)aTabBarView didDoubleClickIndex:(NSUInteger)anIndex;
+- (void)tabBarView:(OakTabBarView*)aTabBarView setTitle:(NSString*)title forIndex:(NSUInteger)anIndex;
 - (void)tabBarViewDidDoubleClick:(OakTabBarView*)aTabBarView;
 - (NSMenu*)menuForTabBarView:(OakTabBarView*)aTabBarView;
 

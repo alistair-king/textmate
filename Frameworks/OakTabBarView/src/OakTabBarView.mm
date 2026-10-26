@@ -169,7 +169,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 @class OakTabBarView;
 @class OakTabFrame;
 
-@interface OakTabView : NSView <NSAccessibilityRadioButton>
+@interface OakTabView : NSView <NSAccessibilityRadioButton, NSTextFieldDelegate>
 @property (nonatomic, weak) OakTabBarView* tabBarView;
 @property (nonatomic) OakTabItem* tabItem;
 
@@ -197,6 +197,9 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 
 @property (nonatomic) NSTrackingArea* trackingArea;
 @property (nonatomic) NSPoint mouseDownLocation;
+@property (nonatomic) BOOL editingTitle;
+@property (nonatomic, weak) NSResponder* responderBeforeEditingTitle;
+- (void)finishEditingTitle:(BOOL)commit;
 @end
 
 @interface OakTabBarView () <NSAccessibilityGroup, NSDraggingSource>
@@ -215,6 +218,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 @property (nonatomic) NSTrackingArea* trackingArea;
 @property (nonatomic, getter = isDragging) BOOL dragging;
 - (void)didClickCloseButtonForTabView:(OakTabView*)tabView;
+- (void)setTitle:(NSString*)title forTabView:(OakTabView*)tabView;
 - (void)didClickOverflorButtonForTabView:(OakTabView*)tabView;
 - (NSMenu*)menuForTabView:(OakTabView*)tabView withEvent:(NSEvent*)anEvent;
 
@@ -478,7 +482,10 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		self.voiceOverEnabled = NSWorkspace.sharedWorkspace.isVoiceOverEnabled;
 	}
 	else if(context == kOakTabViewTitleContext)
-		self.textField.stringValue = self.tabItem.title;
+	{
+		if(!self.editingTitle)
+			self.textField.stringValue = self.tabItem.title;
+	}
 	else if(context == kOakTabViewPathContext)
 		self.toolTip = self.tabItem.path.stringByAbbreviatingWithTildeInPath;
 	else if(context == kOakTabViewModifiedContext)
@@ -546,7 +553,47 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 - (void)mouseDown:(NSEvent*)anEvent
 {
+	if((anEvent.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask) == NSEventModifierFlagCommand && self.tabItem && [self.tabBarView.delegate respondsToSelector:@selector(tabBarView:setTitle:forIndex:)])
+	{
+		_mouseDownLocation = NSZeroPoint;
+		self.responderBeforeEditingTitle = self.window.firstResponder;
+		self.editingTitle = YES;
+		self.textField.delegate = self;
+		self.textField.editable = YES;
+		self.textField.selectable = YES;
+		[self.textField selectText:self];
+		return;
+	}
 	_mouseDownLocation = anEvent.locationInWindow;
+}
+
+- (void)finishEditingTitle:(BOOL)commit
+{
+	if(!self.editingTitle)
+		return;
+	NSString* title = [self.textField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	self.editingTitle = NO;
+	self.textField.editable = NO;
+	self.textField.selectable = NO;
+	self.textField.delegate = nil;
+	self.textField.stringValue = self.tabItem.title;
+	if(commit && ![title isEqualToString:self.tabItem.title])
+		[self.tabBarView setTitle:title forTabView:self];
+}
+
+- (void)controlTextDidEndEditing:(NSNotification*)notification
+{
+	[self finishEditingTitle:YES];
+}
+
+- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)selector
+{
+	if(selector != @selector(cancelOperation:) && selector != @selector(insertNewline:))
+		return NO;
+	NSResponder* responder = self.responderBeforeEditingTitle;
+	[self finishEditingTitle:selector != @selector(cancelOperation:)];
+	[self.window makeFirstResponder:responder];
+	return YES;
 }
 
 - (void)otherMouseDown:(NSEvent*)anEvent
@@ -896,6 +943,13 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		_freezeTabFramesLeftOfIndex = _tag;
 		[_delegate performCloseTab:self];
 	}
+}
+
+- (void)setTitle:(NSString*)title forTabView:(OakTabView*)tabView
+{
+	NSUInteger const index = [_tabItems indexOfObject:tabView.tabItem];
+	if(index != NSNotFound && [_delegate respondsToSelector:@selector(tabBarView:setTitle:forIndex:)])
+		[_delegate tabBarView:self setTitle:title forIndex:index];
 }
 
 - (void)didSingleClickTabView:(OakTabView*)tabView

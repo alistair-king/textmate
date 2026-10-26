@@ -5,6 +5,34 @@ import Darwin
 @testable import OakSwiftUI
 
 @MainActor
+@Test func customTerminalTitleSurvivesShellUpdatesAndTransfer() async throws {
+    _ = NSApplication.shared
+    let source = OakTerminalPanelController()
+    let destination = OakTerminalPanelController()
+    source.startSession(inDirectory: NSTemporaryDirectory())
+    defer {
+        source.stopSession()
+        destination.stopSession()
+    }
+    let terminal = try #require(source.terminal)
+    let identifier = try #require(source.sessionIdentifiers.first)
+    source.renameSession(at: 0, title: "  Build 😀  ")
+    source.setTerminalTitle(source: terminal, title: "shell title")
+    #expect(source.sessionTitles == ["Build 😀"])
+
+    source.transferSession(identifier: identifier, to: destination, at: 0)
+    #expect(destination.sessionTitles == ["Build 😀"])
+    #expect(destination.terminal === terminal)
+    destination.setTerminalTitle(source: terminal, title: "new shell title")
+    #expect(destination.sessionTitles == ["Build 😀"])
+    destination.renameSession(at: 0, title: " ")
+    #expect(destination.sessionTitles == ["new shell title"])
+    destination.renameSession(at: -1, title: "invalid")
+    destination.renameSession(at: 1, title: "invalid")
+    #expect(destination.sessionTitles == ["new shell title"])
+}
+
+@MainActor
 @Test func clearShortcutRequiresTerminalFocus() async throws {
     _ = NSApplication.shared
     let controller = OakTerminalPanelController()

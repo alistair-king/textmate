@@ -472,6 +472,9 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 
 	NSMenuItem* insertBundleItemsMenuItem;
 	NSMenuItem* finderTagsMenuItem;
+	NSArray<FileItem*>* selectedItems = self.selectedItems;
+	FileItem* selectedFolder = selectedItems.count == 1 ? selectedItems.firstObject : nil;
+	BOOL const canFindInFolder = selectedFolder.URL.isFileURL && !selectedFolder.isMissing && (selectedFolder.isDirectory || selectedFolder.isLinkToDirectory);
 
 	_openWithMenuDelegate = [[OakOpenWithMenuDelegate alloc] initWithDocumentURLs:[self.previewableItems valueForKey:@"resolvedURL"]];
 
@@ -493,6 +496,7 @@ static NSMutableIndexSet* MutableLongestCommonSubsequence (NSArray* lhs, NSArray
 	MBMenu const items = {
 		{ @"Open",                    @selector(openSelectedItems:)           },
 		{ openWithTitle,              @selector(openWithMenuAction:), .delegate = _openWithMenuDelegate, .representedObject = openWithAppURL },
+		{ @"Find in Folder…",         @selector(orderFrontFindPanelForFileBrowser:), .hidden = !canFindInFolder },
 		{ /* -------- */ },
 		{ @"Show Original",           @selector(showOriginal:)                },
 		{ @"Show Enclosing Folder",   @selector(showEnclosingFolder:)         },

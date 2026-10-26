@@ -52,6 +52,7 @@ private final class TerminalContainer: NSView {
         let uuid: UUID
         let terminal: LocalProcessTerminalView
         var title: String
+        var customTitle: String? = nil
     }
     private var sessions: [Session] = []
     private var selectedID: Int?
@@ -59,9 +60,16 @@ private final class TerminalContainer: NSView {
     var terminal: LocalProcessTerminalView? { sessions.first { $0.id == selectedID }?.terminal }
     var sessionCount: Int { sessions.count }
     @objc public var sessionIdentifiers: [UUID] { sessions.map(\.uuid) }
-    @objc public var sessionTitles: [String] { sessions.map(\.title) }
+    @objc public var sessionTitles: [String] { sessions.map { $0.customTitle ?? $0.title } }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
+
+    @objc public func renameSession(at index: Int, title: String) {
+        guard sessions.indices.contains(index) else { return }
+        let title = title.components(separatedBy: .controlCharacters).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        sessions[index].customTitle = title.isEmpty ? nil : String(title.prefix(120))
+        rebuildTabs()
+    }
 
     @objc public func installTabBar(_ tabBar: NSView) {
         guard let container = view as? TerminalContainer else { return }
@@ -99,7 +107,7 @@ private final class TerminalContainer: NSView {
         destination.started = true
         session.terminal.processDelegate = destination
         (session.terminal as? FileLinkTerminalView)?.owner = destination
-        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title), at: min(max(0, insertionIndex), destination.sessions.count))
+        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title, customTitle: session.customTitle), at: min(max(0, insertionIndex), destination.sessions.count))
         _ = destination.contextEnvironmentProvider?(session.uuid)
         destination.applyFont(destination.terminalFont)
         destination.updateTerminalColors()
