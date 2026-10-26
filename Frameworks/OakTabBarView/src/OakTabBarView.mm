@@ -31,6 +31,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 @property (nonatomic) NSString* title;
 @property (nonatomic) NSString* path;
 @property (nonatomic) NSString* toolTip; // empty or nil keeps the path tooltip
+@property (nonatomic) NSDictionary* statusInfo;
 @property (nonatomic, getter = isModified) BOOL modified;
 @property (nonatomic, getter = isSelected) BOOL selected;
 @property (nonatomic) CGFloat fittingWidth;
@@ -195,6 +196,11 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 @property (nonatomic) OakRolloverButton* closeButton;
 @property (nonatomic) OakRolloverButton* overflowButton;
 @property (nonatomic) NSTextField* textField;
+@property (nonatomic) NSView* statusView;
+@property (nonatomic) NSImageView* statusImage;
+@property (nonatomic) NSProgressIndicator* statusSpinner;
+@property (nonatomic) NSLayoutConstraint* statusWidth;
+- (void)updateStatus;
 
 @property (nonatomic) NSTrackingArea* trackingArea;
 @property (nonatomic) NSPoint mouseDownLocation;
@@ -227,6 +233,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 @end
 
 static void* kOakTabViewVoiceOverContext = &kOakTabViewVoiceOverContext;
+static void* kOakTabViewStatusContext = &kOakTabViewStatusContext;
 static void* kOakTabViewTitleContext     = &kOakTabViewTitleContext;
 static void* kOakTabViewPathContext      = &kOakTabViewPathContext;
 static void* kOakTabViewToolTipContext   = &kOakTabViewToolTipContext;
@@ -258,6 +265,16 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		_leftBorderView = [[OakBox alloc] initWithFrame:NSZeroRect];
 
 		_textField = OakCreateLabel();
+        _statusView = [[NSView alloc] initWithFrame:NSZeroRect];
+        _statusImage = [[NSImageView alloc] initWithFrame:NSMakeRect(0, 0, 14, 14)];
+        _statusSpinner = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 0, 14, 14)];
+        _statusSpinner.style = NSProgressIndicatorStyleSpinning;
+        _statusSpinner.controlSize = NSControlSizeSmall;
+        _statusSpinner.displayedWhenStopped = NO;
+        [_statusView addSubview:_statusImage];
+        [_statusView addSubview:_statusSpinner];
+        _statusWidth = [_statusView.widthAnchor constraintEqualToConstant:0];
+        _statusWidth.active = YES;
 
 		DisableImplicitAnimationForBlock(^{
 			_backgroundView.fillColor  = NSColor.textColor;
@@ -269,7 +286,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 			_textField.alphaValue = _selected ? 1 : 0.5;
 		});
 
-		NSArray<NSView*>* subviews = @[ _backgroundView, _topBorderView, _leftBorderView, _textField, self.closeButton, self.overflowButton ];
+		NSArray<NSView*>* subviews = @[ _backgroundView, _topBorderView, _leftBorderView, _textField, _statusView, self.closeButton, self.overflowButton ];
 		for(NSView* view in subviews)
 		{
 			view.translatesAutoresizingMaskIntoConstraints = NO;
@@ -287,6 +304,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 			@"close":      self.closeButton,
 			@"title":      self.textField,
+            @"status":     self.statusView,
 			@"overflow":   self.overflowButton,
 		};
 
@@ -294,7 +312,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[topBorder(==1@75)][background]|" options:NSLayoutFormatAlignAllLeft|NSLayoutFormatAlignAllRight metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[leftBorder]|" options:0 metrics:nil views:views]];
 
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(3@53)-[close]-(>=3@53)-[title]-(>=6@53)-|" options:0 metrics:nil views:views]];
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-(3@53)-[close]-(>=3@53)-[status][title]-(>=6@53)-|" options:0 metrics:nil views:views]];
 
 		_overflowButtonConstraints = [NSLayoutConstraint constraintsWithVisualFormat:@"H:[title]-(>=3@53)-[overflow]" options:0 metrics:nil views:views];
 		[NSLayoutConstraint deactivateConstraints:_overflowButtonConstraints];
@@ -312,7 +330,11 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		centerTitleConstraint.priority = NSLayoutPriorityFittingSizeCompression+1;
 		[self addConstraint:centerTitleConstraint];
 
-		self.tabItem = tabItem;
+		[NSLayoutConstraint activateConstraints:@[
+            [_statusView.heightAnchor constraintEqualToConstant:14],
+            [_statusView.centerYAnchor constraintEqualToAnchor:_textField.centerYAnchor]
+        ]];
+        self.tabItem = tabItem;
 	}
 	return self;
 }
@@ -367,6 +389,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 - (void)setTabItem:(OakTabItem*)tabItem
 {
+	[_tabItem removeObserver:self forKeyPath:@"statusInfo" context:kOakTabViewStatusContext];
 	[_tabItem removeObserver:self forKeyPath:@"title"    context:kOakTabViewTitleContext];
 	[_tabItem removeObserver:self forKeyPath:@"path"     context:kOakTabViewPathContext];
 	[_tabItem removeObserver:self forKeyPath:@"toolTip"  context:kOakTabViewToolTipContext];
@@ -375,6 +398,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 	_tabItem = tabItem;
 
+	[_tabItem addObserver:self forKeyPath:@"statusInfo" options:NSKeyValueObservingOptionInitial context:kOakTabViewStatusContext];
 	[_tabItem addObserver:self forKeyPath:@"title"    options:NSKeyValueObservingOptionInitial context:kOakTabViewTitleContext];
 	[_tabItem addObserver:self forKeyPath:@"path"     options:NSKeyValueObservingOptionInitial context:kOakTabViewPathContext];
 	[_tabItem addObserver:self forKeyPath:@"toolTip"  options:NSKeyValueObservingOptionInitial context:kOakTabViewToolTipContext];
@@ -397,6 +421,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		self.backgroundView.alphaValue = 0.1;
 		self.topBorderView.alphaValue  = 1;
 		self.overflowButtonVisible     = NO;
+        [self updateStatus];
 	}
 }
 
@@ -405,7 +430,8 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 - (void)updateToolTip
 {
 	NSString* toolTip = self.tabItem.toolTip;
-	self.toolTip = OakNotEmptyString(toolTip) ? toolTip : self.tabItem.path.stringByAbbreviatingWithTildeInPath;
+	NSString* status = self.tabItem.statusInfo[@"description"];
+	self.toolTip = OakNotEmptyString(toolTip) ? toolTip : status.length ? status : self.tabItem.path.stringByAbbreviatingWithTildeInPath;
 }
 
 - (void)updateCloseButtonImage
@@ -469,7 +495,27 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 	else	[NSLayoutConstraint deactivateConstraints:_overflowButtonConstraints];
 }
 
-- (NSString*)accessibilityLabel { return self.tabItem.isModified ? [self.tabItem.title stringByAppendingString:@" (modified)"] : self.tabItem.title; }
+- (NSString*)accessibilityLabel
+{
+    NSString* title = self.tabItem.isModified ? [self.tabItem.title stringByAppendingString:@" (modified)"] : self.tabItem.title;
+    NSString* status = self.tabItem.statusInfo[@"description"];
+    return status.length ? [NSString stringWithFormat:@"%@, %@", title, status] : title;
+}
+
+- (void)updateStatus
+{
+    OakTabStatus status = (OakTabStatus)[self.tabItem.statusInfo[@"value"] integerValue];
+    self.statusWidth.constant = status == OakTabStatusNone ? 0 : 18;
+    self.statusView.hidden = status == OakTabStatusNone;
+    self.statusImage.hidden = status == OakTabStatusWorking;
+    if(status == OakTabStatusWorking) [self.statusSpinner startAnimation:nil];
+    else [self.statusSpinner stopAnimation:nil];
+    NSString* symbol = status == OakTabStatusBlocked ? @"exclamationmark.bubble.fill" : status == OakTabStatusDone ? @"checkmark.circle.fill" : @"exclamationmark.circle.fill";
+    self.statusImage.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];
+    self.statusImage.contentTintColor = status == OakTabStatusBlocked ? NSColor.systemOrangeColor : status == OakTabStatusError ? NSColor.systemRedColor : NSColor.secondaryLabelColor;
+    [self updateToolTip];
+    self.tabItem.needsLayout = YES;
+}
 - (NSNumber*)accessibilityValue { return @(self.isSelected); }
 
 - (BOOL)accessibilityPerformPress
@@ -485,7 +531,9 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 - (void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)someObject change:(NSDictionary*)changes context:(void*)context
 {
-	if(context == kOakTabViewVoiceOverContext)
+	if(context == kOakTabViewStatusContext)
+        [self updateStatus];
+	else if(context == kOakTabViewVoiceOverContext)
 	{
 		self.voiceOverEnabled = NSWorkspace.sharedWorkspace.isVoiceOverEnabled;
 	}
@@ -815,7 +863,11 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 			tabItem = [[OakTabItem alloc] initWithTitle:[_dataSource tabBarView:self titleForIndex:i] path:[_dataSource tabBarView:self pathForIndex:i] identifier:identifier modified:[_dataSource tabBarView:self isEditedAtIndex:i]];
 		}
 		tabItem.toolTip = [self toolTipForIndex:i];
-		[newTabItems addObject:tabItem];
+		OakTabStatus status = [_dataSource respondsToSelector:@selector(tabBarView:statusForIndex:)] ? [_dataSource tabBarView:self statusForIndex:i] : OakTabStatusNone;
+        NSString* description = [_dataSource respondsToSelector:@selector(tabBarView:statusDescriptionForIndex:)] ? [_dataSource tabBarView:self statusDescriptionForIndex:i] : @"";
+        NSDictionary* info = @{ @"value": @(status), @"description": description ?: @"" };
+        if(![tabItem.statusInfo isEqual:info]) { tabItem.statusInfo = info; tabItem.needsLayout = YES; }
+        [newTabItems addObject:tabItem];
 	}
 
 	_tabItems = newTabItems;
@@ -879,7 +931,12 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 			item.image.size = NSMakeSize(16, 16);
 		}
 
-		if(tabItem.isSelected)
+		if([tabItem.statusInfo[@"value"] integerValue] != OakTabStatusNone) {
+            NSString* status = tabItem.statusInfo[@"description"];
+            item.title = [NSString stringWithFormat:@"%@ — %@", tabItem.title, status];
+            item.toolTip = status;
+        }
+        if(tabItem.isSelected)
 			item.state = NSControlStateValueOn;
 		else if(tabItem.isModified)
 			item.modifiedState = YES;

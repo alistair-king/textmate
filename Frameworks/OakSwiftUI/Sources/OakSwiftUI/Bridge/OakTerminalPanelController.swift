@@ -55,6 +55,8 @@ private final class TerminalContainer: NSView {
         let terminal: LocalProcessTerminalView
         var title: String
         var attention = TerminalAttention()
+        var customTitle: String? = nil
+        var agentStatus = TerminalAgentStatus()
     }
     private var sessions: [Session] = []
     private var selectedID: Int?
@@ -63,13 +65,15 @@ private final class TerminalContainer: NSView {
     var terminal: LocalProcessTerminalView? { sessions.first { $0.id == selectedID }?.terminal }
     var sessionCount: Int { sessions.count }
     @objc public var sessionIdentifiers: [UUID] { sessions.map(\.uuid) }
-    @objc public var sessionTitles: [String] { sessions.map(\.title) }
     /// Unseen OSC 7501 completions, parallel to `sessionIdentifiers`; drives the tab bar dot.
     @objc public var sessionNeedsAttention: [Bool] { sessions.map(\.attention.needsAttention) }
     /// Per-tab hover tooltip for that dot, parallel to `sessionIdentifiers`; "" means no tooltip.
     @objc public var sessionToolTips: [String] { sessions.map(\.attention.toolTip) }
     /// Worst unseen state across this panel's sessions, as window subtitle text; nil when nothing needs the user.
     @objc public var attentionSubtitle: String? { TerminalAttention.subtitle(for: sessions.map(\.attention)) }
+    @objc public var sessionTitles: [String] { sessions.map { $0.customTitle ?? $0.title } }
+    @objc public var sessionStatusValues: [NSNumber] { sessions.map { NSNumber(value: $0.agentStatus.value) } }
+    @objc public var sessionStatusDescriptions: [String] { sessions.map { $0.agentStatus.description } }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
     @objc public weak var delegate: OakTerminalPanelControllerDelegate?
@@ -85,6 +89,7 @@ private final class TerminalContainer: NSView {
 
     @objc public func selectSession(at index: Int) {
         guard sessions.indices.contains(index) else { return }
+        acknowledgeResults(at: index)
         selectSession(id: sessions[index].id)
         focusTerminal()
     }
@@ -110,7 +115,7 @@ private final class TerminalContainer: NSView {
         destination.started = true
         session.terminal.processDelegate = destination
         (session.terminal as? FileLinkTerminalView)?.owner = destination
-        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title, attention: session.attention), at: min(max(0, insertionIndex), destination.sessions.count))
+        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title, attention: session.attention, customTitle: session.customTitle, agentStatus: session.agentStatus), at: min(max(0, insertionIndex), destination.sessions.count))
         _ = destination.contextEnvironmentProvider?(session.uuid)
         destination.applyFont(destination.terminalFont)
         destination.updateTerminalColors()
@@ -275,6 +280,7 @@ private final class TerminalContainer: NSView {
         guard event.type == .keyDown, let window = source.window,
               event.window === window, window.firstResponder === source,
               terminal === source else { return false }
+        if let index = sessions.firstIndex(where: { $0.terminal === source }) { acknowledgeResults(at: index) }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         if modifiers.contains(.control) && !modifiers.contains(.command) {
             source.keyDown(with: event)
@@ -357,6 +363,7 @@ private final class TerminalContainer: NSView {
     func selectAdjacentSession(forward: Bool) {
         guard let index = sessions.firstIndex(where: { $0.id == selectedID }), !sessions.isEmpty else { return }
         let next = (index + (forward ? 1 : sessions.count - 1)) % sessions.count
+        acknowledgeResults(at: next)
         selectSession(id: sessions[next].id)
         focusTerminal()
     }
@@ -410,6 +417,19 @@ private final class TerminalContainer: NSView {
         if sessions.isEmpty { delegate?.terminalPanelDidCloseLastSession?(self) }
     }
 
+    private func acknowledgeResults(at index: Int) {
+        let previous = sessions[index].agentStatus.value
+        sessions[index].agentStatus.acknowledgeResults()
+        if previous != sessions[index].agentStatus.value { rebuildTabs() }
+    }
+
+    public func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {
+        guard let index = sessions.firstIndex(where: { $0.terminal === source }) else { return }
+        sessions[index].agentStatus.update(records)
+        _ = sessions[index].attention.update(records: records, isSelected: sessions[index].id == selectedID)
+        rebuildTabs()
+    }
+
     public func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
     public func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         guard let index = sessions.firstIndex(where: { $0.terminal === source }) else { return }
@@ -424,12 +444,6 @@ private final class TerminalContainer: NSView {
             terminal.reportedDirectory = url.path
         } else if directory.hasPrefix("/") {
             terminal.reportedDirectory = directory
-        }
-    }
-    public func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {
-        guard let index = sessions.firstIndex(where: { $0.terminal === source }) else { return }
-        if sessions[index].attention.update(records: records, isSelected: sessions[index].id == selectedID) {
-            rebuildTabs()
         }
     }
     public func processTerminated(source: TerminalView, exitCode: Int32?) {
