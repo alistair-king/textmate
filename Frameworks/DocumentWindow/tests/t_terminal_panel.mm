@@ -1,3 +1,4 @@
+#import "AgentStatusTabSource.h"
 #import <Cocoa/Cocoa.h>
 #import <OakTabBarView/OakTabBarView.h>
 #import "../src/TerminalPanelViewController.h"
@@ -131,4 +132,42 @@ void test_terminal_panel_constrained_resize ()
 
 		}
 	});
+}
+
+
+void test_terminal_tab_status_presentation ()
+{
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        AgentStatusTabSource* source = [AgentStatusTabSource new];
+        source.identifier = NSUUID.UUID;
+        source.status = OakTabStatusWorking;
+        source.statusDescription = @"Working";
+        OakTabBarView* bar = [[OakTabBarView alloc] initWithFrame:NSMakeRect(0, 0, 400, 23)];
+        bar.dataSource = source;
+        [bar reloadData];
+        [bar layoutSubtreeIfNeeded];
+        NSView* tab = nil;
+        for(NSView* view in bar.subviews)
+            if([view.accessibilityLabel isEqualToString:@"Agent, Working"]) tab = view;
+        OAK_ASSERT(tab != nil);
+        OAK_ASSERT([tab.toolTip isEqualToString:@"Working"]);
+        NSProgressIndicator* spinner = nil;
+        for(NSView* view in tab.subviews)
+            for(NSView* child in view.subviews)
+                if([child isKindOfClass:NSProgressIndicator.class]) spinner = (NSProgressIndicator*)child;
+        OAK_ASSERT(spinner != nil && !spinner.superview.hidden);
+        OAK_ASSERT(NSWidth(spinner.superview.frame) == 18);
+        source.status = OakTabStatusBlocked;
+        source.statusDescription = @"Needs approval";
+        [bar reloadData];
+        OAK_ASSERT([tab.accessibilityLabel isEqualToString:@"Agent, Needs approval"]);
+        OAK_ASSERT([tab.toolTip isEqualToString:@"Needs approval"]);
+        source.status = OakTabStatusNone;
+        source.statusDescription = @"";
+        [bar reloadData];
+        [bar layoutSubtreeIfNeeded];
+        OAK_ASSERT([tab.accessibilityLabel isEqualToString:@"Agent"]);
+        OAK_ASSERT(spinner.superview.hidden && NSWidth(spinner.superview.frame) == 0);
+    });
 }
