@@ -52,6 +52,8 @@ private final class TerminalContainer: NSView {
         let uuid: UUID
         let terminal: LocalProcessTerminalView
         var title: String
+        var customTitle: String? = nil
+        var agentStatus = TerminalAgentStatus()
     }
     private var sessions: [Session] = []
     private var selectedID: Int?
@@ -59,7 +61,9 @@ private final class TerminalContainer: NSView {
     var terminal: LocalProcessTerminalView? { sessions.first { $0.id == selectedID }?.terminal }
     var sessionCount: Int { sessions.count }
     @objc public var sessionIdentifiers: [UUID] { sessions.map(\.uuid) }
-    @objc public var sessionTitles: [String] { sessions.map(\.title) }
+    @objc public var sessionTitles: [String] { sessions.map { $0.customTitle ?? $0.title } }
+    @objc public var sessionStatusValues: [NSNumber] { sessions.map { NSNumber(value: $0.agentStatus.value) } }
+    @objc public var sessionStatusDescriptions: [String] { sessions.map { $0.agentStatus.description } }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
 
@@ -74,6 +78,7 @@ private final class TerminalContainer: NSView {
 
     @objc public func selectSession(at index: Int) {
         guard sessions.indices.contains(index) else { return }
+        acknowledgeResults(at: index)
         selectSession(id: sessions[index].id)
         focusTerminal()
     }
@@ -99,7 +104,7 @@ private final class TerminalContainer: NSView {
         destination.started = true
         session.terminal.processDelegate = destination
         (session.terminal as? FileLinkTerminalView)?.owner = destination
-        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title), at: min(max(0, insertionIndex), destination.sessions.count))
+        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title, customTitle: session.customTitle, agentStatus: session.agentStatus), at: min(max(0, insertionIndex), destination.sessions.count))
         _ = destination.contextEnvironmentProvider?(session.uuid)
         destination.applyFont(destination.terminalFont)
         destination.updateTerminalColors()
@@ -248,6 +253,7 @@ private final class TerminalContainer: NSView {
         guard event.type == .keyDown, let window = source.window,
               event.window === window, window.firstResponder === source,
               terminal === source else { return false }
+        if let index = sessions.firstIndex(where: { $0.terminal === source }) { acknowledgeResults(at: index) }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         if modifiers.contains(.control) && !modifiers.contains(.command) {
             source.keyDown(with: event)
@@ -329,6 +335,7 @@ private final class TerminalContainer: NSView {
     func selectAdjacentSession(forward: Bool) {
         guard let index = sessions.firstIndex(where: { $0.id == selectedID }), !sessions.isEmpty else { return }
         let next = (index + (forward ? 1 : sessions.count - 1)) % sessions.count
+        acknowledgeResults(at: next)
         selectSession(id: sessions[next].id)
         focusTerminal()
     }
@@ -364,6 +371,18 @@ private final class TerminalContainer: NSView {
         if wasSelected { selectedID = sessions.isEmpty ? nil : sessions[min(index, sessions.count - 1)].id }
         showSelectedSession()
         if wasSelected && hadFocus { focusTerminal() }
+    }
+
+    private func acknowledgeResults(at index: Int) {
+        let previous = sessions[index].agentStatus.value
+        sessions[index].agentStatus.acknowledgeResults()
+        if previous != sessions[index].agentStatus.value { rebuildTabs() }
+    }
+
+    public func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {
+        guard let index = sessions.firstIndex(where: { $0.terminal === source }) else { return }
+        sessions[index].agentStatus.update(records)
+        rebuildTabs()
     }
 
     public func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}

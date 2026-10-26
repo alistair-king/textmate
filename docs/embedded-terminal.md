@@ -20,6 +20,14 @@ Terminal sessions inherit the editor’s background, foreground, caret, and sele
 
 Terminal sessions follow the active editor’s font family, size, and zoom level. Font changes update all tabs, including hidden sessions; new and transferred sessions use the destination editor’s font.
 
+## Agent status on tabs
+
+Programs that support the Program Status Protocol (OSC 7501) can report their state directly to TextMate. Terminal tabs show a spinner while working, an attention symbol when approval, an answer, or sign-in is needed, a checkmark when a result is ready, and an error symbol after failure. Hover over the tab for the reason and any reported progress. Status is also included in the tab's accessibility label and overflow menu.
+
+Status follows the terminal when you reorder tabs or move them between windows. Custom tab names remain intact. Selecting a tab, switching to it with the terminal tab shortcuts, or typing in the focused terminal acknowledges completed and failed results. Pending approvals and questions remain visible until the program reports that it has resumed. A blocked worker takes priority over working or completed records; work still running takes priority over completed results.
+
+This uses reports from the running program, without reading its displayed text or inferring activity from silence. Claude Code 2.1.295 and later supports the protocol. Other programs and agent versions need to emit OSC 7501 themselves; the TextMate launchers do not install status hooks or plugins. Unsupported programs show no status indicator. “Result ready” describes the reported work, rather than guaranteeing every background task has finished.
+
 ## Opening files from terminal output
 
 Hold Command to underline a detected local file, then Command-click to open it in the same TextMate window. Existing editor tabs are reused. References such as `src/main.swift:42:7` jump to the indicated line and column. Absolute paths, `~/` paths, quoted paths with spaces, and explicit `file://` terminal hyperlinks are supported. Ordinary clicks still select terminal text, and web hyperlinks retain their normal behaviour.
