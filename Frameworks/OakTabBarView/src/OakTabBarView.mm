@@ -267,6 +267,11 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		_leftBorderView = [[OakBox alloc] initWithFrame:NSZeroRect];
 
 		_textField = OakCreateLabel();
+		_textField.alignment = NSTextAlignmentCenter;
+		_textField.bordered = NO;
+		_textField.bezeled = NO;
+		_textField.drawsBackground = NO;
+		_textField.focusRingType = NSFocusRingTypeNone;
         _statusView = [[NSView alloc] initWithFrame:NSZeroRect];
         _statusImage = [[NSImageView alloc] initWithFrame:NSMakeRect(0, 0, 14, 14)];
         _statusSpinner = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 0, 14, 14)];
@@ -274,7 +279,6 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
         _statusSpinner.controlSize = NSControlSizeSmall;
         _statusSpinner.displayedWhenStopped = NO;
         [_statusView addSubview:_statusImage];
-        [_statusView addSubview:_statusSpinner];
         _statusWidth = [_statusView.widthAnchor constraintEqualToConstant:0];
         _statusWidth.active = YES;
 
@@ -288,7 +292,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 			_textField.alphaValue = _selected ? 1 : 0.5;
 		});
 
-		NSArray<NSView*>* subviews = @[ _backgroundView, _topBorderView, _leftBorderView, _textField, _statusView, self.closeButton, self.overflowButton ];
+		NSArray<NSView*>* subviews = @[ _backgroundView, _topBorderView, _leftBorderView, _textField, _statusView, _statusSpinner, self.closeButton, self.overflowButton ];
 		for(NSView* view in subviews)
 		{
 			view.translatesAutoresizingMaskIntoConstraints = NO;
@@ -333,6 +337,10 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		[self addConstraint:centerTitleConstraint];
 
 		[NSLayoutConstraint activateConstraints:@[
+            [_statusSpinner.widthAnchor constraintEqualToConstant:14],
+            [_statusSpinner.heightAnchor constraintEqualToConstant:14],
+            [_statusSpinner.centerXAnchor constraintEqualToAnchor:self.closeButton.centerXAnchor],
+            [_statusSpinner.centerYAnchor constraintEqualToAnchor:self.closeButton.centerYAnchor],
             [_statusView.heightAnchor constraintEqualToConstant:14],
             [_statusView.centerYAnchor constraintEqualToAnchor:_textField.centerYAnchor]
         ]];
@@ -496,8 +504,9 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 - (void)updateStatus
 {
     OakTabStatus status = (OakTabStatus)[self.tabItem.statusInfo[@"value"] integerValue];
-    self.statusWidth.constant = status == OakTabStatusNone ? 0 : 18;
-    self.statusView.hidden = status == OakTabStatusNone;
+    BOOL showsStatusImage = status != OakTabStatusNone && status != OakTabStatusWorking;
+    self.statusWidth.constant = showsStatusImage ? 18 : 0;
+    self.statusView.hidden = !showsStatusImage;
     self.statusImage.hidden = status == OakTabStatusWorking;
     if(status == OakTabStatusWorking) [self.statusSpinner startAnimation:nil];
     else [self.statusSpinner stopAnimation:nil];
@@ -548,6 +557,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 	{
 		// Break retain-cycle when view is removed from window
 		[self.closeButton unbind:@"alphaValue"];
+		[self.statusSpinner unbind:@"alphaValue"];
 
 		[NSNotificationCenter.defaultCenter removeObserver:self name:NSWindowDidBecomeMainNotification object:self.window];
 		[NSNotificationCenter.defaultCenter removeObserver:self name:NSWindowDidResignMainNotification object:self.window];
@@ -558,6 +568,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 	if(newWindow)
 	{
 		[self.closeButton bind:@"alphaValue" toObject:self withKeyPath:@"closeButtonAlphaValue" options:nil];
+		[self.statusSpinner bind:@"alphaValue" toObject:self withKeyPath:@"closeButtonAlphaValue" options:@{ NSValueTransformerNameBindingOption: NSNegateBooleanTransformerName }];
 
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowDidChangeMainOrKey:) name:NSWindowDidBecomeMainNotification object:newWindow];
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowDidChangeMainOrKey:) name:NSWindowDidResignMainNotification object:newWindow];
