@@ -1,4 +1,4 @@
-.PHONY: all debug release clean clean-debug clean-release run package patch minor swift-build-debug swift-build-release
+.PHONY: all debug release clean clean-debug clean-release run package publish patch minor swift-build-debug swift-build-release
 
 all: debug
 
@@ -34,6 +34,10 @@ package:
 	fi; \
 	ruby scripts/prepare_release.rb "$${1:-patch}"
 	@bash scripts/package.sh
+	@bash scripts/publish.sh
+
+publish:
+	@bash scripts/publish.sh
 
 patch minor:
 	@:

@@ -72,42 +72,10 @@ tar -czf "$TGZ_PATH" -C "$(dirname "$APP_PATH")" "$APP_NAME.app"
 
 TGZ_SHA=$(shasum -a 256 "$TGZ_PATH" | awk '{print $1}')
 
-# ── GitHub Release ───────────────────────────────────────────────────
-if ! command -v gh &>/dev/null; then
-  echo "ERROR: gh CLI not found"
-  echo "       $TGZ_PATH was created but the release was not published."
-  exit 1
-fi
-
-UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}')
-REMOTE="${UPSTREAM%%/*}"
-
-echo "==> Pushing branch and tag"
-git push "$REMOTE" HEAD
-git push "$REMOTE" "$GIT_TAG"
-
-echo "==> Creating GitHub release and uploading"
-gh release create "$GIT_TAG" "$TGZ_PATH" \
-  --title "$APP_NAME $VERSION" \
-  --generate-notes
-
-# ── Update Homebrew tap ──────────────────────────────────────────────
-HOMEBREW_TAP="${HOMEBREW_TAP:-$HOME/code/homebrew-textmate}"
-CASK_FILE="$HOMEBREW_TAP/Casks/textmate.rb"
-
-if [ -f "$CASK_FILE" ]; then
-  echo "==> Updating Homebrew cask"
-  sed -i '' "s/version \".*\"/version \"$VERSION\"/" "$CASK_FILE"
-  sed -i '' "s/sha256 \".*\"/sha256 \"$TGZ_SHA\"/" "$CASK_FILE"
-  git -C "$HOMEBREW_TAP" add Casks/textmate.rb
-  git -C "$HOMEBREW_TAP" commit -m "Update TextMate to $VERSION"
-  git -C "$HOMEBREW_TAP" push
-else
-  echo "WARNING: cask not found at $CASK_FILE — skipping tap update"
-fi
-
 # ── Done ─────────────────────────────────────────────────────────────
 echo ""
 echo "Done! Signed & notarized: $TGZ_PATH"
 echo "  Version: $VERSION"
 echo "  SHA256:  $TGZ_SHA"
+echo ""
+echo "Next step: run make publish to push the tag and publish the release."

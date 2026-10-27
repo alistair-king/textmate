@@ -33,6 +33,8 @@ make                 # Incremental debug build (ASan enabled)
 make release         # Incremental release build (LTO, no ASan)
 make run             # Build debug and launch
 make clean           # Remove all build dirs
+make package         # Prepare release tag, build/sign/notarize/staple, create tarball
+make publish         # Push tag, create GitHub release, update Homebrew tap
 ```
 
 ### Dependencies
