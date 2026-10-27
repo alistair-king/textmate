@@ -33,8 +33,9 @@ make                 # Incremental debug build (ASan enabled)
 make release         # Incremental release build (LTO, no ASan)
 make run             # Build debug and launch
 make clean           # Remove all build dirs
-make package         # Prepare release tag, build/sign/notarize/staple, create tarball
+make package         # Prepare release tag, then ship it end-to-end
 make publish         # Push tag, create GitHub release, update Homebrew tap
+make ship            # Build/sign/notarize HEAD's tag and publish it, no version bump
 ```
 
 ### Dependencies

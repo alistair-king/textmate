@@ -1,4 +1,4 @@
-.PHONY: all debug release clean clean-debug clean-release run package publish patch minor swift-build-debug swift-build-release
+.PHONY: all debug release clean clean-debug clean-release run package publish ship patch minor swift-build-debug swift-build-release
 
 all: debug
 
@@ -37,6 +37,10 @@ package:
 	@bash scripts/publish.sh
 
 publish:
+	@bash scripts/publish.sh
+
+ship:
+	@bash scripts/package.sh
 	@bash scripts/publish.sh
 
 patch minor:
