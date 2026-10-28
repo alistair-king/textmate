@@ -1,6 +1,6 @@
 # Embedded terminal
 
-Show the panel using View → Show Terminal Panel or Command–`. Choose its edge under View → Terminal Panel Position. The panel now contains a SwiftTerm terminal. The edge and size last chosen are shared by all windows, and restored windows reopen with their own saved state.
+Show the panel using View → Show Terminal Panel or Control–`. Choose its edge under View → Terminal Panel Position. The panel now contains a SwiftTerm terminal. The edge and size last chosen are shared by all windows, and restored windows reopen with their own saved state.
 
 Each window starts one login shell on first use, using the account's configured shell. It starts in the project folder, the file browser's root, the current document's folder, or the home folder when none is available. Opening another document does not change an existing shell's directory.
 
