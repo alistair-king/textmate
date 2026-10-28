@@ -40,6 +40,9 @@ class Parser
 
     @targets.each do |_, archs|
       archs.each do |_, target|
+        if package = target[:swift_package]
+          res.merge(watchlist([File.join(package, 'Sources/**/*.swift')]))
+        end
         if target[:captured_variables] && target[:inference]
           target[:captured_variables].each do |variable|
             res.merge(target[:inference][variable]) if target[:inference].include?(variable)
@@ -290,7 +293,7 @@ class Parser
                 target[:inference][args.first] ||= []
                 target[:inference][args.first] += files
               end
-            when :prefix, :executable
+            when :prefix, :executable, :swift_package
               target[command] = args.map { |value| expand_variables(value, env) }.join(' ')
               target[:dir] = env['dir']
             when :notarize
@@ -815,13 +818,44 @@ module Target
     res
   end
 
+  # SwiftPM owns compilation of Swift sources and its pinned dependencies. Publish
+  # stable paths to Ninja so clean builds order the generated ObjC header correctly.
+  def swift_package(target)
+    return nil unless package = target[:swift_package]
+    unless target[:build][:swift_package]
+      name = target[:name]
+      directory = File.join(target[:builddir], '_Swift', name)
+      library = File.join(directory, "lib#{name}.dylib")
+      header = File.join(directory, "#{name}-Swift.h")
+      target[:build][:rules] << {
+        name: 'BuildSwiftPackage',
+        in: Dir.glob(File.join(package, 'Sources/**/*.swift')) +
+          [File.join(package, 'Package.swift'), File.join(package, 'Package.resolved')],
+        dependencies: ['bin/build_swift_package'],
+        out: [library, header],
+        package: package,
+        product: name,
+        configuration: target[:variables]['config'] || 'release',
+        directory: directory,
+        arch: target[:arch].is_a?(String) ? target[:arch] : '',
+        command: 'bin/build_swift_package "$package" "$product" "$configuration" "$directory" "$arch"',
+        description: 'Build Swift package ${product}…',
+      }
+      target[:build][:swift_package] = [library, header]
+    end
+    target[:build][:swift_package]
+  end
+
   def include_dir(archs)
     target = archs.values.first
 
     unless target[:build][:include_dir]
       include_dir, rules = nil, []
 
-      if headers = target[:headers]
+      if swift = swift_package(target)
+        include_dir = File.dirname(swift.last)
+        rules << { name: 'phony', in: swift, out: include_dir }
+      elsif headers = target[:headers]
         include_dir = File.join(target[:builddir], '_Include', target[:name])
 
         headers = headers.map do |header|
@@ -852,6 +886,9 @@ module Target
   def objects(target, targets)
     unless target[:build][:objects]
       objects, rules = [], []
+      if swift = swift_package(target)
+        objects << swift.first
+      end
 
       if sources = target[:sources]
         include_dirs = required_targets(target, targets, include_weak: true).map { |archs| include_dir(archs) }.reject { |e| e.nil? }.sort
@@ -981,6 +1018,9 @@ module Target
 
     unless target[:build][:assets]
       assets, rules = [], []
+      if swift = swift_package(target)
+        assets << [swift.first, File.join('Frameworks', File.basename(swift.first)), []]
+      end
 
       config = target[:variables].merge(inference: target[:inference])
 
@@ -1101,10 +1141,11 @@ module Target
           required_targets(target, targets, include_self: true).each do |other|
             assets(other, targets).each do |src, dst, deps|
               rules << {
-                name:         'CopyFile',
+                name:         src.end_with?('.dylib') ? 'CopySignedLibrary' : 'CopyFile',
+                identity:     target[:variables]['CS_IDENTITY'] || '-',
                 in:           src,
                 out:          File.join(target[:builddir], target[:dir], target[:prefix], dst),
-                command:      '/bin/cp -Xp $in $out && touch $out',
+                command:      src.end_with?('.dylib') ? '/bin/cp -Xp $in $out && xcrun codesign --force --sign "$identity" $out' : '/bin/cp -Xp $in $out && touch $out',
                 description:  'Copy ‘${in}’…',
                 dependencies: deps,
               }

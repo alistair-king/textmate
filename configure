@@ -6,7 +6,7 @@ function error () { printf >&2 "%s\n\nPlease see README.md for build instruction
 # = Check required dependencies =
 # ===============================
 
-for dep in capnp ninja ragel multimarkdown pgrep pkill; do
+for dep in capnp ninja ragel multimarkdown pgrep pkill swift; do
 	which -s "$dep" || error "*** dependency missing: ‘${dep}’."
 done
 

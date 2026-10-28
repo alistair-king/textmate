@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+package=$1
+product=$2
+configuration=$3
+destination=$4
+architecture=${5:-}
+arguments=(--package-path "$package" --configuration "$configuration" --product "$product" --disable-automatic-resolution)
+if [[ -n "$architecture" ]]; then
+  arguments+=(--arch "$architecture")
+fi
+swift build "${arguments[@]}"
+products=$(swift build "${arguments[@]}" --show-bin-path)
+mkdir -p "$destination"
+cp "$products/lib$product.dylib" "$destination/lib$product.dylib"
+header="$products/$product.build/include/$product-Swift.h"
+# Swift 6.4 defaults to Swift Build, which exports module maps separately.
+if [[ ! -f "$header" ]]; then
+  header="$products/../../Intermediates.noindex/GeneratedModuleMaps/$product-Swift.h"
+fi
+cp "$header" "$destination/$product-Swift.h"

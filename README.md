@@ -20,7 +20,7 @@ Before you submit a bug report please read the [writing bug reports](https://git
 
 ## Setup
 
-To build TextMate, you need the following:
+To build TextMate, you need Xcode with Swift 6.2 or later and the following dependencies. The built application requires macOS 14 or later:
 
  * [boost][]            — portable C++ source libraries
  * [Cap’n Proto][capnp] — serialization library

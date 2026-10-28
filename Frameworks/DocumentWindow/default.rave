@@ -1,5 +1,6 @@
 target "${dirname}" {
-	require BundleEditor BundlesManager FileBrowser Find HTMLOutputWindow MenuBuilder OakAppKit OakTabBarView OakCommand OakFilterList OakFoundation OakSystem OakTextView Preferences bundles crash document file io kvdb ns regexp scm settings text
+	require OakSwiftUI BundleEditor BundlesManager FileBrowser Find HTMLOutputWindow MenuBuilder OakAppKit OakTabBarView OakCommand OakFilterList OakFoundation OakSystem OakTextView Preferences bundles crash document file io kvdb ns regexp scm settings text
+	add FLAGS "-DHAVE_OAK_SWIFTUI=1"
 	headers src/DocumentWindowController.h
 
 	files resources/* "Resources"
