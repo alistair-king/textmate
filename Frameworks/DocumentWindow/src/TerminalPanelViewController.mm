@@ -90,6 +90,9 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 			if(weakSelf.lastSessionClosedHandler) weakSelf.lastSessionClosedHandler();
 		};
 		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
+		_terminalController.environmentProvider = ^NSDictionary<NSString*, NSString*>*(NSString* directory){
+			return weakSelf.terminalEnvironmentProvider ? weakSelf.terminalEnvironmentProvider(directory) : NSProcessInfo.processInfo.environment;
+		};
 		_terminalController.openFile = ^(NSURL* url, NSInteger line, NSInteger column){
 			if(weakSelf.openTerminalFile) weakSelf.openTerminalFile(url, line, column);
 		};

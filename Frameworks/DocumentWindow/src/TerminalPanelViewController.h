@@ -9,6 +9,7 @@ extern NSString* const kUserDefaultsTerminalPanelHeightKey;
 @interface TerminalPanelViewController : NSViewController
 @property (nonatomic) BOOL panelVisible;
 @property (nonatomic, copy) NSString* (^terminalDirectoryProvider)(void);
+@property (nonatomic, copy) NSDictionary<NSString*, NSString*>* (^terminalEnvironmentProvider)(NSString* directory); // base environment for new shells
 @property (nonatomic, copy) NSString* panelPosition; // left, right, bottom
 @property (nonatomic) CGFloat panelWidth;
 @property (nonatomic) CGFloat panelHeight;

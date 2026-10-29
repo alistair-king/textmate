@@ -27,6 +27,7 @@
 #import <BundleEditor/BundleEditor.h>
 #import <file/path_info.h>
 #import <io/entries.h>
+#import <io/environment.h>
 #import <scm/scm.h>
 #import <text/parse.h>
 #import <text/tokenize.h>
@@ -221,6 +222,13 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 				if(terminalOwner.terminalOnlyWindow && terminalOwner.documents.count == 1 && is_disposable(terminalOwner.selectedDocument))
 					[terminalOwner.window performClose:nil];
 			});
+		};
+		self.terminalPanelController.terminalEnvironmentProvider = ^(NSString* directory){
+			// Same base environment as bundle commands, so Preferences > Variables (PATH, locale) apply and the app's own launch environment does not leak.
+			NSMutableDictionary* res = [NSMutableDictionary dictionary];
+			for(auto const& pair : variables_for_path(oak::basic_environment(), to_s(directory)))
+				res[to_ns(pair.first)] = to_ns(pair.second);
+			return res;
 		};
 		self.terminalPanelController.openTerminalFile = ^(NSURL* url, NSInteger line, NSInteger column){
 			NSMutableDictionary* item = [@{ @"path": url.path } mutableCopy];

@@ -115,6 +115,8 @@ private final class TerminalContainer: NSView {
     }
     @objc public var openFile: ((URL, Int, Int) -> Void)?
     @objc public var workingDirectoryProvider: (() -> String)?
+    /// Base environment for a new shell started in the given directory. Without one the shell inherits the app's own environment.
+    @objc public var environmentProvider: ((String) -> [String: String])?
     private var directory = NSHomeDirectory()
     private var terminalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
@@ -198,7 +200,11 @@ private final class TerminalContainer: NSView {
 
         let configuredShell = getpwuid(getuid()).flatMap { $0.pointee.pw_shell }.map { String(cString: $0) } ?? "/bin/zsh"
         let shell = FileManager.default.isExecutableFile(atPath: configuredShell) ? configuredShell : "/bin/zsh"
-        var environment = ProcessInfo.processInfo.environment
+        var environment = environmentProvider?(launchDirectory) ?? ProcessInfo.processInfo.environment
+        // A Dock or Finder launch has no locale; without one the shell runs in the C locale and mangles non-ASCII text.
+        if environment["LC_ALL"] == nil && environment["LC_CTYPE"] == nil && environment["LANG"] == nil {
+            environment["LC_CTYPE"] = "en_US.UTF-8"
+        }
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
         environment["TERM_PROGRAM"] = "TextMate"
