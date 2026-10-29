@@ -121,7 +121,6 @@ private final class TerminalContainer: NSView {
     /// Replaces the account's login shell; used by tests so they do not depend on the user's rc files.
     @objc public var shellPath: String?
     @objc public var shellArguments: [String]?
-    private var directory = NSHomeDirectory()
     private var terminalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
     @objc public func applyFont(_ font: NSFont) {
@@ -169,11 +168,9 @@ private final class TerminalContainer: NSView {
         NotificationCenter.default.addObserver(self, selector: #selector(stopSession), name: NSApplication.willTerminateNotification, object: nil)
     }
 
-    @objc public func startSession(inDirectory path: String) {
+    @objc public func startSession() {
         guard !started else { return }
         started = true
-        var isDirectory: ObjCBool = false
-        directory = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue ? path : NSHomeDirectory()
         launchShell()
     }
 
@@ -182,11 +179,15 @@ private final class TerminalContainer: NSView {
         focusTerminal()
     }
 
+    private static func existingDirectory(_ path: String?) -> String {
+        var isDirectory: ObjCBool = false
+        guard let path, FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { return NSHomeDirectory() }
+        return path
+    }
+
     private func launchShell() {
         _ = view
-        let requestedDirectory = delegate?.terminalPanelWorkingDirectory?(self) ?? directory
-        var isDirectory: ObjCBool = false
-        let launchDirectory = FileManager.default.fileExists(atPath: requestedDirectory, isDirectory: &isDirectory) && isDirectory.boolValue ? requestedDirectory : NSHomeDirectory()
+        let launchDirectory = Self.existingDirectory(delegate?.terminalPanelWorkingDirectory?(self))
         let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
         terminal.owner = self
         terminal.launchDirectory = launchDirectory

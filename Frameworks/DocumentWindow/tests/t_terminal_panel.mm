@@ -82,7 +82,8 @@ void test_terminal_panel_constrained_resize ()
 				[split.topAnchor constraintEqualToAnchor:window.contentView.topAnchor], [split.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor]
 			]];
 			c.panelVisible = YES;
-			[c startTerminalInDirectory:NSTemporaryDirectory()];
+			c.terminalDirectoryProvider = ^{ return NSTemporaryDirectory(); };
+			[c startTerminal];
 			if(!c.hasTerminal) // built without the Swift terminal component
 				return;
 
@@ -133,7 +134,8 @@ void test_terminal_panel_placement_and_last_session ()
 			__block int sourceClosed = 0, detachedClosed = 0;
 			source.lastSessionClosedHandler   = ^{ ++sourceClosed; };
 			detached.lastSessionClosedHandler = ^{ ++detachedClosed; };
-			[source startTerminalInDirectory:NSTemporaryDirectory()];
+			source.terminalDirectoryProvider = ^{ return NSTemporaryDirectory(); };
+			[source startTerminal];
 			if(!source.hasTerminal) // built without the Swift terminal component
 				return;
 

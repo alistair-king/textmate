@@ -55,16 +55,26 @@ struct TerminalFileReference: Equatable {
         return TerminalFileReference(url: normalized, line: line, column: column)
     }
 
+    private static func resolve(token range: NSRange, in text: String, directory: String) -> (NSRange, TerminalFileReference)? {
+        let token = (text as NSString).substring(with: range)
+        if let reference = resolve(token, directory: directory) { return (range, reference) }
+        // Sentence punctuation is not part of a compiler's path.
+        var trimmed = token
+        while trimmed.last == "." || trimmed.last == ":" { trimmed.removeLast() }
+        guard let reference = resolve(trimmed, directory: directory) else { return nil }
+        return (NSRange(location: range.location, length: (trimmed as NSString).length), reference)
+    }
+
     static func matches(in text: String, directory: String) -> [(NSRange, TerminalFileReference)] {
-        tokenRegex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
-            let token = (text as NSString).substring(with: match.range)
-            if let reference = resolve(token, directory: directory) { return (match.range, reference) }
-            // Sentence punctuation is not part of a compiler's path.
-            var trimmed = token
-            while trimmed.last == "." || trimmed.last == ":" { trimmed.removeLast() }
-            guard let reference = resolve(trimmed, directory: directory) else { return nil }
-            return (NSRange(location: match.range.location, length: (trimmed as NSString).length), reference)
-        }
+        tokenRegex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { resolve(token: $0.range, in: text, directory: directory) }
+    }
+
+    /// Only the token under `offset` is resolved; a hover must not stat every other token on the line.
+    static func match(in text: String, at offset: Int, directory: String) -> (NSRange, TerminalFileReference)? {
+        guard let token = tokenRegex.matches(in: text, range: NSRange(text.startIndex..., in: text)).first(where: { NSLocationInRange(offset, $0.range) }),
+              let match = resolve(token: token.range, in: text, directory: directory),
+              NSLocationInRange(offset, match.0) else { return nil }
+        return match
     }
 }
 
@@ -77,6 +87,8 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
     // the directory that was current when they were printed, which only changes at these points.
     private var directoryMarkers: [(row: Int, directory: String)] = []
     private var markerColumns = 0
+    // End of the primary screen's row numbering; it only shrinks when ESC[3J or a reset renumbers the rows.
+    private var rowExtent = Int.min
     private var directoryCheckPending = false
     private var lastDirectoryCheck: TimeInterval = 0
 
@@ -119,8 +131,46 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
         }
     }
 
+    // Shells are recognised by executable name, since a nested shell is just another process in the tree.
+    private static let shellNames: Set<String> = {
+        let listed = (try? String(contentsOfFile: "/etc/shells", encoding: .utf8)) ?? ""
+        let names = listed.split(whereSeparator: \.isNewline)
+            .filter { !$0.hasPrefix("#") }
+            .map { ($0.trimmingCharacters(in: .whitespaces) as NSString).lastPathComponent }
+        return Set(names)
+    }()
+
+    static func isShell(pid: pid_t) -> Bool {
+        var buffer = [UInt8](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return false }
+        return shellNames.contains((String(decoding: buffer.prefix { $0 != 0 }, as: UTF8.self) as NSString).lastPathComponent)
+    }
+
+    private static func parentPid(of pid: pid_t) -> pid_t? {
+        var info = proc_bsdinfo()
+        let size = MemoryLayout<proc_bsdinfo>.size
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(size)) == size, info.pbi_ppid > 1 else { return nil }
+        return pid_t(info.pbi_ppid)
+    }
+
+    /// The directory of the innermost shell on the foreground job's ancestry, so a `cd` in a nested shell (`bash`, `su`, `nix-shell`) is followed.
+    /// Walking up from the foreground group rather than looking only at its leader keeps a nested shell current while it runs a command.
+    static func shellDirectory(foreground: pid_t, login: pid_t) -> String? {
+        guard login > 0 else { return nil }
+        var pid = foreground
+        // The leader of a pipeline may have exited, or the process may belong to another user; the login shell is the fallback.
+        var depth = 0
+        while pid > 1 && pid != login && depth < 32 {
+            if Self.isShell(pid: pid) { return Self.processDirectory(pid: pid) ?? Self.processDirectory(pid: login) }
+            guard let parent = Self.parentPid(of: pid) else { break }
+            pid = parent
+            depth += 1
+        }
+        return Self.processDirectory(pid: login)
+    }
+
     var currentDirectory: String {
-        Self.processDirectory(pid: process.shellPid) ?? reportedDirectory ?? launchDirectory
+        Self.shellDirectory(foreground: tcgetpgrp(process.childfd), login: process.shellPid) ?? reportedDirectory ?? launchDirectory
     }
 
     /// Cheap on every call: reading the shell directory is one syscall, and the screen is only touched when it changed.
@@ -133,14 +183,24 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
         guard directory != directoryMarkers.last?.directory,
               let snapshot = terminalContentSnapshot(region: .history(maximumScrollbackRows: -1)),
               !snapshot.inputState.isAlternateBuffer else { return }
-        if markerColumns != snapshot.inputState.dimensions.cols {
-            // Reflow changed which rows hold which output, so older markers no longer apply.
+        // Reflow changed which rows hold which output, and a renumbering moved them, so older markers no longer apply.
+        let renumbered = rowsWereRenumbered(snapshot)
+        if markerColumns != snapshot.inputState.dimensions.cols || renumbered {
             directoryMarkers = [(Int.min, directory)]
             markerColumns = snapshot.inputState.dimensions.cols
             return
         }
         directoryMarkers.append((snapshot.cursorRow, directory))
         if directoryMarkers.count > 500 { directoryMarkers.removeFirst(250) }
+    }
+
+    /// ESC[3J with scrollback and a terminal reset renumber the rows, which strands the recorded marker rows.
+    /// Ctrl-L erases in place and keeps the numbering, so the cursor position cannot be the signal.
+    private func rowsWereRenumbered(_ snapshot: TerminalContentSnapshot) -> Bool {
+        guard !snapshot.inputState.isAlternateBuffer else { return false }
+        let extent = snapshot.liveTopRow + snapshot.inputState.dimensions.rows
+        defer { rowExtent = extent }
+        return extent < rowExtent
     }
 
     /// The directory current when `row` was printed, or nil when that is unknown (no change recorded, or the terminal was resized since).
@@ -216,20 +276,26 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
         var text = ""
         var cells: [(range: NSRange, rect: NSRect)] = []
         var clickedOffset: Int?
+        var length = 0
         for r in first...last {
             for (c, cell) in snapshot.rows[r].cells.enumerated() where cell.width > 0 {
                 let value = cell.text.isEmpty || cell.text == "\0" ? " " : cell.text
-                let offset = (text as NSString).length
+                let offset = length
                 let range = NSRange(location: offset, length: (value as NSString).length)
                 if r == rowIndex && (c..<c + cell.width).contains(column) { clickedOffset = offset }
                 text += value
+                length += range.length
                 cells.append((range, NSRect(x: CGFloat(c) * cellWidth, y: bounds.maxY - CGFloat(r + 1) * cellHeight, width: CGFloat(cell.width) * cellWidth, height: cellHeight)))
             }
         }
         guard let clickedOffset else { return nil }
+        if rowsWereRenumbered(snapshot) && !directoryMarkers.isEmpty {
+            directoryMarkers = [(Int.min, currentDirectory)]
+            markerColumns = snapshot.inputState.dimensions.cols
+        }
         let row = snapshot.rows[first]
         let directory = recordedDirectory(forRow: row.absoluteRow, columns: snapshot.inputState.dimensions.cols) ?? currentDirectory
-        guard let match = TerminalFileReference.matches(in: text, directory: directory).first(where: { NSLocationInRange(clickedOffset, $0.0) }) else { return nil }
+        guard let match = TerminalFileReference.match(in: text, at: clickedOffset, directory: directory) else { return nil }
         return (match.1, cells.filter { NSIntersectionRange($0.range, match.0).length > 0 }.map(\.rect))
     }
 

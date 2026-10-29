@@ -8,7 +8,7 @@ import Darwin
 @Test func clearShortcutRequiresTerminalFocus() async throws {
     _ = NSApplication.shared
     let controller = makeTerminalController()
-    controller.startSession(inDirectory: NSTemporaryDirectory())
+    controller.startSession()
     defer { controller.stopSession() }
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: .titled, backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
@@ -39,7 +39,11 @@ import Darwin
     defer { try? FileManager.default.removeItem(at: folder) }
     let controller = makeTerminalController()
     controller.applyTheme(OakTerminalTheme(background: .black, foreground: .white, caret: .green, selection: .blue))
-    controller.startSession(inDirectory: folder.path)
+    let delegate = TerminalTestDelegate()
+    delegate.workingDirectory = folder.path
+    controller.delegate = delegate
+    defer { withExtendedLifetime(delegate) {} }
+    controller.startSession()
     defer { controller.stopSession() }
     let terminal = try #require(controller.terminal)
     #expect(terminal.nativeBackgroundColor == .black)
@@ -66,7 +70,7 @@ import Darwin
     terminal.send(txt: "pwd > cwd.txt\n")
     let cwd = try await waitForFile("cwd.txt")
     #expect(URL(fileURLWithPath: cwd.trimmingCharacters(in: .whitespacesAndNewlines)).resolvingSymlinksInPath() == folder.resolvingSymlinksInPath())
-    controller.startSession(inDirectory: NSHomeDirectory())
+    controller.startSession()
     #expect(terminal.process.shellPid == pid)
 
     for size in [NSSize(width: 700, height: 300), NSSize(width: 0, height: 0), NSSize(width: 400, height: 180)] {
@@ -129,7 +133,7 @@ import Darwin
 @Test func terminalTabsKeepIndependentSessions() async throws {
     _ = NSApplication.shared
     let controller = makeTerminalController()
-    controller.startSession(inDirectory: NSTemporaryDirectory())
+    controller.startSession()
     defer { controller.stopSession() }
     let first = try #require(controller.terminal)
     let firstPID = first.process.shellPid
@@ -173,7 +177,7 @@ import Darwin
 @Test func terminalTabShortcutsRequirePaneFocus() throws {
     _ = NSApplication.shared
     let controller = makeTerminalController()
-    controller.startSession(inDirectory: NSTemporaryDirectory())
+    controller.startSession()
     defer { controller.stopSession() }
     let first = try #require(controller.terminal)
     controller.newTerminal()
@@ -223,8 +227,8 @@ import Darwin
     delegate.workingDirectory = firstFolder.path
     let controller = makeTerminalController()
     controller.delegate = delegate
-    // Simulate a panel initialized before its window acquired the project context.
-    controller.startSession(inDirectory: FileManager.default.currentDirectoryPath)
+    defer { withExtendedLifetime(delegate) {} }
+    controller.startSession()
     defer { controller.stopSession() }
     let first = try #require(controller.terminal)
     delegate.workingDirectory = secondFolder.path
@@ -248,8 +252,8 @@ import Darwin
     _ = NSApplication.shared
     let source = makeTerminalController()
     let target = makeTerminalController()
-    source.startSession(inDirectory: NSTemporaryDirectory())
-    target.startSession(inDirectory: NSTemporaryDirectory())
+    source.startSession()
+    target.startSession()
     defer { source.stopSession(); target.stopSession() }
     let first = try #require(source.terminal)
     let id = try #require(source.sessionIdentifiers.first)
@@ -280,7 +284,7 @@ import Darwin
     let initialFont = try #require(NSFont(name: "Menlo", size: 15))
     let updatedFont = try #require(NSFont(name: "Monaco", size: 18))
     controller.applyFont(initialFont)
-    controller.startSession(inDirectory: NSTemporaryDirectory())
+    controller.startSession()
     let first = try #require(controller.terminal)
     let pid = first.process.shellPid
     #expect(first.font == initialFont)

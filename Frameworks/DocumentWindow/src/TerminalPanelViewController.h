@@ -22,7 +22,7 @@ extern NSString* const kUserDefaultsTerminalPanelPlacementKey;
 @property (nonatomic, readonly) NSArray<NSUUID*>* terminalSessionIdentifiers;
 - (void)closeTerminalSessions:(NSArray<NSUUID*>*)identifiers; // asks for confirmation when work is running
 @property (nonatomic, readonly) BOOL hasTerminal; // YES once a shell has been started or received
-- (void)startTerminalInDirectory:(NSString*)directory;
+- (void)startTerminal; // starts the first shell in the directory from terminalDirectoryProvider
 - (void)focusTerminal;
 - (void)applyTerminalFont:(NSFont*)font;
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection;

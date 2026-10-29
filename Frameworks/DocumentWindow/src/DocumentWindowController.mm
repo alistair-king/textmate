@@ -1,6 +1,7 @@
 #import "DocumentWindowController.h"
 #import "ProjectLayoutView.h"
 #import "TerminalPanelViewController.h"
+#import "TerminalEnvironment.h"
 #import "SelectGrammarViewController.h"
 #import "OakRunCommandWindowController.h"
 #import <document/OakDocument.h>
@@ -224,13 +225,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 					[terminalOwner.window performClose:nil];
 			});
 		};
-		self.terminalPanelController.terminalEnvironmentProvider = ^(NSString* directory){
-			// Same base environment as bundle commands, so Preferences > Variables (PATH, locale) apply and the app's own launch environment does not leak.
-			NSMutableDictionary* res = [NSMutableDictionary dictionary];
-			for(auto const& pair : variables_for_path(oak::basic_environment(), to_s(directory)))
-				res[to_ns(pair.first)] = to_ns(pair.second);
-			return res;
-		};
+		self.terminalPanelController.terminalEnvironmentProvider = ^(NSString* directory){ return TerminalEnvironmentForDirectory(directory); };
 		self.terminalPanelController.openTerminalFile = ^(NSURL* url, NSInteger line, NSInteger column){
 			NSMutableDictionary* item = [@{ @"path": url.path } mutableCopy];
 			if(line > 0) item[@"selectionString"] = [NSString stringWithFormat:@"%ld:%ld", (long)line, (long)MAX(1, column)];
@@ -536,6 +531,12 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 			break;
 		}
 	}];
+}
+
+// Closing the window outright would end its running shells without asking.
+- (BOOL)keepsWindowWithoutDocuments
+{
+	return self.fileBrowserVisible || self.terminalPanelController.terminalSessionIdentifiers.count;
 }
 
 - (void)closeTabsAtIndexes:(NSIndexSet*)anIndexSet askToSaveChanges:(BOOL)askToSaveFlag createDocumentIfEmpty:(BOOL)createIfEmptyFlag activate:(BOOL)activateFlag
@@ -1184,7 +1185,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 			// Close the tab that failed to open
 			NSUInteger i = [_documents indexOfObject:document];
 			if(i != NSNotFound)
-				[self closeTabsAtIndexes:[NSIndexSet indexSetWithIndex:i] askToSaveChanges:NO createDocumentIfEmpty:self.fileBrowserVisible activate:activateFlag];
+				[self closeTabsAtIndexes:[NSIndexSet indexSetWithIndex:i] askToSaveChanges:NO createDocumentIfEmpty:self.keepsWindowWithoutDocuments activate:activateFlag];
 
 			if(_documents.count == 0)
 				[self close];
@@ -1868,8 +1869,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 			{
 				BOOL wasSelected = dragIndex == sourceTabBar.selectedTabIndex;
 
-				// Closing the window outright would end its running shells without asking.
-				if(delegate.fileBrowserVisible || delegate.documents.count > 1 || delegate.terminalPanelController.terminalSessionIdentifiers.count)
+				if(delegate.keepsWindowWithoutDocuments || delegate.documents.count > 1)
 						[delegate closeTabsAtIndexes:[NSIndexSet indexSetWithIndex:dragIndex] askToSaveChanges:NO createDocumentIfEmpty:YES activate:YES];
 				else	[delegate close];
 
@@ -2027,7 +2027,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	self.terminalPanelController.panelVisible = !self.terminalPanelController.panelVisible;
 	if(self.terminalPanelController.panelVisible)
 	{
-		[self.terminalPanelController startTerminalInDirectory:self.terminalStartDirectory];
+		[self.terminalPanelController startTerminal];
 		[self updateTerminalTheme];
 		[self.terminalPanelController focusTerminal];
 	}
@@ -2769,7 +2769,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 	// Start the shell once the project/document context exists, so it opens in the window's folder.
 	if(self.terminalPanelController.panelVisible)
 	{
-		[self.terminalPanelController startTerminalInDirectory:self.terminalStartDirectory];
+		[self.terminalPanelController startTerminal];
 		[self updateTerminalTheme];
 	}
 }

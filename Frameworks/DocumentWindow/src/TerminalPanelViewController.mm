@@ -165,11 +165,11 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 #endif
 }
 
-- (void)startTerminalInDirectory:(NSString*)directory
+- (void)startTerminal
 {
 #if HAVE_OAK_SWIFTUI
 	[self prepareTerminalController];
-	[_terminalController startSessionInDirectory:directory ?: NSHomeDirectory()];
+	[_terminalController startSession];
 #endif
 }
 

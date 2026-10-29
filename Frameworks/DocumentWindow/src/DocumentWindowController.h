@@ -15,6 +15,7 @@
 @property (nonatomic) NSUInteger                                 selectedTabIndex;
 
 @property (nonatomic) BOOL                                       fileBrowserVisible;
+@property (nonatomic, readonly) BOOL                             keepsWindowWithoutDocuments; // file browser or terminal sessions still make the window useful
 @property (nonatomic) id                                         fileBrowserHistory;
 @property (nonatomic) CGFloat                                    fileBrowserWidth;
 
