@@ -912,7 +912,18 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	for(DocumentWindowController* delegate in SortedControllers())
 	{
 		if(delegate != self && !delegate.window.isMiniaturized)
+		{
+			// -close skips windowShouldClose:, so move the shells over instead of letting windowWillClose: end them.
+			NSArray<NSUUID*>* sessions = delegate.terminalPanelController.terminalSessionIdentifiers;
+			for(NSUUID* identifier in sessions)
+				[self.terminalPanelController takeTerminalSession:identifier fromPanel:delegate.terminalPanelController];
+			if(sessions.count)
+			{
+				self.terminalPanelController.panelVisible = YES;
+				[self updateTerminalTheme];
+			}
 			[delegate.window close];
+		}
 	}
 }
 
@@ -1811,7 +1822,8 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 			{
 				BOOL wasSelected = dragIndex == sourceTabBar.selectedTabIndex;
 
-				if(delegate.fileBrowserVisible || delegate.documents.count > 1)
+				// Closing the window outright would end its running shells without asking.
+				if(delegate.fileBrowserVisible || delegate.documents.count > 1 || delegate.terminalPanelController.terminalSessionIdentifiers.count)
 						[delegate closeTabsAtIndexes:[NSIndexSet indexSetWithIndex:dragIndex] askToSaveChanges:NO createDocumentIfEmpty:YES activate:YES];
 				else	[delegate close];
 
