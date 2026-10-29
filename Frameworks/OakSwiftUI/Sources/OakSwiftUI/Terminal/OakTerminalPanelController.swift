@@ -67,6 +67,13 @@ private final class TerminalContainer: NSView {
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
 
+    @objc public func renameSession(at index: Int, title: String) {
+        guard sessions.indices.contains(index) else { return }
+        let title = title.components(separatedBy: .controlCharacters).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        sessions[index].customTitle = title.isEmpty ? nil : String(title.prefix(120))
+        rebuildTabs()
+    }
+
     @objc public func installTabBar(_ tabBar: NSView) {
         guard let container = view as? TerminalContainer else { return }
         container.tabBar?.removeFromSuperview()
