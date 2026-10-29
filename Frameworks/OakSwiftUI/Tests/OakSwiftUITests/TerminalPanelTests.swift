@@ -106,8 +106,15 @@ import Darwin
     #expect(restartedTerminal.selectedTextBackgroundColor == .yellow)
     let restartedPID = restartedTerminal.process.shellPid
     #expect(restartedPID > 0 && restartedPID != pid)
-    restartedTerminal.send(txt: "sleep 30 & echo ready > work.txt\n")
+    restartedTerminal.send(txt: "sleep 30 & echo ready > background.txt\n")
+    _ = try await waitForFile("background.txt")
+    #expect(!controller.hasRunningWork)
+    restartedTerminal.send(txt: "echo ready > work.txt; sleep 30\n")
     _ = try await waitForFile("work.txt")
+    for _ in 0..<100 {
+        if controller.hasRunningWork { break }
+        try await Task.sleep(for: .milliseconds(50))
+    }
     #expect(controller.hasRunningWork)
     controller.stopSession()
     for _ in 0..<100 {

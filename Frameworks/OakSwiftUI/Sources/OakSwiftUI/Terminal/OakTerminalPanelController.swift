@@ -234,14 +234,10 @@ private final class TerminalContainer: NSView {
 
     private func hasRunningWork(in terminal: LocalProcessTerminalView) -> Bool {
         guard let process = terminal.process, process.running, process.shellPid > 0 else { return false }
+        // Only a foreground job counts. Background children are not distinguishable from prompt helpers
+        // (gitstatusd, direnv, async prompt workers), which would make every close or quit ask.
         let foreground = tcgetpgrp(process.childfd)
-        if foreground < 0 || foreground != process.shellPid { return true }
-        // A nil buffer asks for capacity, which includes spare slots even for an idle shell.
-        var children = [pid_t](repeating: 0, count: 256)
-        let bytes = children.withUnsafeMutableBytes {
-            proc_listchildpids(process.shellPid, $0.baseAddress, Int32($0.count))
-        }
-        return bytes < 0 || children.contains { $0 > 0 }
+        return foreground > 0 && foreground != process.shellPid
     }
 
     @objc public func confirmClose() -> Bool {

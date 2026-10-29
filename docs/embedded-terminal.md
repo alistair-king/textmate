@@ -8,7 +8,7 @@ Hiding or repositioning the panel preserves the running session and scrollback. 
 
 Terminal tabs use the same OakTabBarView as editor tabs, including sizing, overflow, hover close buttons, and drag reordering. Drag a session to another terminal pane to move it without restarting the shell. Double-click empty tab-bar space to create a session; double-click a tab (when more than one exists), or choose Move Tab to New Window, to detach it. A detached session opens in a new window whose editor holds only an untitled placeholder document; that window closes when its last session ends, unless the placeholder has been edited or other files were opened in it. The context menu supports closing a tab, other tabs, or tabs on either side. Option-clicking a close button closes the other tabs.
 
-Closing a window or quitting checks for foreground or background child processes and asks before ending active work. Sessions end when TextMate exits; reopening a saved window starts a new shell, not the previous processes or scrollback.
+Closing a window or quitting asks before ending a session that is running a foreground program. Background jobs and helper processes started by the shell or its prompt do not trigger the question. Sessions end when TextMate exits; reopening a saved window starts a new shell, not the previous processes or scrollback.
 
 ## Building
 
