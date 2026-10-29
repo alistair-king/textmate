@@ -68,7 +68,7 @@ Use [GitHub Issues](https://github.com/tectiv3/textmate/issues) for bug reports 
 ## Requirements
 
  * macOS 14.0 (Sonoma) or later
- * Xcode (full install, not just Command Line Tools — `ibtool` and `actool` are required).
+ * Xcode with Swift 6.2 or later (full install, not just Command Line Tools — `ibtool` and `actool` are required).
    Make sure the active developer directory points to Xcode: `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`
  * [ninja][]            — build system similar to `make`
  * [cmake][] ≥ 3.21     — meta build system

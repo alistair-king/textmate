@@ -29,7 +29,8 @@ case "$CONFIG" in
 esac
 
 echo "Building OakSwiftUI ($SWIFT_CONFIG)..."
-swift build -c "$SWIFT_CONFIG" --disable-sandbox --product OakSwiftUI 2>&1
+# CMake consumes the native build system's generated Objective-C header layout.
+swift build -c "$SWIFT_CONFIG" --build-system native --disable-sandbox --product OakSwiftUI 2>&1
 
 DYLIB_PATH=".build/${SWIFT_CONFIG}/libOakSwiftUI.dylib"
 
