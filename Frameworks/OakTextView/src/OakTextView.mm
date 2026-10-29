@@ -312,11 +312,6 @@ static std::string shell_quote (std::vector<std::string> paths)
 }
 @end
 
-// Adopted by first responders outside the editor (the embedded terminal) that handle their own key equivalents.
-@protocol OakKeyEquivalentOwner <NSObject>
-- (BOOL)oak_ownsKeyEquivalents;
-@end
-
 @implementation OakTextView
 // =================================
 // = OakTextView Delegate Wrappers =

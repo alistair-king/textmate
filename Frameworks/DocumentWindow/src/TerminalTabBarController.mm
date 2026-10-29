@@ -14,7 +14,7 @@
 	if(self = [super init])
 	{
 		_controller = controller;
-		_tabBar = [[OakTabBarView alloc] initWithFrame:NSMakeRect(0, 0, 320, 23)];
+		_tabBar = [[OakTabBarView alloc] initWithFrame:NSZeroRect];
 		_tabBar.delegate = self;
 		_tabBar.dataSource = self;
 		_tabBar.neverHideLeftBorder = YES;

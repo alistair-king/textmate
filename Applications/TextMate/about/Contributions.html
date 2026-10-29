@@ -18,9 +18,603 @@
 
 <div>
 
+<h3 class="commit-group-heading">Oct 29, 2026</h3>
+
+<ol class="commit-group">
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/8fa4260a1c6dc2eba3682f2b00d8ec6b545decdf" class="message">Fix terminal panel environment, window close and file links</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>The terminal environment skipped the project&#39;s .tm_properties: the start directory was passed as variables_for_path&#39;s file argument, so settings were read from its parent. TerminalEnvironmentForDirectory now passes it as the directory and is covered by a test.
+
+A failed open from a Cmd-click (for example a cancelled encoding prompt) could close the window with -close, which skips windowShouldClose: and ended every shell without asking. The window now stays open while terminal sessions run. keepsWindowWithoutDocuments is the single rule used here and when dragging out the last tab.
+
+File links resolved relative paths against the wrong directory in two cases. After clear or reset, which renumber the terminal&#39;s rows, the recorded directory changes went stale; they are now dropped when liveTopRow + rows decreases, while Ctrl-L&#39;s erase-in-place keeps them. Inside nested shells (nix develop, bash, sudo -s) only the login shell&#39;s directory was read; the lookup now walks up from the foreground process group to the nearest shell and falls back to the login shell.
+
+Hovering with Command checked every path-like token on the line on disk, on the main thread. Only the token under the pointer is resolved now.
+
+The working directory now comes only from the delegate. startSession() and startTerminal lose the directory argument that production never used, and one helper validates the directory.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/8fa4260a1c6dc2eba3682f2b00d8ec6b545decdf" class="gobutton">
+          <span class="sha">8fa4260a1c<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/8fa4260a1c6dc2eba3682f2b00d8ec6b545decdf" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T15:18:13Z" title="2026-10-29 15:18:13">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/6cb8883a04ec484bebd334ca8a1e28bbaadb3fc7" class="message">Merge pull request #20 from tectiv3/feature/terminal-panel</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>closes https://github.com/tectiv3/textmate/pull/19
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/6cb8883a04ec484bebd334ca8a1e28bbaadb3fc7" class="gobutton">
+          <span class="sha">6cb8883a04<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/6cb8883a04ec484bebd334ca8a1e28bbaadb3fc7" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T13:58:12Z" title="2026-10-29 13:58:12">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/5364125f0b03983e6d8c77e3729c770c8c57652f" class="message">Track directory changes instead of snapshotting output rows</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>File links resolve relative paths against the directory the shell was
+in when a line was printed. That was recorded by copying the last 300
+rows of history into a per-row table after each output burst. A capture
+cost 2.6 to 4.8 ms in a release build and 26 to 50 ms in a debug build
+on the main thread, about as much as parsing 2000 lines of output, and
+an idle capture cost nearly the same as a busy one.
+
+The directory only changes when the shell changes it, so record just
+that: read the shell&#39;s directory (one syscall, 3 to 6 microseconds) at
+most every 50 ms while output arrives, and store a (row, directory)
+marker when it differs. A click resolves against the last marker at or
+before its row. The screen is touched only when a marker is added, and
+only its live rows are copied. Memory is one entry per directory change
+instead of up to 12000 rows.
+
+A resize invalidates older markers since reflow moves rows, and those
+rows fall back to the shell&#39;s current directory, as before.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/5364125f0b03983e6d8c77e3729c770c8c57652f" class="gobutton">
+          <span class="sha">5364125f0b<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/5364125f0b03983e6d8c77e3729c770c8c57652f" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T13:40:52Z" title="2026-10-29 13:40:52">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/c8c55d8876077551b9974e76152233af282e958e" class="message">Give the terminal bridge a delegate protocol and a typed theme</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>The other OakSwiftUI bridge classes live in Bridge/ and report to an
+Oak...Delegate protocol. The terminal controller exposed four loose
+block properties instead (open file, working directory, environment,
+last session closed) and took its colors as four positional arguments,
+which the view controller stored as an untyped array indexed 0..3.
+
+OakTerminalPanelController moves to Bridge/ and talks to
+OakTerminalPanelControllerDelegate; the colors travel as an immutable
+OakTerminalTheme. The view controller adopts the protocol and forwards
+to its existing blocks, so the window controller is unchanged.
+
+Not adopted: OakThemeEnvironment. It has no caret color and carries a
+font name and size rather than the editor&#39;s NSFont, so moving the
+terminal onto it would change font handling and needs a visual check.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/c8c55d8876077551b9974e76152233af282e958e" class="gobutton">
+          <span class="sha">c8c55d8876<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/c8c55d8876077551b9974e76152233af282e958e" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T13:11:41Z" title="2026-10-29 13:11:41">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/488f402cdbd2925da1f9649a9ff8079d154365ae" class="message">Confirm ending terminal work with a window sheet</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>The close and quit confirmations ran as app-modal alerts that did not
+say which window they belonged to, one after another during quit, while
+unsaved documents already use window sheets.
+
+The confirmation is now a sheet on the window whose shells are affected.
+Closing a window asks before the unsaved-documents sheet, and the
+re-issued close does not ask a second time, including after the HTML
+output command is stopped. Quitting brings each affected window forward
+in turn and replies to the application asynchronously; the existing
+unsaved-documents flow runs afterwards unchanged. Closing a single tab
+uses the same sheet.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/488f402cdbd2925da1f9649a9ff8079d154365ae" class="gobutton">
+          <span class="sha">488f402cdb<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/488f402cdbd2925da1f9649a9ff8079d154365ae" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T13:06:07Z" title="2026-10-29 13:06:07">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/d91a2e5e85859ede170c38ba55a3b4d11ac598db" class="message">Keep running shells when a window is closed programmatically</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>Merge All Windows and dragging a window&#39;s only editor tab into another
+window close the source window with -close, which skips
+windowShouldClose:. The terminal confirmation lives there, so
+windowWillClose: ended the shells without asking.
+
+Merge All Windows now moves each window&#39;s shells into the surviving
+window. Dragging the last tab out keeps the source window, with its
+usual replacement untitled document, while it still has shells, the
+same way a visible file browser keeps it.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/d91a2e5e85859ede170c38ba55a3b4d11ac598db" class="gobutton">
+          <span class="sha">d91a2e5e85<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/d91a2e5e85859ede170c38ba55a3b4d11ac598db" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T13:04:06Z" title="2026-10-29 13:04:06">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/6375a9ad88241cdcb475856c3bff9d636a5fc74f" class="message">Document the SwiftTerm build plugin in the build notes</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>build.sh passes --disable-sandbox, so SwiftTerm&#39;s build-tool plugin runs
+unsandboxed. The exact pin is the mitigation; say so where the build is
+described so a version bump gets a review.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/6375a9ad88241cdcb475856c3bff9d636a5fc74f" class="gobutton">
+          <span class="sha">6375a9ad88<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/6375a9ad88241cdcb475856c3bff9d636a5fc74f" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:44:15Z" title="2026-10-29 10:44:15">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/3d553e8b7b15d09c91c5c282952e66091dd4afcc" class="message">Make terminal tests independent of the user&#39;s shell and build</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>The DocumentWindow tests read a property that only exists when OakSwiftUI
+is built, so they threw NSUndefinedKeyException otherwise. They now skip
+the shell-dependent parts when no terminal component exists, exercise
+sessions through the view controller API instead of KVC on private
+objects, and step the resize sweep by 10 points instead of 1. The file
+uses the project&#39;s hard-tab indentation.
+
+Tests no longer start the account&#39;s login shell. The terminal controller
+takes an optional shell path and arguments, and the tests use a plain
+/bin/sh, so results do not depend on rc files, prompt plugins or
+installed tooling. Added coverage for the host name check and the key
+equivalent opt-out.
+
+The Swift session tests need to fork a pty; they could not be run in the
+environment this was written in (forkpty returns EPERM), so they are
+unverified.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/3d553e8b7b15d09c91c5c282952e66091dd4afcc" class="gobutton">
+          <span class="sha">3d553e8b7b<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/3d553e8b7b15d09c91c5c282952e66091dd4afcc" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:44:05Z" title="2026-10-29 10:44:05">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/efd36fa4c34f6d7d0348aa9b98cc98d394e8446b" class="message">Tidy terminal panel theming, persistence and menu state</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>Theme updates were queued on every tab switch, and ran five times from
+the initial KVO notifications, even for windows that never opened a
+terminal. They now wait until a shell exists; a restored window applies
+the theme right after starting its shell, since no later notification
+would.
+
+Divider drags wrote NSUserDefaults for every resize event; they now
+write once when the drag ends. The width and height keys are private to
+the view controller. The terminal menu items are disabled when the app
+was built without the Swift component instead of toggling an empty box,
+and the new View menu entry lines up with its neighbours.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/efd36fa4c34f6d7d0348aa9b98cc98d394e8446b" class="gobutton">
+          <span class="sha">efd36fa4c3<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/efd36fa4c34f6d7d0348aa9b98cc98d394e8446b" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:38:33Z" title="2026-10-29 10:38:33">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/21548added8172fd7bece317c08fa57977915981" class="message">Ask before closing only for foreground terminal work</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>Every child of the shell counted as running work, including prompt
+helpers such as gitstatusd, direnv and async prompt workers, so users
+with those prompts would be asked on every window close and quit. A
+failing tcgetpgrp also counted as busy.
+
+Only a foreground job now counts. Background jobs are not told apart
+from prompt helpers, so a forgotten &quot;sleep 30 &amp;&quot; no longer prompts; the
+documentation says so.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/21548added8172fd7bece317c08fa57977915981" class="gobutton">
+          <span class="sha">21548added<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/21548added8172fd7bece317c08fa57977915981" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:37:04Z" title="2026-10-29 10:37:04">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/520ec330726927d7d4af73f572841d4daa7b1a17" class="message">Keep editor bundle key bindings away from a focused terminal</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>OakTextView.performKeyEquivalent: ran Command-modified bundle bindings
+(Cmd-/, Cmd-R, Cmd-B, ...) against the hidden document whenever any
+non-text-view responder had focus. That was tolerable for the file
+browser but is wrong for a terminal, and with the panel on the right or
+bottom the text view saw the event before the terminal, so a bundle
+binding on Cmd-K would shadow clear-terminal.
+
+First responders that handle their own key equivalents now answer
+oak_ownsKeyEquivalents, and the text view declines the event for them.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/520ec330726927d7d4af73f572841d4daa7b1a17" class="gobutton">
+          <span class="sha">520ec33072<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/520ec330726927d7d4af73f572841d4daa7b1a17" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:36:21Z" title="2026-10-29 10:36:21">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/e5f109d0340e39dbf6dc66a8e74ee7c88f80ca97" class="message">Start terminal shells from TextMate&#39;s base environment</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>The shell inherited a raw copy of the app&#39;s own environment. Launched
+from the Dock, that has no LANG, so the shell ran in the C locale and
+mangled non-ASCII text; launched from a terminal it leaked TMUX,
+VIRTUAL_ENV and NIX_* into the new shell.
+
+The window controller now supplies oak::basic_environment() extended by
+the settings variables for the start directory, the same source bundle
+commands use, so Preferences &gt; Variables (PATH for Nix or Homebrew) and
+LC_CTYPE from Default.tmProperties apply. If nothing in the environment
+names a locale, LC_CTYPE falls back to en_US.UTF-8.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/e5f109d0340e39dbf6dc66a8e74ee7c88f80ca97" class="gobutton">
+          <span class="sha">e5f109d034<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/e5f109d0340e39dbf6dc66a8e74ee7c88f80ca97" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:35:16Z" title="2026-10-29 10:35:16">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/639589ea8d42c073fd351325730d3a13b845b781" class="message">Avoid blocking and repeated work in terminal file links</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>ProcessInfo.hostName performs a reverse-DNS lookup that can block the
+main thread for seconds, and it ran on every OSC 7 directory report;
+fish sends one per cd. Compare the short name from gethostname() instead,
+which also matches the short host names shells report.
+
+Also stop redoing work that does not change: compile the token regex
+once, capture output history at 4 Hz instead of 20, prune the row table
+only after it overshoots rather than sorting its keys on every capture,
+and reuse the Command-hover result while the pointer stays in one cell.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/639589ea8d42c073fd351325730d3a13b845b781" class="gobutton">
+          <span class="sha">639589ea8d<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/639589ea8d42c073fd351325730d3a13b845b781" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:34:07Z" title="2026-10-29 10:34:07">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/d7bb9b4ed767ec627b0e9832b7a551a311c431c2" class="message">Require Swift tools 6.2 in the OakSwiftUI package</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>SwiftTerm&#39;s manifest needs tools 6.2. Declaring it here makes older
+toolchains fail with a clear message from SwiftPM instead of a
+dependency resolution error.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/d7bb9b4ed767ec627b0e9832b7a551a311c431c2" class="gobutton">
+          <span class="sha">d7bb9b4ed7<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/d7bb9b4ed767ec627b0e9832b7a551a311c431c2" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:32:00Z" title="2026-10-29 10:32:00">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/c4c76b4ddd0c0e6a05055f88898143f2d1f7d944" class="message">Define the OakSwiftUI include directory once</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>The swift-triple and build-configuration lookup was copied into the
+TextMate, OakTextView and DocumentWindow CMakeLists. It now lives next
+to find_library(OakSwiftUI_LIB) as OakSwiftUI_INCLUDE_DIR. Build types
+other than Release map to the debug Swift build, which is the only other
+configuration build.sh produces, so RelWithDebInfo no longer points at a
+nonexistent directory.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/c4c76b4ddd0c0e6a05055f88898143f2d1f7d944" class="gobutton">
+          <span class="sha">c4c76b4ddd<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/c4c76b4ddd0c0e6a05055f88898143f2d1f7d944" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:32:00Z" title="2026-10-29 10:32:00">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/f1f0c938995438a39d7e625ad9b73dfca802881f" class="message">Detached terminal windows inherit placement and close with last session</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>A window created by detaching a terminal tab took its panel placement
+from NSUserDefaults. A restored source window with a session-saved edge
+(which does not write defaults) therefore detached into a window with a
+different edge and size. The detached window now copies the source
+panel; precedence is documented: defaults seed new windows, saved
+session state overrides on restore, detach copies the source.
+
+The detached window also kept a placeholder untitled document after its
+last shell ended, leaving an empty editor window behind. Every window
+needs a document, so the placeholder stays, but the window now closes
+with its last session while the placeholder is untouched. The new
+lastSessionDidClose callback fires only when a session is closed or
+exits, not when one is transferred out or the panel is stopped.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/f1f0c938995438a39d7e625ad9b73dfca802881f" class="gobutton">
+          <span class="sha">f1f0c93899<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/f1f0c938995438a39d7e625ad9b73dfca802881f" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:12:35Z" title="2026-10-29 10:12:35">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/f68ce53cfda9ae851deba86069a8ed85?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/ede8846c393e9ded8a837c4c0cc4329eb7af626b" class="message">Dock the terminal panel in document windows</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>TerminalPanelViewController wraps the project layout in a split view and
+docks the Swift terminal panel left, right or bottom, with placement and
+size persisted per window and as defaults. Tabs reuse OakTabBarView and
+support reordering, moving between windows and detaching. The panel is
+toggled with Control-` from the View menu, starts shells in the project
+directory, and is covered by close and quit confirmations.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/ede8846c393e9ded8a837c4c0cc4329eb7af626b" class="gobutton">
+          <span class="sha">ede8846c39<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/ede8846c393e9ded8a837c4c0cc4329eb7af626b" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name">Alistair King</span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:28:02Z" title="2026-10-29 10:28:02">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/f68ce53cfda9ae851deba86069a8ed85?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/ce45dcb2f762de99ca5ccf4896ec1fae6d0808c7" class="message">Add SwiftTerm-based terminal panel controller</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>OakTerminalPanelController hosts multiple login-shell sessions, themed
+and sized to match the editor, with session transfer between panels and
+a close confirmation when work is still running. TerminalFileLinks
+detects local file references in terminal output, including line and
+column suffixes, so they can be Command-clicked open in the editor.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/ce45dcb2f762de99ca5ccf4896ec1fae6d0808c7" class="gobutton">
+          <span class="sha">ce45dcb2f7<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/ce45dcb2f762de99ca5ccf4896ec1fae6d0808c7" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name">Alistair King</span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:28:02Z" title="2026-10-29 10:28:02">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/f68ce53cfda9ae851deba86069a8ed85?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/085798688abfd380b87c7df2219d31e8551aef56" class="message">Add SwiftTerm dependency to the OakSwiftUI package</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>Pin SwiftTerm 1.99.1 and require Swift 6.2, which SwiftTerm&#39;s manifest
+needs. build.sh now builds with the native build system so the generated
+Objective-C header keeps a stable location, and the OakTextView include
+path is derived from the Swift target triple and build configuration
+instead of hardcoding arm64/debug. SwiftTerm&#39;s third-party licenses are
+bundled with the application.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/085798688abfd380b87c7df2219d31e8551aef56" class="gobutton">
+          <span class="sha">085798688a<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/085798688abfd380b87c7df2219d31e8551aef56" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name">Alistair King</span>
+        authored <time class="js-relative-date" datetime="2026-10-29T10:28:01Z" title="2026-10-29 10:28:01">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+</ol>
+
 <h3 class="commit-group-heading">Oct 27, 2026</h3>
 
 <ol class="commit-group">
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/f00953ab8b842df7dba405f2b7a982d6a72740c7" class="message">Add make ship target for already-tagged releases</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>package.sh + publish.sh without prepare_release.rb, for publishing a tag
+that already exists. make package keeps the end-to-end chain.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/f00953ab8b842df7dba405f2b7a982d6a72740c7" class="gobutton">
+          <span class="sha">f00953ab8b<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/f00953ab8b842df7dba405f2b7a982d6a72740c7" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-27T11:47:17Z" title="2026-10-27 11:47:17">October 27, 2026</time>
+      </div>
+    </div>
+</li>
 
 <li class="commit commit-group-item">
     <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">

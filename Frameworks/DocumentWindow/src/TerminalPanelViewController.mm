@@ -5,8 +5,23 @@
 #endif
 
 NSString* const kUserDefaultsTerminalPanelPlacementKey = @"terminalPanelPlacement";
+NSString* const kTerminalPanelPositionLeft   = @"left";
+NSString* const kTerminalPanelPositionRight  = @"right";
+NSString* const kTerminalPanelPositionBottom = @"bottom";
 static NSString* const kUserDefaultsTerminalPanelWidthKey  = @"terminalPanelWidth";
 static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeight";
+
+static CGFloat const kDefaultPanelWidth  = 320;
+static CGFloat const kDefaultPanelHeight = 220;
+static CGFloat const kMinimumPanelWidth  = 120;
+static CGFloat const kMinimumPanelHeight = 100;
+static CGFloat const kMinimumContentWidth  = 240;
+static CGFloat const kMinimumContentHeight = 120;
+
+static BOOL IsPanelPosition (NSString* position)
+{
+	return [@[ kTerminalPanelPositionLeft, kTerminalPanelPositionRight, kTerminalPanelPositionBottom ] containsObject:position];
+}
 
 @interface TerminalPanelSplitView : NSSplitView
 @property (nonatomic) BOOL trackingDivider;
@@ -49,9 +64,9 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 + (void)initialize
 {
 	[NSUserDefaults.standardUserDefaults registerDefaults:@{
-		kUserDefaultsTerminalPanelPlacementKey: @"bottom",
-		kUserDefaultsTerminalPanelWidthKey:     @320,
-		kUserDefaultsTerminalPanelHeightKey:    @220,
+		kUserDefaultsTerminalPanelPlacementKey: kTerminalPanelPositionBottom,
+		kUserDefaultsTerminalPanelWidthKey:     @(kDefaultPanelWidth),
+		kUserDefaultsTerminalPanelHeightKey:    @(kDefaultPanelHeight),
 	}];
 }
 
@@ -61,9 +76,9 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 	{
 		_contentView = contentView;
 		NSString* placement = [NSUserDefaults.standardUserDefaults stringForKey:kUserDefaultsTerminalPanelPlacementKey];
-		_panelPosition = [@[@"left", @"right", @"bottom"] containsObject:placement] ? placement : @"bottom";
-		_panelWidth    = MAX(120, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelWidthKey]);
-		_panelHeight   = MAX(100, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelHeightKey]);
+		_panelPosition = IsPanelPosition(placement) ? placement : kTerminalPanelPositionBottom;
+		_panelWidth    = MAX(kMinimumPanelWidth, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelWidthKey]);
+		_panelHeight   = MAX(kMinimumPanelHeight, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelHeightKey]);
 		_splitView = [[TerminalPanelSplitView alloc] initWithFrame:NSZeroRect];
 		_splitView.dividerStyle = NSSplitViewDividerStyleThin;
 		_splitView.delegate = self;
@@ -246,7 +261,7 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 
 - (void)setPanelPosition:(NSString*)position
 {
-	if(![@[ @"left", @"right", @"bottom" ] containsObject:position] || [_panelPosition isEqualToString:position])
+	if(!IsPanelPosition(position) || [_panelPosition isEqualToString:position])
 		return;
 	_panelPosition = [position copy];
 	[self rebuildLayout];
@@ -254,13 +269,13 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 
 - (void)setPanelWidth:(CGFloat)width
 {
-	_panelWidth = isfinite(width) ? MAX(120, width) : 320;
+	_panelWidth = isfinite(width) ? MAX(kMinimumPanelWidth, width) : kDefaultPanelWidth;
 	[self layoutPanels];
 }
 
 - (void)setPanelHeight:(CGFloat)height
 {
-	_panelHeight = isfinite(height) ? MAX(100, height) : 220;
+	_panelHeight = isfinite(height) ? MAX(kMinimumPanelHeight, height) : kDefaultPanelHeight;
 	[self layoutPanels];
 }
 
@@ -274,11 +289,11 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 	_adjustingLayout = YES;
 	[_contentView removeFromSuperview];
 	[_panelView removeFromSuperview];
-	_splitView.vertical = ![_panelPosition isEqualToString:@"bottom"];
-	if(_panelVisible && [_panelPosition isEqualToString:@"left"])
+	_splitView.vertical = ![_panelPosition isEqualToString:kTerminalPanelPositionBottom];
+	if(_panelVisible && [_panelPosition isEqualToString:kTerminalPanelPositionLeft])
 		[_splitView addSubview:_panelView];
 	[_splitView addSubview:_contentView];
-	if(_panelVisible && ![_panelPosition isEqualToString:@"left"])
+	if(_panelVisible && ![_panelPosition isEqualToString:kTerminalPanelPositionLeft])
 		[_splitView addSubview:_panelView];
 	_adjustingLayout = NO;
 	[self layoutPanels];
@@ -307,9 +322,9 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 		BOOL vertical = _splitView.isVertical;
 		CGFloat available = MAX(0, (vertical ? NSWidth(bounds) : NSHeight(bounds)) - _splitView.dividerThickness);
 		// Preserve the preferred size when a small window temporarily compresses the panel.
-		CGFloat contentMinimum = vertical ? MAX(240, minimum.width) : MAX(120, minimum.height);
+		CGFloat contentMinimum = vertical ? MAX(kMinimumContentWidth, minimum.width) : MAX(kMinimumContentHeight, minimum.height);
 		CGFloat size = MIN(vertical ? _panelWidth : _panelHeight, MAX(0, available - contentMinimum));
-		CGFloat firstSize = [_panelPosition isEqualToString:@"left"] ? size : available - size;
+		CGFloat firstSize = [_panelPosition isEqualToString:kTerminalPanelPositionLeft] ? size : available - size;
 		NSRect first = bounds, second = bounds;
 		if(vertical)
 		{
@@ -337,11 +352,11 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 - (CGFloat)splitView:(NSSplitView*)splitView constrainSplitPosition:(CGFloat)position ofSubviewAt:(NSInteger)index
 {
 	CGFloat available = MAX(0, (splitView.isVertical ? NSWidth(splitView.bounds) : NSHeight(splitView.bounds)) - splitView.dividerThickness);
-	CGFloat panelMinimum = MIN(splitView.isVertical ? 120 : 100, available / 2);
+	CGFloat panelMinimum = MIN(splitView.isVertical ? kMinimumPanelWidth : kMinimumPanelHeight, available / 2);
 	NSSize minimum = _contentView.fittingSize;
-	CGFloat contentMinimum = MIN(splitView.isVertical ? MAX(240, minimum.width) : MAX(120, minimum.height), available);
+	CGFloat contentMinimum = MIN(splitView.isVertical ? MAX(kMinimumContentWidth, minimum.width) : MAX(kMinimumContentHeight, minimum.height), available);
 	panelMinimum = MIN(panelMinimum, MAX(0, available - contentMinimum));
-	BOOL panelFirst = [_panelPosition isEqualToString:@"left"];
+	BOOL panelFirst = [_panelPosition isEqualToString:kTerminalPanelPositionLeft];
 	return MAX(panelFirst ? panelMinimum : contentMinimum, MIN(position, available - (panelFirst ? contentMinimum : panelMinimum)));
 }
 

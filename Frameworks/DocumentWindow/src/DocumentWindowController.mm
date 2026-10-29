@@ -1996,8 +1996,9 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	if(!self.terminalPanelController.hasTerminal) // nothing to theme until the shell has been started once
 		return;
 	NSFont* font = self.textView.font;
-	if(font)
-		[self.terminalPanelController applyTerminalFont:[NSFont fontWithDescriptor:font.fontDescriptor size:font.pointSize * self.textView.fontScaleFactor]];
+	// fontWithDescriptor:size: is nullable, and the Swift side takes a non-optional font.
+	if(NSFont* terminalFont = font ? [NSFont fontWithDescriptor:font.fontDescriptor size:font.pointSize * self.textView.fontScaleFactor] : nil)
+		[self.terminalPanelController applyTerminalFont:terminalFont];
 	if(!self.selectedDocument.fileType) // styles_for_scope ASSERTs on an empty scope
 		return;
 	if(theme_ptr theme = self.textView.theme)

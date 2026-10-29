@@ -8,6 +8,7 @@
 #import <BundleEditor/BundleEditor.h>
 #import <BundlesManager/BundlesManager.h>
 #import <DocumentWindow/DocumentWindowController.h>
+#import <DocumentWindow/TerminalPanelViewController.h>
 #import <Find/Find.h>
 #import <CommitWindow/CommitWindow.h>
 #import <OakAppKit/NSAlert Additions.h>
@@ -244,9 +245,9 @@ BOOL HasDocumentWindow (NSArray* windows)
 				{ @"Show File Browser",      @selector(toggleFileBrowser:),    @"d", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
 				{ @"Show Terminal Panel",    @selector(toggleTerminalPanel:),  @"`", .modifierFlags = NSEventModifierFlagControl },
 				{ @"Terminal Panel Position", .submenu = {
-					{ @"Left", @selector(takeTerminalPanelPositionFrom:), .representedObject = @"left" },
-					{ @"Right", @selector(takeTerminalPanelPositionFrom:), .representedObject = @"right" },
-					{ @"Bottom", @selector(takeTerminalPanelPositionFrom:), .representedObject = @"bottom" },
+					{ @"Left", @selector(takeTerminalPanelPositionFrom:), .representedObject = kTerminalPanelPositionLeft },
+					{ @"Right", @selector(takeTerminalPanelPositionFrom:), .representedObject = kTerminalPanelPositionRight },
+					{ @"Bottom", @selector(takeTerminalPanelPositionFrom:), .representedObject = kTerminalPanelPositionBottom },
 				} },
 				{ @"Show HTML Output",       @selector(toggleHTMLOutput:),     @"h", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption|NSEventModifierFlagControl },
 				{ @"Show Line Numbers",      @selector(toggleLineNumbers:),    @"l", .modifierFlags = NSEventModifierFlagCommand|NSEventModifierFlagOption },

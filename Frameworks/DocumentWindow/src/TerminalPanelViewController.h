@@ -3,6 +3,11 @@
 // Last-used panel edge, seeding new windows like the file browser's placement/width.
 extern NSString* const kUserDefaultsTerminalPanelPlacementKey;
 
+// Values of panelPosition and of the saved placement.
+extern NSString* const kTerminalPanelPositionLeft;
+extern NSString* const kTerminalPanelPositionRight;
+extern NSString* const kTerminalPanelPositionBottom;
+
 // Hosts the existing project layout alongside an independently docked terminal panel.
 @interface TerminalPanelViewController : NSViewController
 @property (nonatomic) BOOL panelVisible;

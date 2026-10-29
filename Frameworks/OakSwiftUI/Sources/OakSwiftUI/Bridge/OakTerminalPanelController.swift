@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import os
 import SwiftTerm
 
 // Keep the terminal's grid valid even when the outer panel is temporarily compressed to zero.
@@ -12,7 +13,8 @@ private final class TerminalContainer: NSView {
     weak var controller: OakTerminalPanelController?
     override func layout() {
         super.layout()
-        let barHeight: CGFloat = min(23, bounds.height)
+        // The container sets the bar's frame, so its height comes from what the bar asks for.
+        let barHeight = min(max(0, tabBar?.intrinsicContentSize.height ?? 0), bounds.height)
         tabBar?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: barHeight)
         emptyLabel.frame = NSRect(x: 8, y: barHeight + max(0, (bounds.height - barHeight) / 2 - 10), width: max(0, bounds.width - 16), height: 20)
         let padding: CGFloat = 6
@@ -56,6 +58,7 @@ private final class TerminalContainer: NSView {
     private var sessions: [Session] = []
     private var selectedID: Int?
     private var nextID = 1
+    private static func defaultTitle(forID id: Int) -> String { "Terminal \(id)" }
     var terminal: LocalProcessTerminalView? { sessions.first { $0.id == selectedID }?.terminal }
     var sessionCount: Int { sessions.count }
     @objc public var sessionIdentifiers: [UUID] { sessions.map(\.uuid) }
@@ -191,15 +194,22 @@ private final class TerminalContainer: NSView {
         let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
         terminal.owner = self
         terminal.launchDirectory = launchDirectory
+        // SwiftTerm calls the handler on its IO thread once per output batch; one main-queue hop is enough for a burst.
+        let hopPending = OSAllocatedUnfairLock(initialState: false)
         terminal.setProcessOutputHandler { [weak terminal] in
-            DispatchQueue.main.async { terminal?.scheduleOutputCapture() }
+            guard !hopPending.withLock({ pending in defer { pending = true }; return pending }) else { return }
+            DispatchQueue.main.async {
+                // Cleared before scheduling, so a batch that lands during the capture queues another hop.
+                hopPending.withLock { $0 = false }
+                terminal?.scheduleOutputCapture()
+            }
         }
         terminal.font = terminalFont
         terminal.processDelegate = self
         terminal.setAccessibilityLabel("Terminal")
         let id = nextID
         nextID += 1
-        sessions.append(Session(id: id, uuid: UUID(), terminal: terminal, title: "Terminal \(id)"))
+        sessions.append(Session(id: id, uuid: UUID(), terminal: terminal, title: Self.defaultTitle(forID: id)))
         updateTerminalColors()
         selectSession(id: id)
 
@@ -326,7 +336,7 @@ private final class TerminalContainer: NSView {
     public func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         guard let index = sessions.firstIndex(where: { $0.terminal === source }) else { return }
         let title = title.components(separatedBy: .controlCharacters).joined().trimmingCharacters(in: .whitespacesAndNewlines)
-        sessions[index].title = title.isEmpty ? "Terminal \(sessions[index].id)" : String(title.prefix(120))
+        sessions[index].title = title.isEmpty ? Self.defaultTitle(forID: sessions[index].id) : String(title.prefix(120))
         rebuildTabs()
     }
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
