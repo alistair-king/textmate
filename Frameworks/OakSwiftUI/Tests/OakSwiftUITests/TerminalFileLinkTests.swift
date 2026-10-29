@@ -47,8 +47,9 @@ import Testing
         if terminal.terminalContentSnapshot(region: .viewport)?.rows.first?.text.contains("main.swift") == true { break }
         try await Task.sleep(for: .milliseconds(10))
     }
-    terminal.recordOutputDirectories()
+    terminal.noteDirectoryIfChanged()
     terminal.reportedDirectory = other.path
+    terminal.noteDirectoryIfChanged()
     let size = terminal.getWindowSize()
     let scale = window.backingScaleFactor
     let cellWidth = CGFloat(size.ws_xpixel) / CGFloat(size.ws_col) / scale
@@ -140,4 +141,26 @@ import Testing
 @Test func terminalOptsOutOfEditorKeyEquivalents() {
     let terminal = FileLinkTerminalView(frame: .zero)
     #expect(terminal.responds(to: NSSelectorFromString("oak_ownsKeyEquivalents")))
+}
+
+@MainActor
+@Test func directoryMarkersRecordOnlyChanges() async throws {
+    let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+    terminal.launchDirectory = "/a"
+    let columns = terminal.terminalDimensions.cols
+    terminal.feed(text: "one\r\ntwo\r\n")
+    terminal.noteDirectoryIfChanged()
+    terminal.noteDirectoryIfChanged()
+    #expect(terminal.recordedDirectory(forRow: 0, columns: columns) == "/a")
+
+    terminal.reportedDirectory = "/b"
+    terminal.feed(text: "three\r\n")
+    terminal.noteDirectoryIfChanged()
+    terminal.feed(text: "four\r\n")
+    terminal.noteDirectoryIfChanged() // unchanged: must not add a marker that would move the boundary
+    #expect(terminal.recordedDirectory(forRow: 1, columns: columns) == "/a")
+    #expect(terminal.recordedDirectory(forRow: 2, columns: columns) == "/a")
+    #expect(terminal.recordedDirectory(forRow: 3, columns: columns) == "/b")
+    #expect(terminal.recordedDirectory(forRow: 4, columns: columns) == "/b")
+    #expect(terminal.recordedDirectory(forRow: 0, columns: columns + 1) == nil) // resized since recording
 }

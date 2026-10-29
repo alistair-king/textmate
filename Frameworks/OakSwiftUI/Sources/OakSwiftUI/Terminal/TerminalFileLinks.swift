@@ -73,17 +73,27 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
     weak var owner: OakTerminalPanelController?
     var launchDirectory = NSHomeDirectory()
     var reportedDirectory: String?
-    private var rowDirectories: [Int: (text: String, directory: String)] = [:]
-    private var recordedColumns = 0
-    private var outputCapturePending = false
+    // Where the shell changed directory, by scroll-invariant row. Relative paths in older output resolve against
+    // the directory that was current when they were printed, which only changes at these points.
+    private var directoryMarkers: [(row: Int, directory: String)] = []
+    private var markerColumns = 0
+    private var directoryCheckPending = false
+    private var lastDirectoryCheck: TimeInterval = 0
 
     func scheduleOutputCapture() {
-        guard !outputCapturePending else { return }
-        outputCapturePending = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self else { return }
-            self.outputCapturePending = false
-            self.recordOutputDirectories()
+        hoverCache = nil
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastDirectoryCheck >= 0.05 {
+            lastDirectoryCheck = now
+            noteDirectoryIfChanged()
+        } else if !directoryCheckPending {
+            directoryCheckPending = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self else { return }
+                self.directoryCheckPending = false
+                self.lastDirectoryCheck = ProcessInfo.processInfo.systemUptime
+                self.noteDirectoryIfChanged()
+            }
         }
     }
     private var eventMonitor: Any?
@@ -93,7 +103,7 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
     private var handledNativeLink = false
     private var hoverCache: (cell: [Int], time: TimeInterval, hit: (reference: TerminalFileReference, rects: [NSRect])?)?
 
-    func clearFileLinkHistory() { rowDirectories.removeAll(); hoverCache = nil; clearHighlight() }
+    func clearFileLinkHistory() { directoryMarkers.removeAll(); hoverCache = nil; clearHighlight() }
 
     /// Looked up by selector in OakTextView.performKeyEquivalent: so editor bundle bindings skip the document while the terminal has focus.
     @objc func oak_ownsKeyEquivalents() -> Bool { true }
@@ -113,24 +123,30 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
         Self.processDirectory(pid: process.shellPid) ?? reportedDirectory ?? launchDirectory
     }
 
-    func recordOutputDirectories() {
-        guard let snapshot = terminalContentSnapshot(region: .history(maximumScrollbackRows: 300)), !snapshot.inputState.isAlternateBuffer else { return }
-        if recordedColumns != snapshot.inputState.dimensions.cols {
-            rowDirectories.removeAll() // Reflow changes the relationship between rows and output.
-            recordedColumns = snapshot.inputState.dimensions.cols
+    /// Cheap on every call: reading the shell directory is one syscall, and the screen is only touched when it changed.
+    func noteDirectoryIfChanged() {
+        if directoryMarkers.isEmpty {
+            directoryMarkers = [(Int.min, launchDirectory)]
+            markerColumns = terminalDimensions.cols
         }
         let directory = currentDirectory
-        for row in snapshot.rows where !row.text.isEmpty {
-            if rowDirectories[row.absoluteRow]?.text != row.text {
-                rowDirectories[row.absoluteRow] = (row.text, directory)
-            }
+        guard directory != directoryMarkers.last?.directory,
+              let snapshot = terminalContentSnapshot(region: .history(maximumScrollbackRows: -1)),
+              !snapshot.inputState.isAlternateBuffer else { return }
+        if markerColumns != snapshot.inputState.dimensions.cols {
+            // Reflow changed which rows hold which output, so older markers no longer apply.
+            directoryMarkers = [(Int.min, directory)]
+            markerColumns = snapshot.inputState.dimensions.cols
+            return
         }
-        hoverCache = nil
-        // Pruning sorts every key, so let the table overshoot rather than sort on each capture.
-        if rowDirectories.count > 12000 {
-            let oldest = rowDirectories.keys.sorted().prefix(rowDirectories.count - 10000)
-            for key in oldest { rowDirectories.removeValue(forKey: key) }
-        }
+        directoryMarkers.append((snapshot.cursorRow, directory))
+        if directoryMarkers.count > 500 { directoryMarkers.removeFirst(250) }
+    }
+
+    /// The directory current when `row` was printed, or nil when that is unknown (no change recorded, or the terminal was resized since).
+    func recordedDirectory(forRow row: Int, columns: Int) -> String? {
+        guard columns == markerColumns else { return nil }
+        return directoryMarkers.last { $0.row <= row }?.directory
     }
 
     override func viewDidMoveToWindow() {
@@ -212,8 +228,7 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
         }
         guard let clickedOffset else { return nil }
         let row = snapshot.rows[first]
-        let recorded = rowDirectories[row.absoluteRow]
-        let directory = recorded?.text == row.text ? recorded!.directory : currentDirectory
+        let directory = recordedDirectory(forRow: row.absoluteRow, columns: snapshot.inputState.dimensions.cols) ?? currentDirectory
         guard let match = TerminalFileReference.matches(in: text, directory: directory).first(where: { NSLocationInRange(clickedOffset, $0.0) }) else { return nil }
         return (match.1, cells.filter { NSIntersectionRange($0.range, match.0).length > 0 }.map(\.rect))
     }
