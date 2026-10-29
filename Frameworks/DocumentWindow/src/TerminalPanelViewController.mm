@@ -1,5 +1,6 @@
 #import "TerminalPanelViewController.h"
 #import "TerminalTabBarController.h"
+#import <OakAppKit/OakUIConstructionFunctions.h>
 #if HAVE_OAK_SWIFTUI
 	#import "OakSwiftUI-Swift.h"
 #endif
@@ -23,28 +24,95 @@ static BOOL IsPanelPosition (NSString* position)
 	return [@[ kTerminalPanelPositionLeft, kTerminalPanelPositionRight, kTerminalPanelPositionBottom ] containsObject:position];
 }
 
-@interface TerminalPanelSplitView : NSSplitView
-@property (nonatomic) BOOL trackingDivider;
-@property (nonatomic, copy) void (^didFinishTrackingDivider)(void);
+typedef NS_ENUM(NSInteger, TerminalDividerDrag) {
+	TerminalDividerDragBegan,
+	TerminalDividerDragMoved,
+	TerminalDividerDragEnded,
+};
+
+// Laid out entirely by Auto Layout, like ProjectLayoutView, so the content's own constraints reach the window instead of being pinned to a frame.
+@interface TerminalPanelLayoutView : NSView
+@property (nonatomic) NSView* divider; // nil while the panel is hidden
+@property (nonatomic) BOOL dividerAlongYAxis;
+@property (nonatomic, copy) void (^dividerDragHandler)(TerminalDividerDrag phase, NSSize offset);
+@property (nonatomic) BOOL mouseDownRecursionGuard;
 @end
 
-@implementation TerminalPanelSplitView
-- (void)mouseDown:(NSEvent*)event
+@implementation TerminalPanelLayoutView
+- (NSRect)dividerResizeRect
 {
-	self.trackingDivider = YES;
-	[super mouseDown:event];
-	self.trackingDivider = NO;
-	if(self.didFinishTrackingDivider)
-		self.didFinishTrackingDivider();
+	if(!_divider)
+		return NSZeroRect;
+	return _dividerAlongYAxis ? NSInsetRect(_divider.frame, -4, 0) : NSInsetRect(_divider.frame, 0, -4);
+}
+
+- (void)layout
+{
+	[super layout];
+	[self.window invalidateCursorRectsForView:self];
+}
+
+- (void)resetCursorRects
+{
+	[self addCursorRect:[self dividerResizeRect] cursor:_dividerAlongYAxis ? NSCursor.resizeLeftRightCursor : NSCursor.resizeUpDownCursor];
+}
+
+- (BOOL)mouseDownCanMoveWindow
+{
+	return NO;
+}
+
+- (NSView*)hitTest:(NSPoint)aPoint
+{
+	if(NSMouseInRect([self convertPoint:aPoint fromView:self.superview], [self dividerResizeRect], self.isFlipped))
+		return self;
+	return [super hitTest:aPoint];
+}
+
+- (void)mouseDown:(NSEvent*)anEvent
+{
+	NSPoint mouseDownPos = [self convertPoint:anEvent.locationInWindow fromView:nil];
+	if(_mouseDownRecursionGuard || anEvent.type != NSEventTypeLeftMouseDown || !NSMouseInRect(mouseDownPos, [self dividerResizeRect], self.isFlipped))
+		return [super mouseDown:anEvent];
+	_mouseDownRecursionGuard = YES;
+
+	NSEvent* mouseDownEvent = anEvent;
+	BOOL didDrag = NO;
+	_dividerDragHandler(TerminalDividerDragBegan, NSZeroSize);
+	while(anEvent.type != NSEventTypeLeftMouseUp)
+	{
+		anEvent = [NSApp nextEventMatchingMask:(NSEventMaskLeftMouseDragged|NSEventMaskLeftMouseDown|NSEventMaskLeftMouseUp) untilDate:NSDate.distantFuture inMode:NSEventTrackingRunLoopMode dequeue:YES];
+		if(anEvent.type != NSEventTypeLeftMouseDragged)
+			break;
+
+		NSPoint mouseCurrentPos = [self convertPoint:anEvent.locationInWindow fromView:nil];
+		if(!didDrag && hypot(mouseDownPos.x - mouseCurrentPos.x, mouseDownPos.y - mouseCurrentPos.y) < 2.5)
+			continue;
+
+		_dividerDragHandler(TerminalDividerDragMoved, NSMakeSize(mouseCurrentPos.x - mouseDownPos.x, mouseCurrentPos.y - mouseDownPos.y));
+		didDrag = YES;
+	}
+	_dividerDragHandler(TerminalDividerDragEnded, NSZeroSize);
+
+	if(!didDrag)
+	{
+		NSView* view = [super hitTest:[self.superview convertPoint:mouseDownEvent.locationInWindow fromView:nil]];
+		if(view && view != self)
+		{
+			[NSApp postEvent:anEvent atStart:NO];
+			[view mouseDown:mouseDownEvent];
+		}
+	}
+	_mouseDownRecursionGuard = NO;
 }
 @end
 
 #if HAVE_OAK_SWIFTUI
-@interface TerminalPanelViewController () <NSSplitViewDelegate, OakTerminalPanelControllerDelegate>
+@interface TerminalPanelViewController () <OakTerminalPanelControllerDelegate>
 #else
-@interface TerminalPanelViewController () <NSSplitViewDelegate>
+@interface TerminalPanelViewController ()
 #endif
-@property (nonatomic) TerminalPanelSplitView* splitView;
+@property (nonatomic) TerminalPanelLayoutView* layoutView;
 #if HAVE_OAK_SWIFTUI
 @property (nonatomic) OakTerminalPanelController* terminalController;
 @property (nonatomic) TerminalTabBarController* terminalTabBarController;
@@ -55,9 +123,9 @@ static BOOL IsPanelPosition (NSString* position)
 @property (nonatomic) NSFont* terminalFont;
 @property (nonatomic) NSView* contentView;
 @property (nonatomic) NSView* panelView;
-@property (nonatomic) BOOL adjustingLayout;
-@property (nonatomic) NSLayoutConstraint* minimumWidthConstraint;
-@property (nonatomic) NSLayoutConstraint* minimumHeightConstraint;
+@property (nonatomic) NSMutableArray<NSLayoutConstraint*>* layoutConstraints;
+@property (nonatomic) NSLayoutConstraint* panelSizeConstraint;
+@property (nonatomic) CGFloat dragInitialSize;
 @end
 
 @implementation TerminalPanelViewController
@@ -79,20 +147,13 @@ static BOOL IsPanelPosition (NSString* position)
 		_panelPosition = IsPanelPosition(placement) ? placement : kTerminalPanelPositionBottom;
 		_panelWidth    = MAX(kMinimumPanelWidth, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelWidthKey]);
 		_panelHeight   = MAX(kMinimumPanelHeight, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelHeightKey]);
-		_splitView = [[TerminalPanelSplitView alloc] initWithFrame:NSZeroRect];
-		_splitView.dividerStyle = NSSplitViewDividerStyleThin;
-		_splitView.delegate = self;
+		_layoutConstraints = [NSMutableArray array];
+		_layoutView = [[TerminalPanelLayoutView alloc] initWithFrame:NSZeroRect];
 		__weak TerminalPanelViewController* weakSelf = self;
-		_splitView.didFinishTrackingDivider = ^{
-			// Persist once per drag; the resize delegate fires for every pixel.
-			NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
-			[defaults setDouble:weakSelf.panelWidth forKey:kUserDefaultsTerminalPanelWidthKey];
-			[defaults setDouble:weakSelf.panelHeight forKey:kUserDefaultsTerminalPanelHeightKey];
+		_layoutView.dividerDragHandler = ^(TerminalDividerDrag phase, NSSize offset){
+			[weakSelf dragDivider:phase offset:offset];
 		};
-		self.view = _splitView;
-		_minimumWidthConstraint = [_splitView.widthAnchor constraintGreaterThanOrEqualToConstant:0];
-		_minimumHeightConstraint = [_splitView.heightAnchor constraintGreaterThanOrEqualToConstant:0];
-		[NSLayoutConstraint activateConstraints:@[ _minimumWidthConstraint, _minimumHeightConstraint ]];
+		self.view = _layoutView;
 
 		NSBox* panel = [[NSBox alloc] initWithFrame:NSZeroRect];
 		panel.boxType = NSBoxCustom;
@@ -270,108 +331,118 @@ static BOOL IsPanelPosition (NSString* position)
 - (void)setPanelWidth:(CGFloat)width
 {
 	_panelWidth = isfinite(width) ? MAX(kMinimumPanelWidth, width) : kDefaultPanelWidth;
-	[self layoutPanels];
+	if(_panelVisible && ![_panelPosition isEqualToString:kTerminalPanelPositionBottom])
+		_panelSizeConstraint.constant = _panelWidth;
 }
 
 - (void)setPanelHeight:(CGFloat)height
 {
 	_panelHeight = isfinite(height) ? MAX(kMinimumPanelHeight, height) : kDefaultPanelHeight;
-	[self layoutPanels];
+	if(_panelVisible && [_panelPosition isEqualToString:kTerminalPanelPositionBottom])
+		_panelSizeConstraint.constant = _panelHeight;
 }
+
+#ifndef CONSTRAINT
+#define CONSTRAINT(str) [_layoutConstraints addObjectsFromArray:[NSLayoutConstraint constraintsWithVisualFormat:str options:0 metrics:nil views:views]]
+#endif
 
 - (void)rebuildLayout
 {
-	NSWindow* window = _splitView.window;
+	NSWindow* window = _layoutView.window;
 	NSResponder* responder = window.firstResponder;
 	BOOL restoreFocus = [responder isKindOfClass:NSView.class] &&
 		([(NSView*)responder isDescendantOf:_contentView] ||
 		 (_panelVisible && [(NSView*)responder isDescendantOf:_panelView]));
-	_adjustingLayout = YES;
+
+	[NSLayoutConstraint deactivateConstraints:_layoutConstraints];
+	[_layoutConstraints removeAllObjects];
 	[_contentView removeFromSuperview];
 	[_panelView removeFromSuperview];
-	_splitView.vertical = ![_panelPosition isEqualToString:kTerminalPanelPositionBottom];
-	if(_panelVisible && [_panelPosition isEqualToString:kTerminalPanelPositionLeft])
-		[_splitView addSubview:_panelView];
-	[_splitView addSubview:_contentView];
-	if(_panelVisible && ![_panelPosition isEqualToString:kTerminalPanelPositionLeft])
-		[_splitView addSubview:_panelView];
-	_adjustingLayout = NO;
-	[self layoutPanels];
+	[_layoutView.divider removeFromSuperview];
+
+	BOOL bottom = [_panelPosition isEqualToString:kTerminalPanelPositionBottom];
+	_layoutView.dividerAlongYAxis = !bottom;
+	_layoutView.divider = _panelVisible ? OakCreateNSBoxSeparator() : nil;
+	OakAddAutoLayoutViewsToSuperview(@[ _contentView ], _layoutView);
+	if(_panelVisible)
+		OakAddAutoLayoutViewsToSuperview(@[ _panelView, _layoutView.divider ], _layoutView);
+
+	NSDictionary* views = @{
+		@"content": _contentView,
+		@"panel":   _panelView,
+		@"divider": _layoutView.divider ?: NSNull.null,
+	};
+
+	if(!_panelVisible)
+	{
+		CONSTRAINT(@"H:|[content]|");
+		CONSTRAINT(@"V:|[content]|");
+		_panelSizeConstraint = nil;
+	}
+	else
+	{
+		if(bottom)
+		{
+			CONSTRAINT(@"V:|[content][divider(==1)][panel]|");
+			for(NSString* view in @[ @"content", @"divider", @"panel" ])
+				CONSTRAINT(([NSString stringWithFormat:@"H:|[%@]|", view]));
+		}
+		else
+		{
+			if([_panelPosition isEqualToString:kTerminalPanelPositionLeft])
+					CONSTRAINT(@"H:|[panel][divider(==1)][content]|");
+			else	CONSTRAINT(@"H:|[content][divider(==1)][panel]|");
+			for(NSString* view in @[ @"content", @"divider", @"panel" ])
+				CONSTRAINT(([NSString stringWithFormat:@"V:|[%@]|", view]));
+		}
+
+		// Below the window's stay-put priority: a smaller window compresses the panel first, and it regains its preferred size when the window grows.
+		_panelSizeConstraint = bottom ? [_panelView.heightAnchor constraintEqualToConstant:_panelHeight] : [_panelView.widthAnchor constraintEqualToConstant:_panelWidth];
+		_panelSizeConstraint.priority = NSLayoutPriorityDragThatCannotResizeWindow-1;
+		[_layoutConstraints addObject:_panelSizeConstraint];
+
+		NSLayoutConstraint* contentMinimum = bottom ? [_contentView.heightAnchor constraintGreaterThanOrEqualToConstant:kMinimumContentHeight] : [_contentView.widthAnchor constraintGreaterThanOrEqualToConstant:kMinimumContentWidth];
+		contentMinimum.priority = NSLayoutPriorityDragThatCannotResizeWindow;
+		[_layoutConstraints addObject:contentMinimum];
+	}
+
+	[NSLayoutConstraint activateConstraints:_layoutConstraints];
+	[window invalidateCursorRectsForView:_layoutView];
 	if(restoreFocus)
 		[window makeFirstResponder:responder];
 }
 
-- (void)layoutPanels
+#undef CONSTRAINT
+
+- (void)dragDivider:(TerminalDividerDrag)phase offset:(NSSize)offset
 {
-	if(_adjustingLayout)
-		return;
-	_adjustingLayout = YES;
-	NSSize minimum = _contentView.fittingSize;
-	CGFloat divider = _panelVisible ? _splitView.dividerThickness : 0;
-	// Expose the existing layout's required minimum to the window's layout engine.
-	_minimumWidthConstraint.constant = minimum.width + (_splitView.isVertical ? divider : 0);
-	_minimumHeightConstraint.constant = minimum.height + (_splitView.isVertical ? 0 : divider);
-	NSRect bounds = _splitView.bounds;
-	// A resize can reach this delegate before Auto Layout applies the new minimum.
-	bounds.size.width = MAX(bounds.size.width, _minimumWidthConstraint.constant);
-	bounds.size.height = MAX(bounds.size.height, _minimumHeightConstraint.constant);
 	if(!_panelVisible)
-		_contentView.frame = bounds;
-	else
+		return;
+
+	BOOL bottom = [_panelPosition isEqualToString:kTerminalPanelPositionBottom];
+	if(phase == TerminalDividerDragBegan)
 	{
-		BOOL vertical = _splitView.isVertical;
-		CGFloat available = MAX(0, (vertical ? NSWidth(bounds) : NSHeight(bounds)) - _splitView.dividerThickness);
-		// Preserve the preferred size when a small window temporarily compresses the panel.
-		CGFloat contentMinimum = vertical ? MAX(kMinimumContentWidth, minimum.width) : MAX(kMinimumContentHeight, minimum.height);
-		CGFloat size = MIN(vertical ? _panelWidth : _panelHeight, MAX(0, available - contentMinimum));
-		CGFloat firstSize = [_panelPosition isEqualToString:kTerminalPanelPositionLeft] ? size : available - size;
-		NSRect first = bounds, second = bounds;
-		if(vertical)
-		{
-			first.size.width = firstSize;
-			second.origin.x += firstSize + _splitView.dividerThickness;
-			second.size.width = available - firstSize;
-		}
-		else
-		{
-			first.size.height = firstSize;
-			second.origin.y += firstSize + _splitView.dividerThickness;
-			second.size.height = available - firstSize;
-		}
-		_splitView.subviews[0].frame = first;
-		_splitView.subviews[1].frame = second;
+		_dragInitialSize = bottom ? NSHeight(_panelView.frame) : NSWidth(_panelView.frame);
 	}
-	_adjustingLayout = NO;
-}
-
-- (void)splitView:(NSSplitView*)splitView resizeSubviewsWithOldSize:(NSSize)oldSize
-{
-	[self layoutPanels];
-}
-
-- (CGFloat)splitView:(NSSplitView*)splitView constrainSplitPosition:(CGFloat)position ofSubviewAt:(NSInteger)index
-{
-	CGFloat available = MAX(0, (splitView.isVertical ? NSWidth(splitView.bounds) : NSHeight(splitView.bounds)) - splitView.dividerThickness);
-	CGFloat panelMinimum = MIN(splitView.isVertical ? kMinimumPanelWidth : kMinimumPanelHeight, available / 2);
-	NSSize minimum = _contentView.fittingSize;
-	CGFloat contentMinimum = MIN(splitView.isVertical ? MAX(kMinimumContentWidth, minimum.width) : MAX(kMinimumContentHeight, minimum.height), available);
-	panelMinimum = MIN(panelMinimum, MAX(0, available - contentMinimum));
-	BOOL panelFirst = [_panelPosition isEqualToString:kTerminalPanelPositionLeft];
-	return MAX(panelFirst ? panelMinimum : contentMinimum, MIN(position, available - (panelFirst ? contentMinimum : panelMinimum)));
-}
-
-- (void)splitViewDidResizeSubviews:(NSNotification*)notification
-{
-	if(!_adjustingLayout && _panelVisible && _splitView.trackingDivider)
+	else if(phase == TerminalDividerDragMoved)
 	{
-		if(_splitView.isVertical)
-		{
-			_panelWidth = NSWidth(_panelView.frame);
-		}
-		else
-		{
-			_panelHeight = NSHeight(_panelView.frame);
-		}
+		CGFloat delta = bottom ? offset.height : ([_panelPosition isEqualToString:kTerminalPanelPositionLeft] ? offset.width : -offset.width);
+		CGFloat available = MAX(0, (bottom ? NSHeight(_layoutView.bounds) : NSWidth(_layoutView.bounds)) - 1);
+		NSSize fitting = _contentView.fittingSize;
+		CGFloat maximum = MAX(0, available - (bottom ? MAX(kMinimumContentHeight, fitting.height) : MAX(kMinimumContentWidth, fitting.width)));
+		CGFloat minimum = MIN(bottom ? kMinimumPanelHeight : kMinimumPanelWidth, maximum);
+		CGFloat size = round(MAX(minimum, MIN(_dragInitialSize + delta, maximum)));
+		if(bottom)
+				_panelHeight = size;
+		else	_panelWidth = size;
+		_panelSizeConstraint.constant = size;
+	}
+	else if(phase == TerminalDividerDragEnded)
+	{
+		// Persist once per drag rather than for every pixel moved.
+		NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+		[defaults setDouble:_panelWidth forKey:kUserDefaultsTerminalPanelWidthKey];
+		[defaults setDouble:_panelHeight forKey:kUserDefaultsTerminalPanelHeightKey];
 	}
 }
 @end

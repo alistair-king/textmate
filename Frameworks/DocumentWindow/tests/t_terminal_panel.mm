@@ -11,46 +11,100 @@ static TerminalPanelViewController* MakePanel (NSView* content)
 	return res;
 }
 
+static NSWindow* MakeHostWindow (TerminalPanelViewController* controller)
+{
+	NSWindow* res = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1000, 700) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+	res.releasedWhenClosed = NO;
+	NSView* view = controller.view;
+	view.translatesAutoresizingMaskIntoConstraints = NO;
+	[res.contentView addSubview:view];
+	[NSLayoutConstraint activateConstraints:@[
+		[view.leftAnchor constraintEqualToAnchor:res.contentView.leftAnchor], [view.rightAnchor constraintEqualToAnchor:res.contentView.rightAnchor],
+		[view.topAnchor constraintEqualToAnchor:res.contentView.topAnchor], [view.bottomAnchor constraintEqualToAnchor:res.contentView.bottomAnchor]
+	]];
+	return res;
+}
+
+static void LayOut (NSWindow* window, NSSize size)
+{
+	[window setContentSize:size];
+	[window.contentView layoutSubtreeIfNeeded];
+}
+
 void test_terminal_panel_layout ()
 {
 	dispatch_sync(dispatch_get_main_queue(), ^{
 		@autoreleasepool
 		{
+			[NSApplication sharedApplication];
 			NSView* content = [[NSView alloc] initWithFrame:NSZeroRect];
 			TerminalPanelViewController* controller = MakePanel(content);
 			// Exercise a fixed layout regardless of the default placement or saved sizes.
 			controller.panelPosition = @"right";
 			controller.panelWidth = 320;
 			controller.panelHeight = 220;
-			NSSplitView* split = (NSSplitView*)controller.view;
-			split.frame = NSMakeRect(0, 0, 1000, 700);
-			[split adjustSubviews];
-			OAK_ASSERT(split.subviews.count == 1 && NSWidth(content.frame) == 1000);
+			NSWindow* window = MakeHostWindow(controller);
+			NSView* (^panel)() = ^{ return (NSView*)[controller valueForKey:@"panelView"]; };
+
+			LayOut(window, NSMakeSize(1000, 700));
+			OAK_ASSERT(!panel().superview && NSWidth(content.frame) == 1000);
 			controller.panelVisible = YES;
-			OAK_ASSERT(split.subviews.count == 2 && split.subviews[0] == content);
-			OAK_ASSERT(NSWidth(split.subviews[1].frame) == 320);
+			LayOut(window, NSMakeSize(1000, 700));
+			OAK_ASSERT(NSWidth(panel().frame) == 320 && NSMinX(panel().frame) > NSMaxX(content.frame));
 			controller.panelPosition = @"left";
-			OAK_ASSERT(split.subviews[1] == content && NSMinX(content.frame) > 0);
+			LayOut(window, NSMakeSize(1000, 700));
+			OAK_ASSERT(NSMinX(content.frame) > NSMaxX(panel().frame) && NSWidth(panel().frame) == 320);
 			controller.panelPosition = @"bottom";
-			OAK_ASSERT(!split.isVertical && split.subviews[0] == content);
-			OAK_ASSERT(NSHeight(split.subviews[1].frame) == 220);
+			LayOut(window, NSMakeSize(1000, 700));
+			OAK_ASSERT(NSWidth(content.frame) == 1000 && NSHeight(panel().frame) == 220);
+			OAK_ASSERT(NSMinY(content.frame) > NSMaxY(panel().frame)); // not flipped: the panel is below
 			controller.panelHeight = 260;
 			controller.panelPosition = @"right";
 			controller.panelWidth = 380;
-			split.frame = NSMakeRect(0, 0, 400, 300);
-			[split adjustSubviews];
+			LayOut(window, NSMakeSize(400, 300));
 			OAK_ASSERT(NSWidth(content.frame) >= 240);
 			OAK_ASSERT(controller.panelWidth == 380);
-			split.frame = NSMakeRect(0, 0, 1000, 700);
-			[split adjustSubviews];
-			OAK_ASSERT(NSWidth(split.subviews[1].frame) == 380);
+			LayOut(window, NSMakeSize(1000, 700));
+			OAK_ASSERT(NSWidth(panel().frame) == 380);
 			controller.panelVisible = NO;
-			OAK_ASSERT(split.subviews.count == 1 && NSWidth(content.frame) == 1000);
+			LayOut(window, NSMakeSize(1000, 700));
+			OAK_ASSERT(!panel().superview && NSWidth(content.frame) == 1000);
 			controller.panelVisible = YES;
 			controller.panelPosition = @"bottom";
-			OAK_ASSERT(NSHeight(split.subviews[1].frame) == 260);
+			LayOut(window, NSMakeSize(1000, 700));
+			OAK_ASSERT(NSHeight(panel().frame) == 260);
 			controller.panelPosition = @"invalid";
 			OAK_ASSERT([controller.panelPosition isEqualToString:@"bottom"]);
+		}
+	});
+}
+
+// Content constraints can change before the window's first layout pass (a project window enables its file browser on creation); the content must not be pinned to a frame then.
+void test_terminal_panel_content_is_not_frame_pinned ()
+{
+	dispatch_sync(dispatch_get_main_queue(), ^{
+		@autoreleasepool
+		{
+			[NSApplication sharedApplication];
+			NSView* content = [[NSView alloc] initWithFrame:NSZeroRect];
+			TerminalPanelViewController* controller = MakePanel(content);
+			NSWindow* window = MakeHostWindow(controller);
+			NSView* child = [[NSView alloc] initWithFrame:NSZeroRect];
+			child.translatesAutoresizingMaskIntoConstraints = NO;
+			[content addSubview:child];
+			[NSLayoutConstraint activateConstraints:@[
+				[child.heightAnchor constraintGreaterThanOrEqualToConstant:400],
+				[child.topAnchor constraintEqualToAnchor:content.topAnchor], [child.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
+				[child.leftAnchor constraintEqualToAnchor:content.leftAnchor], [child.rightAnchor constraintEqualToAnchor:content.rightAnchor]
+			]];
+			for(NSLayoutConstraintOrientation orientation : { NSLayoutConstraintOrientationHorizontal, NSLayoutConstraintOrientationVertical })
+			{
+				for(NSLayoutConstraint* constraint in [content constraintsAffectingLayoutForOrientation:orientation])
+					OAK_ASSERT(![constraint isKindOfClass:NSClassFromString(@"NSAutoresizingMaskLayoutConstraint")] || (constraint.firstItem != content && constraint.secondItem != content));
+			}
+			[window setFrame:NSMakeRect(0, 0, 900, 600) display:NO];
+			[window.contentView layoutSubtreeIfNeeded];
+			OAK_ASSERT(NSHeight(content.frame) >= 400);
 		}
 	});
 }
@@ -71,15 +125,15 @@ void test_terminal_panel_constrained_resize ()
 				[child.topAnchor constraintEqualToAnchor:content.topAnchor], [child.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]
 			]];
 			TerminalPanelViewController* c = MakePanel(content);
-			NSSplitView* split = (NSSplitView*)c.view;
-			split.frame = NSMakeRect(0, 0, 1000, 700);
+			NSView* layout = c.view;
+			layout.frame = NSMakeRect(0, 0, 1000, 700);
 			NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1000, 700) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
 			window.releasedWhenClosed = NO;
-			split.translatesAutoresizingMaskIntoConstraints = NO;
-			[window.contentView addSubview:split];
+			layout.translatesAutoresizingMaskIntoConstraints = NO;
+			[window.contentView addSubview:layout];
 			[NSLayoutConstraint activateConstraints:@[
-				[split.leftAnchor constraintEqualToAnchor:window.contentView.leftAnchor], [split.rightAnchor constraintEqualToAnchor:window.contentView.rightAnchor],
-				[split.topAnchor constraintEqualToAnchor:window.contentView.topAnchor], [split.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor]
+				[layout.leftAnchor constraintEqualToAnchor:window.contentView.leftAnchor], [layout.rightAnchor constraintEqualToAnchor:window.contentView.rightAnchor],
+				[layout.topAnchor constraintEqualToAnchor:window.contentView.topAnchor], [layout.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor]
 			]];
 			c.panelVisible = YES;
 			c.terminalDirectoryProvider = ^{ return NSTemporaryDirectory(); };
@@ -106,7 +160,7 @@ void test_terminal_panel_constrained_resize ()
 				{
 					[window setContentSize:NSMakeSize(width, 300)];
 					[window.contentView layoutSubtreeIfNeeded];
-					[split layoutSubtreeIfNeeded];
+					[layout layoutSubtreeIfNeeded];
 					OAK_ASSERT(NSWidth(content.frame) >= 460);
 					OAK_ASSERT(NSHeight(content.frame) >= 180);
 				}

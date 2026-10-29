@@ -14,6 +14,8 @@ void test_window_without_documents_is_kept_for_file_browser_or_terminal ()
 
 			controller.fileBrowserVisible = YES;
 			OAK_ASSERT(controller.keepsWindowWithoutDocuments);
+			// Enabling the file browser in a window that was never laid out aborted when the project layout was pinned to a frame.
+			OAK_ASSERT(![[controller valueForKey:@"layoutView"] translatesAutoresizingMaskIntoConstraints]);
 			controller.fileBrowserVisible = NO;
 			OAK_ASSERT(!controller.keepsWindowWithoutDocuments);
 
