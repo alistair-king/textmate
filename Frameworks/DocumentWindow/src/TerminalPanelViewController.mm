@@ -24,13 +24,19 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 }
 @end
 
+#if HAVE_OAK_SWIFTUI
+@interface TerminalPanelViewController () <NSSplitViewDelegate, OakTerminalPanelControllerDelegate>
+#else
 @interface TerminalPanelViewController () <NSSplitViewDelegate>
+#endif
 @property (nonatomic) TerminalPanelSplitView* splitView;
 #if HAVE_OAK_SWIFTUI
 @property (nonatomic) OakTerminalPanelController* terminalController;
 @property (nonatomic) TerminalTabBarController* terminalTabBarController;
 #endif
-@property (nonatomic) NSArray<NSColor*>* terminalColors;
+#if HAVE_OAK_SWIFTUI
+@property (nonatomic) OakTerminalTheme* terminalTheme;
+#endif
 @property (nonatomic) NSFont* terminalFont;
 @property (nonatomic) NSView* contentView;
 @property (nonatomic) NSView* panelView;
@@ -96,28 +102,43 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 		_terminalTabBarController.detachSessionHandler = ^(NSUUID* identifier){
 			if(weakSelf.detachSessionHandler) weakSelf.detachSessionHandler(identifier);
 		};
-		_terminalController.lastSessionDidClose = ^{
-			if(weakSelf.lastSessionClosedHandler) weakSelf.lastSessionClosedHandler();
-		};
 		_terminalController.shellPath = self.terminalShellPath;
 		_terminalController.shellArguments = self.terminalShellArguments;
-		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
-		_terminalController.environmentProvider = ^NSDictionary<NSString*, NSString*>*(NSString* directory){
-			return weakSelf.terminalEnvironmentProvider ? weakSelf.terminalEnvironmentProvider(directory) : NSProcessInfo.processInfo.environment;
-		};
-		_terminalController.openFile = ^(NSURL* url, NSInteger line, NSInteger column){
-			if(weakSelf.openTerminalFile) weakSelf.openTerminalFile(url, line, column);
-		};
+		_terminalController.delegate = self;
 		[_panelView removeFromSuperview];
 		_panelView = _terminalController.view;
 		[self rebuildLayout];
 	}
 	if(_terminalFont)
 		[_terminalController applyFont:_terminalFont];
-	if(_terminalColors)
-		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3]];
+	if(_terminalTheme)
+		[_terminalController applyTheme:_terminalTheme];
 #endif
 }
+
+#if HAVE_OAK_SWIFTUI
+- (void)terminalPanel:(OakTerminalPanelController*)panel openFile:(NSURL*)url line:(NSInteger)line column:(NSInteger)column
+{
+	if(self.openTerminalFile)
+		self.openTerminalFile(url, line, column);
+}
+
+- (NSString*)terminalPanelWorkingDirectory:(OakTerminalPanelController*)panel
+{
+	return self.terminalDirectoryProvider ? self.terminalDirectoryProvider() : nil;
+}
+
+- (NSDictionary<NSString*, NSString*>*)terminalPanel:(OakTerminalPanelController*)panel environmentForDirectory:(NSString*)directory
+{
+	return self.terminalEnvironmentProvider ? self.terminalEnvironmentProvider(directory) : NSProcessInfo.processInfo.environment;
+}
+
+- (void)terminalPanelDidCloseLastSession:(OakTerminalPanelController*)panel
+{
+	if(self.lastSessionClosedHandler)
+		self.lastSessionClosedHandler();
+}
+#endif
 
 - (BOOL)hasTerminal
 {
@@ -169,9 +190,9 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection
 {
-	self.terminalColors = @[ background, foreground, caret, selection ];
 #if HAVE_OAK_SWIFTUI
-	[_terminalController applyThemeWithBackground:background foreground:foreground caret:caret selection:selection];
+	self.terminalTheme = [[OakTerminalTheme alloc] initWithBackground:background foreground:foreground caret:caret selection:selection];
+	[_terminalController applyTheme:self.terminalTheme];
 #endif
 }
 

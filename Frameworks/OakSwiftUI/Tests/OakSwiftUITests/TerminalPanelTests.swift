@@ -38,7 +38,7 @@ import Darwin
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
     let controller = makeTerminalController()
-    controller.applyTheme(background: .black, foreground: .white, caret: .green, selection: .blue)
+    controller.applyTheme(OakTerminalTheme(background: .black, foreground: .white, caret: .green, selection: .blue))
     controller.startSession(inDirectory: folder.path)
     defer { controller.stopSession() }
     let terminal = try #require(controller.terminal)
@@ -46,7 +46,7 @@ import Darwin
     #expect(terminal.nativeForegroundColor == .white)
     #expect(terminal.caretColor == .green)
     #expect(terminal.selectedTextBackgroundColor == .blue)
-    controller.applyTheme(background: .white, foreground: .black, caret: .red, selection: .yellow)
+    controller.applyTheme(OakTerminalTheme(background: .white, foreground: .black, caret: .red, selection: .yellow))
     #expect(terminal.nativeBackgroundColor == .white)
     #expect(terminal.nativeForegroundColor == .black)
     #expect(terminal.caretColor == .red)
@@ -142,7 +142,7 @@ import Darwin
     #expect(controller.terminal === first)
     controller.selectSession(id: 2)
     #expect(controller.terminal === second)
-    controller.applyTheme(background: .black, foreground: .green, caret: .white, selection: .blue)
+    controller.applyTheme(OakTerminalTheme(background: .black, foreground: .green, caret: .white, selection: .blue))
     #expect(first.nativeForegroundColor == .green)
     #expect(second.nativeForegroundColor == .green)
 
@@ -219,14 +219,15 @@ import Darwin
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
     defer { try? FileManager.default.removeItem(at: root) }
-    var projectFolder = firstFolder
+    let delegate = TerminalTestDelegate()
+    delegate.workingDirectory = firstFolder.path
     let controller = makeTerminalController()
-    controller.workingDirectoryProvider = { projectFolder.path }
+    controller.delegate = delegate
     // Simulate a panel initialized before its window acquired the project context.
     controller.startSession(inDirectory: FileManager.default.currentDirectoryPath)
     defer { controller.stopSession() }
     let first = try #require(controller.terminal)
-    projectFolder = secondFolder
+    delegate.workingDirectory = secondFolder.path
     controller.newTerminal()
     let second = try #require(controller.terminal)
     first.send(txt: "pwd > project-cwd.txt\n")
@@ -305,4 +306,15 @@ func makeTerminalController() -> OakTerminalPanelController {
     controller.shellPath = "/bin/sh"
     controller.shellArguments = []
     return controller
+}
+
+@MainActor
+final class TerminalTestDelegate: NSObject, OakTerminalPanelControllerDelegate {
+    var opened: (URL, Int, Int)?
+    var workingDirectory: String?
+    var lastSessionClosed = 0
+
+    func terminalPanel(_ panel: OakTerminalPanelController, openFile url: URL, line: Int, column: Int) { opened = (url, line, column) }
+    func terminalPanelWorkingDirectory(_ panel: OakTerminalPanelController) -> String? { workingDirectory }
+    func terminalPanelDidCloseLastSession(_ panel: OakTerminalPanelController) { lastSessionClosed += 1 }
 }

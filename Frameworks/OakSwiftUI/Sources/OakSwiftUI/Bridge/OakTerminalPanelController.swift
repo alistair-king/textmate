@@ -62,8 +62,7 @@ private final class TerminalContainer: NSView {
     @objc public var sessionTitles: [String] { sessions.map(\.title) }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
-    // Fires only when closing or exiting removes the final session, not on transfer or stopSession().
-    @objc public var lastSessionDidClose: (() -> Void)?
+    @objc public weak var delegate: OakTerminalPanelControllerDelegate?
 
     @objc public func installTabBar(_ tabBar: NSView) {
         guard let container = view as? TerminalContainer else { return }
@@ -116,13 +115,12 @@ private final class TerminalContainer: NSView {
             for session in closing { self.removeSession(id: session.id) }
         }
     }
-    @objc public var openFile: ((URL, Int, Int) -> Void)?
-    @objc public var workingDirectoryProvider: (() -> String)?
-    /// Base environment for a new shell started in the given directory. Without one the shell inherits the app's own environment.
+    func requestOpenFile(_ url: URL, line: Int, column: Int) {
+        delegate?.terminalPanel(self, openFile: url, line: line, column: column)
+    }
     /// Replaces the account's login shell; used by tests so they do not depend on the user's rc files.
     @objc public var shellPath: String?
     @objc public var shellArguments: [String]?
-    @objc public var environmentProvider: ((String) -> [String: String])?
     private var directory = NSHomeDirectory()
     private var terminalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
@@ -134,15 +132,15 @@ private final class TerminalContainer: NSView {
     }
 
     private var started = false
-    private var themeColors: (background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor)?
+    private var theme: OakTerminalTheme?
 
-    @objc public func applyTheme(background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor) {
-        themeColors = (background, foreground, caret, selection)
+    @objc public func applyTheme(_ theme: OakTerminalTheme) {
+        self.theme = theme
         updateTerminalColors()
     }
 
     private func updateTerminalColors() {
-        guard let colors = themeColors else { return }
+        guard let colors = theme else { return }
         if isViewLoaded {
             view.layer?.backgroundColor = colors.background.cgColor
             (view as? TerminalContainer)?.emptyLabel.textColor = colors.foreground
@@ -186,7 +184,7 @@ private final class TerminalContainer: NSView {
 
     private func launchShell() {
         _ = view
-        let requestedDirectory = workingDirectoryProvider?() ?? directory
+        let requestedDirectory = delegate?.terminalPanelWorkingDirectory?(self) ?? directory
         var isDirectory: ObjCBool = false
         let launchDirectory = FileManager.default.fileExists(atPath: requestedDirectory, isDirectory: &isDirectory) && isDirectory.boolValue ? requestedDirectory : NSHomeDirectory()
         let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
@@ -206,7 +204,7 @@ private final class TerminalContainer: NSView {
 
         let configuredShell = shellPath ?? getpwuid(getuid()).flatMap { $0.pointee.pw_shell }.map { String(cString: $0) } ?? "/bin/zsh"
         let shell = FileManager.default.isExecutableFile(atPath: configuredShell) ? configuredShell : "/bin/zsh"
-        var environment = environmentProvider?(launchDirectory) ?? ProcessInfo.processInfo.environment
+        var environment = delegate?.terminalPanel?(self, environmentForDirectory: launchDirectory) ?? ProcessInfo.processInfo.environment
         // A Dock or Finder launch has no locale; without one the shell runs in the C locale and mangles non-ASCII text.
         if environment["LC_ALL"] == nil && environment["LC_CTYPE"] == nil && environment["LANG"] == nil {
             environment["LC_CTYPE"] = "en_US.UTF-8"
@@ -320,7 +318,7 @@ private final class TerminalContainer: NSView {
         if wasSelected { selectedID = sessions.isEmpty ? nil : sessions[min(index, sessions.count - 1)].id }
         showSelectedSession()
         if wasSelected && hadFocus { focusTerminal() }
-        if sessions.isEmpty { lastSessionDidClose?() }
+        if sessions.isEmpty { delegate?.terminalPanelDidCloseLastSession?(self) }
     }
 
     public func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}

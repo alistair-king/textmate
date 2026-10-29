@@ -241,7 +241,7 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
     }
 
     private func openFile(_ reference: TerminalFileReference) {
-        owner?.openFile?(reference.url, reference.line ?? 0, reference.column ?? 0)
+        owner?.requestOpenFile(reference.url, line: reference.line ?? 0, column: reference.column ?? 0)
     }
 
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
