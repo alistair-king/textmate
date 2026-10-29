@@ -10,7 +10,6 @@ target_link_libraries(OakTextView PUBLIC
 
 # OakSwiftUI — include path for the generated Swift header
 if(OakSwiftUI_LIB)
-  target_include_directories(OakTextView PRIVATE
-    "${CMAKE_SOURCE_DIR}/Frameworks/OakSwiftUI/.build/arm64-apple-macosx/debug/OakSwiftUI.build/include")
+  target_include_directories(OakTextView PRIVATE "${OakSwiftUI_INCLUDE_DIR}")
   target_link_libraries(OakTextView PUBLIC ${OakSwiftUI_LIB})
 endif()

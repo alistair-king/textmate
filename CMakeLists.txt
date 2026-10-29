@@ -93,6 +93,19 @@ find_library(OakSwiftUI_LIB NAMES OakSwiftUI
   PATHS "${CMAKE_BINARY_DIR}/lib" NO_DEFAULT_PATH)
 if(OakSwiftUI_LIB)
   message(STATUS "Found OakSwiftUI: ${OakSwiftUI_LIB}")
+
+  # Frameworks/OakSwiftUI/build.sh only produces debug and release builds.
+  execute_process(COMMAND swift -print-target-info
+    OUTPUT_VARIABLE _swift_target_info OUTPUT_STRIP_TRAILING_WHITESPACE)
+  string(JSON _swift_triple GET "${_swift_target_info}" "target" "unversionedTriple")
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(_swift_config "release")
+  else()
+    set(_swift_config "debug")
+  endif()
+  # Directory holding the generated OakSwiftUI-Swift.h
+  set(OakSwiftUI_INCLUDE_DIR
+    "${CMAKE_SOURCE_DIR}/Frameworks/OakSwiftUI/.build/${_swift_triple}/${_swift_config}/OakSwiftUI.build/include")
 else()
   message(STATUS "OakSwiftUI not found — SwiftUI features disabled")
 endif()

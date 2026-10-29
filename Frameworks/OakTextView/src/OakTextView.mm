@@ -312,6 +312,11 @@ static std::string shell_quote (std::vector<std::string> paths)
 }
 @end
 
+// Adopted by first responders outside the editor (the embedded terminal) that handle their own key equivalents.
+@protocol OakKeyEquivalentOwner <NSObject>
+- (BOOL)oak_ownsKeyEquivalents;
+@end
+
 @implementation OakTextView
 // =================================
 // = OakTextView Delegate Wrappers =
@@ -1906,7 +1911,9 @@ static void update_menu_key_equivalents (NSMenu* menu, std::multimap<std::string
 	BOOL otherTextViewHasKey = [self.window.firstResponder isKindOfClass:[self class]];
 	BOOL recordingShortcut = [self.window.firstResponder isKindOfClass:NSClassFromString(@"OakKeyEquivalentView")];
 	BOOL noCommandFlag = (anEvent.modifierFlags & NSEventModifierFlagCommand) != NSEventModifierFlagCommand;
-	if(!hasKey && (otherTextViewHasKey || recordingShortcut || noCommandFlag))
+	// A responder that is not a text view but owns its key equivalents (the embedded terminal) must not have them run against this document.
+	BOOL foreignResponderOwnsKeys = [self.window.firstResponder respondsToSelector:@selector(oak_ownsKeyEquivalents)];
+	if(!hasKey && (otherTextViewHasKey || recordingShortcut || foreignResponderOwnsKeys || noCommandFlag))
 		return NO;
 
 	std::string const eventString = to_s(anEvent);
