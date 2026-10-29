@@ -63,6 +63,14 @@ Use [GitHub Issues](https://github.com/tectiv3/textmate/issues) for bug reports 
   <img src="docs/screenshots/copilot/copilot-menu.png" width="200" alt="Copilot Status Menu">
 </p>
 
+### Terminal
+
+<p align="center">
+  <img src="docs/screenshots/terminal.png" width="640" alt="Terminal Panel">
+</p>
+
+Every document window has its own terminal panel, shown here docked at the bottom with the tab bar of running shells. The panel takes the editor's font, zoom level and theme colours.
+
 # Building
 
 ## Requirements
@@ -364,6 +372,37 @@ formatOnSave = true
 ```
 
 The legacy `lspFormatOnSave` key still works for backward compatibility.
+
+## Terminal
+
+Each document window has an embedded terminal panel backed by [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm). Press **Control+`** to show or hide it (View → Show Terminal Panel). Pick the edge under View → Terminal Panel Position — left, right, or bottom (default). Drag the divider to resize; the placement and size are remembered and seed new windows.
+
+Showing the panel focuses the terminal, hiding it returns focus to the editor. Each window starts one login shell (your account's shell) in the project folder, falling back to the file browser root, the current document's folder, and then your home folder, with TextMate's environment plus the `.tm_properties` variables for that directory. Opening another document afterwards does not move a running shell.
+
+| Action | Key |
+|--------|-----|
+| Show/hide panel | **Control+`** |
+| New session | **+** in the tab bar, or double-click empty tab-bar space |
+| Next/previous session | **Cmd+Opt+→** / **Cmd+Opt+←** (terminal focused) |
+| Clear screen and scrollback | **Cmd+K** (terminal focused) |
+
+Sessions keep running while the panel is hidden or a tab is inactive, and tabs can be reordered by dragging. A session can be moved to its own window from the tab's context menu or by double-clicking the tab. Closing a window or quitting asks first when a session runs a foreground program. Sessions end when TextMate quits.
+
+### Opening Files From Output
+
+Hold **Command** to underline a file reference in the output, then **Command-click** to open it in the same window, jumping to the `line:column` when the reference has one. Absolute, `~/`, quoted, and `file://` paths are recognised; relative paths resolve against the shell's working directory, which is tracked per session including inside nested shells (`bash`, `nix-shell`).
+
+### Settings
+
+There is no preferences pane for the terminal; placement and size are stored in user defaults:
+
+| Default | Description |
+|---------|-------------|
+| `terminalPanelPlacement` | Panel edge: `left`, `right`, or `bottom` (default: `bottom`) |
+| `terminalPanelWidth` | Panel width in points when docked left or right (default: `320`) |
+| `terminalPanelHeight` | Panel height in points when docked at the bottom (default: `220`) |
+
+See [docs/embedded-terminal.md](docs/embedded-terminal.md) for the complete behaviour, including session detaching and multi-shell handling.
 
 # Legal
 
