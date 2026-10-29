@@ -12,7 +12,7 @@ Closing a window or quitting asks before ending a session that is running a fore
 
 ## Building
 
-SwiftTerm 1.99.1 is pinned in Frameworks/OakSwiftUI/Package.swift and Package.resolved. It requires Swift 6.2 or later. `make debug` (or `make release`) builds the Swift component before compiling the terminal bridge, and embeds and signs `libOakSwiftUI.dylib` in the application’s `Contents/Frameworks` directory. SwiftTerm is linked into that library. The application requires macOS 14 or later, matching the Swift package’s deployment target. The first build downloads Swift package dependencies. TerminalThirdPartyLicenses.txt is included in the application resources.
+SwiftTerm 1.99.1 is pinned in Frameworks/OakSwiftUI/Package.swift and Package.resolved. It requires Swift 6.2 or later. `make debug` (or `make release`) builds the Swift component before compiling the terminal bridge, and embeds and signs `libOakSwiftUI.dylib` in the application’s `Contents/Frameworks` directory. SwiftTerm is linked into that library. The application requires macOS 14 or later, matching the Swift package’s deployment target. The first build downloads Swift package dependencies. SwiftTerm ships a build-tool plugin, and `build.sh` passes `--disable-sandbox`, so that plugin runs unsandboxed at build time; the exact version pin in Package.swift and Package.resolved is what limits that exposure, so review the plugin before bumping it. TerminalThirdPartyLicenses.txt is included in the application resources.
 
 The terminal bridge is OakTerminalPanelController. TerminalPanelViewController owns the bridge independently of its position/visibility, and DocumentWindowController supplies the initial directory and handles close/quit checks.
 
