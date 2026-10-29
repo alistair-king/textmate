@@ -28,8 +28,10 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 @property (nonatomic) TerminalTabBarController* terminalTabBarController;
 #endif
 @property (nonatomic) NSArray<NSColor*>* terminalColors;
+@property (nonatomic) NSArray<NSColor*>* terminalSyntaxColors;
 @property (nonatomic) NSFont* terminalFont;
 @property (nonatomic) NSView* contentView;
+@property (nonatomic) NSView* contentContainer;
 @property (nonatomic) NSView* panelView;
 @property (nonatomic) BOOL adjustingLayout;
 @property (nonatomic) NSLayoutConstraint* minimumWidthConstraint;
@@ -51,6 +53,20 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	if(self = [super initWithNibName:nil bundle:nil])
 	{
 		_contentView = contentView;
+		_contentContainer = [[NSView alloc] initWithFrame:contentView.frame];
+		_contentView.translatesAutoresizingMaskIntoConstraints = NO;
+		[_contentContainer addSubview:_contentView];
+		// NSSplitView fixes its children's frames during a resize. Allow the
+		// project layout to grow inside that frame when restoration adds views
+		// before the split view's next sizing pass.
+		NSLayoutConstraint* width = [_contentView.widthAnchor constraintEqualToAnchor:_contentContainer.widthAnchor];
+		NSLayoutConstraint* height = [_contentView.heightAnchor constraintEqualToAnchor:_contentContainer.heightAnchor];
+		width.priority = height.priority = NSLayoutPriorityDefaultHigh;
+		[NSLayoutConstraint activateConstraints:@[
+			[_contentView.leftAnchor constraintEqualToAnchor:_contentContainer.leftAnchor],
+			[_contentView.topAnchor constraintEqualToAnchor:_contentContainer.topAnchor],
+			width, height,
+		]];
 		NSString* placement = [NSUserDefaults.standardUserDefaults stringForKey:kUserDefaultsTerminalPanelPlacementKey];
 		_panelPosition = [@[@"left", @"right", @"bottom"] containsObject:placement] ? placement : @"bottom";
 		_panelWidth    = MAX(120, [NSUserDefaults.standardUserDefaults doubleForKey:kUserDefaultsTerminalPanelWidthKey]);
@@ -87,6 +103,8 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 			if(weakSelf.detachSessionHandler) weakSelf.detachSessionHandler(identifier);
 		};
 		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
+		_terminalController.contextEnvironmentProvider = self.contextEnvironmentProvider;
+		_terminalController.contextSessionClosed = self.contextSessionClosed;
 		_terminalController.openFile = ^(NSURL* url, NSInteger line, NSInteger column){
 			if(weakSelf.openTerminalFile) weakSelf.openTerminalFile(url, line, column);
 		};
@@ -97,7 +115,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	if(_terminalFont)
 		[_terminalController applyFont:_terminalFont];
 	if(_terminalColors)
-		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3]];
+		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3] syntaxColors:_terminalSyntaxColors];
 #endif
 }
 
@@ -117,11 +135,22 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 #endif
 }
 
-- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection
+- (BOOL)startCommand:(NSString*)executable arguments:(NSArray<NSString*>*)arguments title:(NSString*)title inDirectory:(NSString*)directory
+{
+#if HAVE_OAK_SWIFTUI
+	[self prepareTerminalController];
+	return [_terminalController startCommandWithExecutable:executable arguments:arguments title:title inDirectory:directory ?: NSHomeDirectory()];
+#else
+	return NO;
+#endif
+}
+
+- (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection syntaxColors:(NSArray<NSColor*>*)syntaxColors
 {
 	self.terminalColors = @[ background, foreground, caret, selection ];
+	self.terminalSyntaxColors = syntaxColors;
 #if HAVE_OAK_SWIFTUI
-	[_terminalController applyThemeWithBackground:background foreground:foreground caret:caret selection:selection];
+	[_terminalController applyThemeWithBackground:background foreground:foreground caret:caret selection:selection syntaxColors:syntaxColors];
 #endif
 }
 
@@ -192,12 +221,12 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		([(NSView*)responder isDescendantOf:_contentView] ||
 		 (_panelVisible && [(NSView*)responder isDescendantOf:_panelView]));
 	_adjustingLayout = YES;
-	[_contentView removeFromSuperview];
+	[_contentContainer removeFromSuperview];
 	[_panelView removeFromSuperview];
 	_splitView.vertical = ![_panelPosition isEqualToString:@"bottom"];
 	if(_panelVisible && [_panelPosition isEqualToString:@"left"])
 		[_splitView addSubview:_panelView];
-	[_splitView addSubview:_contentView];
+	[_splitView addSubview:_contentContainer];
 	if(_panelVisible && ![_panelPosition isEqualToString:@"left"])
 		[_splitView addSubview:_panelView];
 	_adjustingLayout = NO;
@@ -221,7 +250,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	bounds.size.width = MAX(bounds.size.width, _minimumWidthConstraint.constant);
 	bounds.size.height = MAX(bounds.size.height, _minimumHeightConstraint.constant);
 	if(!_panelVisible)
-		_contentView.frame = bounds;
+		_contentContainer.frame = bounds;
 	else
 	{
 		BOOL vertical = _splitView.isVertical;
@@ -246,6 +275,7 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		_splitView.subviews[0].frame = first;
 		_splitView.subviews[1].frame = second;
 	}
+	_contentView.frame = _contentContainer.bounds;
 	_adjustingLayout = NO;
 }
 

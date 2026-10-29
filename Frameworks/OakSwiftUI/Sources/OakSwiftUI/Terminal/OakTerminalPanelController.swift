@@ -52,6 +52,8 @@ private final class TerminalContainer: NSView {
         let uuid: UUID
         let terminal: LocalProcessTerminalView
         var title: String
+        var customTitle: String? = nil
+        var agentStatus = TerminalAgentStatus()
     }
     private var sessions: [Session] = []
     private var selectedID: Int?
@@ -59,9 +61,18 @@ private final class TerminalContainer: NSView {
     var terminal: LocalProcessTerminalView? { sessions.first { $0.id == selectedID }?.terminal }
     var sessionCount: Int { sessions.count }
     @objc public var sessionIdentifiers: [UUID] { sessions.map(\.uuid) }
-    @objc public var sessionTitles: [String] { sessions.map(\.title) }
+    @objc public var sessionTitles: [String] { sessions.map { $0.customTitle ?? $0.title } }
+    @objc public var sessionStatusValues: [NSNumber] { sessions.map { NSNumber(value: $0.agentStatus.value) } }
+    @objc public var sessionStatusDescriptions: [String] { sessions.map { $0.agentStatus.description } }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
+
+    @objc public func renameSession(at index: Int, title: String) {
+        guard sessions.indices.contains(index) else { return }
+        let title = title.components(separatedBy: .controlCharacters).joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        sessions[index].customTitle = title.isEmpty ? nil : String(title.prefix(120))
+        rebuildTabs()
+    }
 
     @objc public func installTabBar(_ tabBar: NSView) {
         guard let container = view as? TerminalContainer else { return }
@@ -74,6 +85,7 @@ private final class TerminalContainer: NSView {
 
     @objc public func selectSession(at index: Int) {
         guard sessions.indices.contains(index) else { return }
+        acknowledgeResults(at: index)
         selectSession(id: sessions[index].id)
         focusTerminal()
     }
@@ -99,7 +111,8 @@ private final class TerminalContainer: NSView {
         destination.started = true
         session.terminal.processDelegate = destination
         (session.terminal as? FileLinkTerminalView)?.owner = destination
-        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title), at: min(max(0, insertionIndex), destination.sessions.count))
+        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title, customTitle: session.customTitle, agentStatus: session.agentStatus), at: min(max(0, insertionIndex), destination.sessions.count))
+        _ = destination.contextEnvironmentProvider?(session.uuid)
         destination.applyFont(destination.terminalFont)
         destination.updateTerminalColors()
         destination.selectSession(id: newID)
@@ -113,6 +126,8 @@ private final class TerminalContainer: NSView {
     }
     @objc public var openFile: ((URL, Int, Int) -> Void)?
     @objc public var workingDirectoryProvider: (() -> String)?
+    @objc public var contextEnvironmentProvider: ((UUID) -> [String: String])?
+    @objc public var contextSessionClosed: ((UUID) -> Void)?
     private var directory = NSHomeDirectory()
     private var terminalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
@@ -124,10 +139,10 @@ private final class TerminalContainer: NSView {
     }
 
     private var started = false
-    private var themeColors: (background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor)?
+    private var themeColors: (background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor, syntaxColors: [NSColor])?
 
-    @objc public func applyTheme(background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor) {
-        themeColors = (background, foreground, caret, selection)
+    @objc public func applyTheme(background: NSColor, foreground: NSColor, caret: NSColor, selection: NSColor, syntaxColors: [NSColor] = []) {
+        themeColors = (background, foreground, caret, selection, syntaxColors)
         updateTerminalColors()
     }
 
@@ -137,8 +152,10 @@ private final class TerminalContainer: NSView {
             view.layer?.backgroundColor = colors.background.cgColor
             (view as? TerminalContainer)?.emptyLabel.textColor = colors.foreground
         }
+        let palette = terminalPalette(background: colors.background, foreground: colors.foreground, syntaxColors: colors.syntaxColors)
         for session in sessions {
             let terminal = session.terminal
+            terminal.installColors(palette)
             terminal.nativeBackgroundColor = colors.background
             terminal.nativeForegroundColor = colors.foreground
             terminal.caretColor = colors.caret
@@ -174,9 +191,20 @@ private final class TerminalContainer: NSView {
         focusTerminal()
     }
 
-    private func launchShell() {
+    /// Start in a separate tab; pass arguments directly, never as shell source or PTY input.
+    @objc(startCommandWithExecutable:arguments:title:inDirectory:)
+    public func startCommand(executable: String, arguments: [String], title: String, inDirectory path: String) -> Bool {
+        guard executable.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: executable),
+              !([executable] + arguments).contains(where: { $0.contains("\0") }) else { return false }
+        started = true
+        launchShell(command: [executable] + arguments, title: title, inDirectory: path)
+        focusTerminal()
+        return true
+    }
+
+    private func launchShell(command: [String]? = nil, title: String? = nil, inDirectory path: String? = nil) {
         _ = view
-        let requestedDirectory = workingDirectoryProvider?() ?? directory
+        let requestedDirectory = path ?? workingDirectoryProvider?() ?? directory
         var isDirectory: ObjCBool = false
         let launchDirectory = FileManager.default.fileExists(atPath: requestedDirectory, isDirectory: &isDirectory) && isDirectory.boolValue ? requestedDirectory : NSHomeDirectory()
         let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
@@ -190,7 +218,8 @@ private final class TerminalContainer: NSView {
         terminal.setAccessibilityLabel("Terminal")
         let id = nextID
         nextID += 1
-        sessions.append(Session(id: id, uuid: UUID(), terminal: terminal, title: "Terminal \(id)"))
+        let sessionUUID = UUID()
+        sessions.append(Session(id: id, uuid: sessionUUID, terminal: terminal, title: title ?? "Terminal \(id)"))
         updateTerminalColors()
         selectSession(id: id)
 
@@ -202,11 +231,50 @@ private final class TerminalContainer: NSView {
         environment["TERM_PROGRAM"] = "TextMate"
         environment["SHELL"] = shell
         environment["PWD"] = launchDirectory
+        for key in Array(environment.keys) where key.hasPrefix("TM_CONTEXT_") {
+            environment.removeValue(forKey: key)
+        }
+        environment.removeValue(forKey: "TM_MCP_SERVER")
+        environment.merge(contextEnvironmentProvider?(sessionUUID) ?? [:]) { _, new in new }
+        if let executable = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("textmate-mcp").path,
+           FileManager.default.isExecutableFile(atPath: executable) {
+            environment["TM_MCP_SERVER"] = executable
+            let directory = URL(fileURLWithPath: executable).deletingLastPathComponent().path
+            environment["PATH"] = directory + ":" + (environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        }
         // Do not propagate the debug app's injected runtime into shell commands.
         for key in Array(environment.keys) where key.hasPrefix("DYLD_") || key == "ASAN_OPTIONS" {
             environment.removeValue(forKey: key)
         }
-        terminal.startProcess(executable: shell, args: ["-l"], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
+        // zsh is available on macOS regardless of the user's configured shell.
+        // Its positional parameters preserve the entire prompt as one argument,
+        // including quotes, newlines, and shell metacharacters. Keep a shell open
+        // afterwards so startup errors and the agent's final output remain visible.
+        let args = command.map { ["-l", "-i", "-c", "\"$@\"; exec \"$SHELL\" -l", "tm-explain-selection"] + $0 } ?? ["-l"]
+        terminal.startProcess(executable: command == nil ? shell : "/bin/zsh", args: args, environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
+    }
+
+    // Run before AppKit's key-equivalent search: the editor and global bundle menu
+    // can otherwise claim a terminal shortcut before the focused view sees it.
+    func handleTerminalKeyEvent(_ event: NSEvent, source: LocalProcessTerminalView) -> Bool {
+        guard event.type == .keyDown, let window = source.window,
+              event.window === window, window.firstResponder === source,
+              terminal === source else { return false }
+        if let index = sessions.firstIndex(where: { $0.terminal === source }) { acknowledgeResults(at: index) }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers.contains(.control) && !modifiers.contains(.command) {
+            source.keyDown(with: event)
+            return true
+        }
+        if modifiers == [.command] && event.charactersIgnoringModifiers == "k" {
+            clearTerminal()
+            return true
+        }
+        if modifiers == [.command, .option] && (event.keyCode == 123 || event.keyCode == 124) {
+            selectAdjacentSession(forward: event.keyCode == 124)
+            return true
+        }
+        return false
     }
 
     @objc public func focusTerminal() {
@@ -251,7 +319,10 @@ private final class TerminalContainer: NSView {
     }
 
     @objc public func stopSession() {
-        for session in sessions { stop(terminal: session.terminal) }
+        for session in sessions {
+            contextSessionClosed?(session.uuid)
+            stop(terminal: session.terminal)
+        }
         sessions.removeAll()
         selectedID = nil
         if isViewLoaded { showSelectedSession() }
@@ -271,6 +342,7 @@ private final class TerminalContainer: NSView {
     func selectAdjacentSession(forward: Bool) {
         guard let index = sessions.firstIndex(where: { $0.id == selectedID }), !sessions.isEmpty else { return }
         let next = (index + (forward ? 1 : sessions.count - 1)) % sessions.count
+        acknowledgeResults(at: next)
         selectSession(id: sessions[next].id)
         focusTerminal()
     }
@@ -300,11 +372,24 @@ private final class TerminalContainer: NSView {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         let wasSelected = selectedID == id
         let hadFocus = (view.window?.firstResponder as? NSView)?.isDescendant(of: view) == true
+        contextSessionClosed?(sessions[index].uuid)
         stop(terminal: sessions[index].terminal)
         sessions.remove(at: index)
         if wasSelected { selectedID = sessions.isEmpty ? nil : sessions[min(index, sessions.count - 1)].id }
         showSelectedSession()
         if wasSelected && hadFocus { focusTerminal() }
+    }
+
+    private func acknowledgeResults(at index: Int) {
+        let previous = sessions[index].agentStatus.value
+        sessions[index].agentStatus.acknowledgeResults()
+        if previous != sessions[index].agentStatus.value { rebuildTabs() }
+    }
+
+    public func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {
+        guard let index = sessions.firstIndex(where: { $0.terminal === source }) else { return }
+        sessions[index].agentStatus.update(records)
+        rebuildTabs()
     }
 
     public func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}

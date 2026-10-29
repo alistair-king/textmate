@@ -1,5 +1,9 @@
 #import <oak/misc.h>
 
+typedef NS_ENUM(NSInteger, OakTabStatus) {
+    OakTabStatusNone, OakTabStatusWorking, OakTabStatusBlocked, OakTabStatusDone, OakTabStatusError
+};
+
 @protocol OakTabBarViewDelegate, OakTabBarViewDataSource;
 
 @interface OakTabBarView : NSView
@@ -34,4 +38,7 @@
 - (NSString*)tabBarView:(OakTabBarView*)aTabBarView pathForIndex:(NSUInteger)anIndex;
 - (NSUUID*)tabBarView:(OakTabBarView*)aTabBarView UUIDForIndex:(NSUInteger)anIndex;
 - (BOOL)tabBarView:(OakTabBarView*)aTabBarView isEditedAtIndex:(NSUInteger)anIndex;
+@optional
+- (OakTabStatus)tabBarView:(OakTabBarView*)bar statusForIndex:(NSUInteger)index;
+- (NSString*)tabBarView:(OakTabBarView*)bar statusDescriptionForIndex:(NSUInteger)index;
 @end

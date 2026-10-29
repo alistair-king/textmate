@@ -1,13 +1,55 @@
+#import "AgentStatusTabSource.h"
 #import <Cocoa/Cocoa.h>
 #import <OakTabBarView/OakTabBarView.h>
 #import "../src/TerminalPanelViewController.h"
+#import "../src/ProjectLayoutView.h"
+#import <FileBrowser/FileBrowserViewController.h>
+
+void test_terminal_panel_open_project ()
+{
+	dispatch_sync(dispatch_get_main_queue(), ^{
+		@autoreleasepool
+		{
+			[NSApplication sharedApplication];
+			ProjectLayoutView* content = [[ProjectLayoutView alloc] initWithFrame:NSZeroRect];
+			content.documentView = [[NSView alloc] initWithFrame:NSZeroRect];
+			[content.documentView.heightAnchor constraintGreaterThanOrEqualToConstant:25].active = YES;
+			TerminalPanelViewController* controller = [[TerminalPanelViewController alloc] initWithContentView:content];
+			NSView* split = controller.view;
+			NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1000, 700) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+			window.releasedWhenClosed = NO;
+			split.translatesAutoresizingMaskIntoConstraints = NO;
+			[window.contentView addSubview:split];
+			[NSLayoutConstraint activateConstraints:@[
+				[split.leftAnchor constraintEqualToAnchor:window.contentView.leftAnchor],
+				[split.rightAnchor constraintEqualToAnchor:window.contentView.rightAnchor],
+				[split.topAnchor constraintEqualToAnchor:window.contentView.topAnchor],
+				[split.bottomAnchor constraintEqualToAnchor:window.contentView.bottomAnchor],
+			]];
+			// Project restoration adds the browser before the window's first layout pass.
+			[window.contentView updateConstraintsForSubtreeIfNeeded];
+			controller.panelHeight = 220;
+			FileBrowserViewController* browser = [[FileBrowserViewController alloc] init];
+			CGFloat minimumBrowserHeight = browser.view.fittingSize.height;
+			content.fileBrowserView = browser.view;
+			[window.contentView updateConstraintsForSubtreeIfNeeded];
+			[content layoutSubtreeIfNeeded];
+			OAK_ASSERT(NSHeight(browser.view.frame) >= minimumBrowserHeight);
+			[window setContentSize:NSMakeSize(1100, 700)];
+			[window.contentView layoutSubtreeIfNeeded];
+			OAK_ASSERT(NSHeight(browser.view.frame) >= minimumBrowserHeight);
+			OAK_ASSERT(NSHeight(content.frame) == NSHeight(split.bounds));
+			[window close];
+		}
+	});
+}
+
 void test_terminal_panel_layout ()
 {
 	dispatch_sync(dispatch_get_main_queue(), ^{
 	@autoreleasepool {
   NSView* content = [[NSView alloc] initWithFrame:NSZeroRect];
   TerminalPanelViewController* controller = [[TerminalPanelViewController alloc] initWithContentView:content];
-  // Exercise a fixed layout regardless of the default placement or saved sizes.
   controller.panelPosition = @"right";
   controller.panelWidth = 320;
   controller.panelHeight = 220;
@@ -16,12 +58,12 @@ void test_terminal_panel_layout ()
   [split adjustSubviews];
   OAK_ASSERT(split.subviews.count == 1 && NSWidth(content.frame) == 1000);
   controller.panelVisible = YES;
-  OAK_ASSERT(split.subviews.count == 2 && split.subviews[0] == content);
+  OAK_ASSERT(split.subviews.count == 2 && content.superview == split.subviews[0]);
   OAK_ASSERT(NSWidth(split.subviews[1].frame) == 320);
   controller.panelPosition = @"left";
-  OAK_ASSERT(split.subviews[1] == content && NSMinX(content.frame) > 0);
+  OAK_ASSERT(content.superview == split.subviews[1] && NSMinX(content.superview.frame) > 0);
   controller.panelPosition = @"bottom";
-  OAK_ASSERT(!split.isVertical && split.subviews[0] == content);
+  OAK_ASSERT(!split.isVertical && content.superview == split.subviews[0]);
   OAK_ASSERT(NSHeight(split.subviews[1].frame) == 220);
   controller.panelHeight = 260;
   controller.panelPosition = @"right";
@@ -89,4 +131,42 @@ void test_terminal_panel_constrained_resize ()
 
 		}
 	});
+}
+
+
+void test_terminal_tab_status_presentation ()
+{
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        AgentStatusTabSource* source = [AgentStatusTabSource new];
+        source.identifier = NSUUID.UUID;
+        source.status = OakTabStatusWorking;
+        source.statusDescription = @"Working";
+        OakTabBarView* bar = [[OakTabBarView alloc] initWithFrame:NSMakeRect(0, 0, 400, 23)];
+        bar.dataSource = source;
+        [bar reloadData];
+        [bar layoutSubtreeIfNeeded];
+        NSView* tab = nil;
+        for(NSView* view in bar.subviews)
+            if([view.accessibilityLabel isEqualToString:@"Agent, Working"]) tab = view;
+        OAK_ASSERT(tab != nil);
+        OAK_ASSERT([tab.toolTip isEqualToString:@"Working"]);
+        NSProgressIndicator* spinner = nil;
+        for(NSView* view in tab.subviews)
+            for(NSView* child in view.subviews)
+                if([child isKindOfClass:NSProgressIndicator.class]) spinner = (NSProgressIndicator*)child;
+        OAK_ASSERT(spinner != nil && !spinner.superview.hidden);
+        OAK_ASSERT(NSWidth(spinner.superview.frame) == 18);
+        source.status = OakTabStatusBlocked;
+        source.statusDescription = @"Needs approval";
+        [bar reloadData];
+        OAK_ASSERT([tab.accessibilityLabel isEqualToString:@"Agent, Needs approval"]);
+        OAK_ASSERT([tab.toolTip isEqualToString:@"Needs approval"]);
+        source.status = OakTabStatusNone;
+        source.statusDescription = @"";
+        [bar reloadData];
+        [bar layoutSubtreeIfNeeded];
+        OAK_ASSERT([tab.accessibilityLabel isEqualToString:@"Agent"]);
+        OAK_ASSERT(spinner.superview.hidden && NSWidth(spinner.superview.frame) == 0);
+    });
 }

@@ -119,6 +119,53 @@ import Darwin
 }
 
 @MainActor
+@Test func explanationCommandKeepsArgumentsAndExistingSession() async throws {
+    _ = NSApplication.shared
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("TextMate explanation 'quoted' 😀 \(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let command = folder.appendingPathComponent("mock agent")
+    // The stub writes in its current directory, requiring no quoting of the path.
+    try "#!/bin/sh\nprintf '%s\\000' \"$@\" > arguments.bin\nprintf '%s' \"$TM_CONTEXT_TOKEN\" > context.txt\npwd > directory.txt\n".write(to: command, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: command.path)
+    let controller = OakTerminalPanelController()
+    var credentialsCreated = 0
+    controller.contextEnvironmentProvider = { _ in
+        credentialsCreated += 1
+        return ["TM_CONTEXT_TOKEN": "explanation-test-token"]
+    }
+    controller.startSession(inDirectory: NSTemporaryDirectory())
+    defer { controller.stopSession() }
+    let original = try #require(controller.terminal)
+    let originalPID = original.process.shellPid
+    let prompt = "Explain this 😀\n'quoted' \"text\"; $(touch SHOULD_NOT_EXIST); `touch ALSO_NOT_CREATED`\n\u{1b}[31m"
+    #expect(controller.startCommand(executable: command.path, arguments: ["--prompt", prompt], title: "Explain · Test", inDirectory: folder.path))
+    let explanation = try #require(controller.terminal)
+    #expect(explanation !== original)
+    #expect(original.process.shellPid == originalPID && original.process.running)
+    #expect(controller.sessionCount == 2)
+    #expect(credentialsCreated == 2)
+    for _ in 0..<100 {
+        if FileManager.default.fileExists(atPath: folder.appendingPathComponent("directory.txt").path) { break }
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    let arguments = try Data(contentsOf: folder.appendingPathComponent("arguments.bin"))
+    #expect(arguments == Data(("--prompt\0" + prompt + "\0").utf8))
+    #expect(try String(contentsOf: folder.appendingPathComponent("context.txt"), encoding: .utf8) == "explanation-test-token")
+    let directory = try String(contentsOf: folder.appendingPathComponent("directory.txt"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+    #expect(URL(fileURLWithPath: directory).resolvingSymlinksInPath() == folder.resolvingSymlinksInPath())
+    #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("SHOULD_NOT_EXIST").path))
+    #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("ALSO_NOT_CREATED").path))
+    // The completed command leaves its tab and shell available for follow-ups.
+    #expect(explanation.process.running)
+    controller.startSession(inDirectory: NSHomeDirectory())
+    #expect(controller.sessionCount == 2)
+    #expect(!controller.startCommand(executable: "/no-such-agent", arguments: [], title: "Missing", inDirectory: folder.path))
+    #expect(!controller.startCommand(executable: command.path, arguments: ["embedded\0NUL"], title: "Invalid", inDirectory: folder.path))
+    #expect(controller.sessionCount == 2)
+}
+
+@MainActor
 @Test func terminalTabsKeepIndependentSessions() async throws {
     _ = NSApplication.shared
     let controller = OakTerminalPanelController()
@@ -289,4 +336,59 @@ import Darwin
     #expect(destination.terminal === first)
     #expect(first.font == initialFont)
     #expect(first.process.shellPid == pid)
+}
+
+@MainActor
+@Test func terminalControlKeysStayWithFocusedSession() async throws {
+    _ = NSApplication.shared
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let controller = OakTerminalPanelController()
+    controller.startSession(inDirectory: folder.path)
+    defer { controller.stopSession() }
+    let terminal = try #require(controller.terminal)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300), styleMask: .titled, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = controller.view
+    defer { window.contentView = nil }
+    let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{0b}", charactersIgnoringModifiers: "k", isARepeat: false, keyCode: 40))
+    window.makeFirstResponder(controller.view)
+    #expect(!controller.handleTerminalKeyEvent(event, source: terminal))
+    window.makeFirstResponder(terminal)
+    terminal.send(txt: "stty -icanon -echo; printf ready > ready; dd bs=1 count=1 of=key 2>/dev/null; stty sane\n")
+    for _ in 0..<100 {
+        if FileManager.default.fileExists(atPath: folder.appendingPathComponent("ready").path) { break }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("ready").path))
+    #expect(controller.handleTerminalKeyEvent(event, source: terminal))
+    for _ in 0..<100 {
+        if let bytes = try? Data(contentsOf: folder.appendingPathComponent("key")), bytes == Data([11]) { return }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    Issue.record("Ctrl+K did not reach the focused terminal process")
+}
+
+@MainActor
+@Test func contextRegistrationFollowsTerminalLifetimeAndTransfers() throws {
+    _ = NSApplication.shared
+    let source = OakTerminalPanelController()
+    let destination = OakTerminalPanelController()
+    var owners: [UUID: String] = [:]
+    var closed: [UUID] = []
+    source.contextEnvironmentProvider = { owners[$0] = "source"; return [:] }
+    destination.contextEnvironmentProvider = { owners[$0] = "destination"; return [:] }
+    source.contextSessionClosed = { closed.append($0); owners.removeValue(forKey: $0) }
+    destination.contextSessionClosed = { closed.append($0); owners.removeValue(forKey: $0) }
+    source.startSession(inDirectory: NSTemporaryDirectory())
+    let identifier = try #require(source.sessionIdentifiers.first)
+    #expect(owners[identifier] == "source")
+    source.transferSession(identifier: identifier, to: destination, at: 0)
+    #expect(owners[identifier] == "destination")
+    source.stopSession()
+    #expect(closed.isEmpty)
+    destination.stopSession()
+    #expect(closed == [identifier])
+    #expect(owners.isEmpty)
 }

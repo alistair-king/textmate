@@ -36,6 +36,12 @@
 - (NSString*)tabBarView:(OakTabBarView*)bar pathForIndex:(NSUInteger)index { return @""; }
 - (NSUUID*)tabBarView:(OakTabBarView*)bar UUIDForIndex:(NSUInteger)index { return self.controller.sessionIdentifiers[index]; }
 - (BOOL)tabBarView:(OakTabBarView*)bar isEditedAtIndex:(NSUInteger)index { return NO; }
+- (OakTabStatus)tabBarView:(OakTabBarView*)bar statusForIndex:(NSUInteger)index { return (OakTabStatus)self.controller.sessionStatusValues[index].integerValue; }
+- (NSString*)tabBarView:(OakTabBarView*)bar statusDescriptionForIndex:(NSUInteger)index { return self.controller.sessionStatusDescriptions[index]; }
+- (void)tabBarView:(OakTabBarView*)bar setTitle:(NSString*)title forIndex:(NSUInteger)index
+{
+	[self.controller renameSessionAt:index title:title];
+}
 - (BOOL)tabBarView:(OakTabBarView*)bar shouldSelectIndex:(NSUInteger)index
 {
 	[self.controller selectSessionAt:index];
