@@ -10,13 +10,6 @@ target_link_libraries(OakTextView PUBLIC
 
 # OakSwiftUI — include path for the generated Swift header
 if(OakSwiftUI_LIB)
-  execute_process(COMMAND swift -print-target-info OUTPUT_VARIABLE _swift_target_info)
-  string(JSON _swift_triple GET "${_swift_target_info}" "target" "unversionedTriple")
-  string(TOLOWER "${CMAKE_BUILD_TYPE}" _swift_config)
-  if(NOT _swift_config OR _swift_config STREQUAL "")
-    set(_swift_config "debug")
-  endif()
-  target_include_directories(OakTextView PRIVATE
-    "${CMAKE_SOURCE_DIR}/Frameworks/OakSwiftUI/.build/${_swift_triple}/${_swift_config}/OakSwiftUI.build/include")
+  target_include_directories(OakTextView PRIVATE "${OakSwiftUI_INCLUDE_DIR}")
   target_link_libraries(OakTextView PUBLIC ${OakSwiftUI_LIB})
 endif()
