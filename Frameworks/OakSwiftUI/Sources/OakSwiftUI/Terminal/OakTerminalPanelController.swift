@@ -62,6 +62,8 @@ private final class TerminalContainer: NSView {
     @objc public var sessionTitles: [String] { sessions.map(\.title) }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
+    // Fires only when closing or exiting removes the final session, not on transfer or stopSession().
+    @objc public var lastSessionDidClose: (() -> Void)?
 
     @objc public func installTabBar(_ tabBar: NSView) {
         guard let container = view as? TerminalContainer else { return }
@@ -305,6 +307,7 @@ private final class TerminalContainer: NSView {
         if wasSelected { selectedID = sessions.isEmpty ? nil : sessions[min(index, sessions.count - 1)].id }
         showSelectedSession()
         if wasSelected && hadFocus { focusTerminal() }
+        if sessions.isEmpty { lastSessionDidClose?() }
     }
 
     public func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}

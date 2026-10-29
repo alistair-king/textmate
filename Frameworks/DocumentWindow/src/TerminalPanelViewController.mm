@@ -86,6 +86,9 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		_terminalTabBarController.detachSessionHandler = ^(NSUUID* identifier){
 			if(weakSelf.detachSessionHandler) weakSelf.detachSessionHandler(identifier);
 		};
+		_terminalController.lastSessionDidClose = ^{
+			if(weakSelf.lastSessionClosedHandler) weakSelf.lastSessionClosedHandler();
+		};
 		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
 		_terminalController.openFile = ^(NSURL* url, NSInteger line, NSInteger column){
 			if(weakSelf.openTerminalFile) weakSelf.openTerminalFile(url, line, column);
@@ -115,6 +118,13 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	[self prepareTerminalController];
 	[source.terminalController transferSessionWithIdentifier:identifier to:self.terminalController at:self.terminalController.sessionIdentifiers.count];
 #endif
+}
+
+- (void)takePlacementFromPanel:(TerminalPanelViewController*)source
+{
+	self.panelPosition = source.panelPosition;
+	self.panelWidth    = source.panelWidth;
+	self.panelHeight   = source.panelHeight;
 }
 
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection

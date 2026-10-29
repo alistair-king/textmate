@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <OakTabBarView/OakTabBarView.h>
+#import <objc/message.h>
 #import "../src/TerminalPanelViewController.h"
 void test_terminal_panel_layout ()
 {
@@ -87,6 +88,45 @@ void test_terminal_panel_constrained_resize ()
  }
  [c stopTerminal];
 
+		}
+	});
+}
+
+void test_terminal_panel_placement_and_last_session ()
+{
+	dispatch_sync(dispatch_get_main_queue(), ^{
+		@autoreleasepool
+		{
+ [NSApplication sharedApplication];
+ TerminalPanelViewController* source = [[TerminalPanelViewController alloc] initWithContentView:[[NSView alloc] initWithFrame:NSZeroRect]];
+ TerminalPanelViewController* detached = [[TerminalPanelViewController alloc] initWithContentView:[[NSView alloc] initWithFrame:NSZeroRect]];
+ source.panelPosition = @"left";
+ source.panelWidth = 410;
+ source.panelHeight = 190;
+ [detached takePlacementFromPanel:source];
+ OAK_ASSERT([detached.panelPosition isEqualToString:@"left"]);
+ OAK_ASSERT(detached.panelWidth == 410 && detached.panelHeight == 190);
+
+ __block int sourceClosed = 0, detachedClosed = 0;
+ source.lastSessionClosedHandler = ^{ ++sourceClosed; };
+ detached.lastSessionClosedHandler = ^{ ++detachedClosed; };
+ [source startTerminalInDirectory:NSTemporaryDirectory()];
+ id sourceTerminal = [source valueForKey:@"terminalController"];
+ NSArray<NSUUID*>* sessions = [sourceTerminal valueForKey:@"sessionIdentifiers"];
+ OAK_ASSERT(sessions.count == 1);
+
+ // Moving the only session out must not look like the user closing it.
+ [detached takeTerminalSession:sessions.firstObject fromPanel:source];
+ OAK_ASSERT([[sourceTerminal valueForKey:@"sessionIdentifiers"] count] == 0);
+ OAK_ASSERT(sourceClosed == 0);
+
+ id detachedTerminal = [detached valueForKey:@"terminalController"];
+ ((void(*)(id, SEL, id))objc_msgSend)(detachedTerminal, NSSelectorFromString(@"closeSessionsWithIdentifiers:"), sessions);
+ OAK_ASSERT([[detachedTerminal valueForKey:@"sessionIdentifiers"] count] == 0);
+ OAK_ASSERT(detachedClosed == 1);
+
+ [source stopTerminal];
+ [detached stopTerminal];
 		}
 	});
 }

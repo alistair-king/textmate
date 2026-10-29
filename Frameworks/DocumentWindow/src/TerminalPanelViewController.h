@@ -13,7 +13,10 @@ extern NSString* const kUserDefaultsTerminalPanelHeightKey;
 @property (nonatomic) CGFloat panelWidth;
 @property (nonatomic) CGFloat panelHeight;
 - (void)takeTerminalSession:(NSUUID*)identifier fromPanel:(TerminalPanelViewController*)source;
+// Placement precedence: user defaults seed new windows, saved session state overrides them on restore, and a detached window copies its source panel.
+- (void)takePlacementFromPanel:(TerminalPanelViewController*)source;
 @property (nonatomic, copy) void (^detachSessionHandler)(NSUUID*);
+@property (nonatomic, copy) void (^lastSessionClosedHandler)(void); // not called when sessions are moved out or the panel is stopped
 @property (nonatomic, copy) void (^openTerminalFile)(NSURL*, NSInteger, NSInteger);
 - (void)startTerminalInDirectory:(NSString*)directory;
 - (void)focusTerminal;

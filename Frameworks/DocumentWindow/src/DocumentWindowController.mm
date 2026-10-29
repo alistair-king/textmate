@@ -90,6 +90,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
 @property (nonatomic) ProjectLayoutView*          layoutView;
 @property (nonatomic) TerminalPanelViewController* terminalPanelController;
+@property (nonatomic) BOOL                         terminalOnlyWindow; // created by detaching a terminal tab; closes with its last session while the placeholder document is untouched
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
@@ -214,6 +215,13 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 		self.terminalPanelController.terminalDirectoryProvider = ^{
 			return terminalOwner.terminalStartDirectory ?: NSHomeDirectory();
 		};
+		self.terminalPanelController.lastSessionClosedHandler = ^{
+			// Deferred: this fires from inside the session teardown.
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if(terminalOwner.terminalOnlyWindow && terminalOwner.documents.count == 1 && is_disposable(terminalOwner.selectedDocument))
+					[terminalOwner.window performClose:nil];
+			});
+		};
 		self.terminalPanelController.openTerminalFile = ^(NSURL* url, NSInteger line, NSInteger column){
 			NSMutableDictionary* item = [@{ @"path": url.path } mutableCopy];
 			if(line > 0) item[@"selectionString"] = [NSString stringWithFormat:@"%ld:%ld", (long)line, (long)MAX(1, column)];
@@ -224,8 +232,10 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 			if(!source) return;
 			DocumentWindowController* destination = [[DocumentWindowController alloc] init];
 			destination.defaultProjectPath = source.terminalStartDirectory;
+			destination.terminalOnlyWindow = YES;
 			destination.documents = @[ [OakDocumentController.sharedInstance untitledDocument] ];
 			[destination openAndSelectDocument:destination.documents.firstObject activate:YES];
+			[destination.terminalPanelController takePlacementFromPanel:source.terminalPanelController];
 			destination.terminalPanelController.panelVisible = YES;
 			[destination.terminalPanelController takeTerminalSession:identifier fromPanel:source.terminalPanelController];
 			[destination updateTerminalTheme];
