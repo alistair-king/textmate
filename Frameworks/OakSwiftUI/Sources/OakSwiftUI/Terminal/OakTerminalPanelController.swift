@@ -320,7 +320,7 @@ private final class TerminalContainer: NSView {
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         guard let terminal = source as? FileLinkTerminalView, let directory else { return }
         if let url = URL(string: directory), url.isFileURL,
-           url.host == nil || url.host == "" || url.host == "localhost" || url.host == ProcessInfo.processInfo.hostName {
+           LocalHost.isLocal(url.host) {
             terminal.reportedDirectory = url.path
         } else if directory.hasPrefix("/") {
             terminal.reportedDirectory = directory

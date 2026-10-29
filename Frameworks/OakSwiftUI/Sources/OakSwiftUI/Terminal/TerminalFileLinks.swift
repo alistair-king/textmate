@@ -2,7 +2,28 @@ import AppKit
 import Darwin
 import SwiftTerm
 
+enum LocalHost {
+    // ProcessInfo.hostName does a reverse-DNS lookup that can block for seconds, and this runs on every OSC 7 report.
+    private static let shortNames: Set<String> = {
+        var buffer = [CChar](repeating: 0, count: 256)
+        gethostname(&buffer, buffer.count - 1)
+        return [shortName(String(cString: buffer))]
+    }()
+
+    private static func shortName(_ host: String) -> String {
+        host.lowercased().split(separator: ".", maxSplits: 1).first.map(String.init) ?? ""
+    }
+
+    static func isLocal(_ host: String?) -> Bool {
+        guard let host, !host.isEmpty else { return true }
+        return host.lowercased() == "localhost" || shortNames.contains(shortName(host))
+    }
+}
+
 struct TerminalFileReference: Equatable {
+    // Quoted paths may contain spaces; unquoted paths terminate at shell/output delimiters.
+    private static let tokenRegex = try! NSRegularExpression(pattern: #"(?:"[^"\r\n]+"|'[^'\r\n]+')(?::[1-9][0-9]*(?::[1-9][0-9]*)?)?|[^\s<>\[\](){}"'`,;]+"#)
+
     let url: URL
     let line: Int?
     let column: Int?
@@ -21,7 +42,7 @@ struct TerminalFileReference: Equatable {
         let url: URL
         if path.hasPrefix("file:") {
             guard let parsed = URL(string: path), parsed.isFileURL,
-                  parsed.host == nil || parsed.host == "" || parsed.host == "localhost" || parsed.host == ProcessInfo.processInfo.hostName else { return nil }
+                  LocalHost.isLocal(parsed.host) else { return nil }
             url = parsed
         } else {
             guard !path.contains("://"), !path.isEmpty else { return nil }
@@ -35,10 +56,7 @@ struct TerminalFileReference: Equatable {
     }
 
     static func matches(in text: String, directory: String) -> [(NSRange, TerminalFileReference)] {
-        // Quoted paths may contain spaces; unquoted paths terminate at shell/output delimiters.
-        let pattern = #"(?:"[^"\r\n]+"|'[^'\r\n]+')(?::[1-9][0-9]*(?::[1-9][0-9]*)?)?|[^\s<>\[\](){}"'`,;]+"#
-        let regex = try! NSRegularExpression(pattern: pattern)
-        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
+        tokenRegex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
             let token = (text as NSString).substring(with: match.range)
             if let reference = resolve(token, directory: directory) { return (match.range, reference) }
             // Sentence punctuation is not part of a compiler's path.
@@ -62,7 +80,7 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
     func scheduleOutputCapture() {
         guard !outputCapturePending else { return }
         outputCapturePending = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self else { return }
             self.outputCapturePending = false
             self.recordOutputDirectories()
@@ -73,8 +91,9 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
     private var pressedLink: TerminalFileReference?
     private var pressedPoint = NSPoint.zero
     private var handledNativeLink = false
+    private var hoverCache: (cell: [Int], time: TimeInterval, hit: (reference: TerminalFileReference, rects: [NSRect])?)?
 
-    func clearFileLinkHistory() { rowDirectories.removeAll(); clearHighlight() }
+    func clearFileLinkHistory() { rowDirectories.removeAll(); hoverCache = nil; clearHighlight() }
 
     static func processDirectory(pid: pid_t) -> String? {
         guard pid > 0 else { return nil }
@@ -103,7 +122,9 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
                 rowDirectories[row.absoluteRow] = (row.text, directory)
             }
         }
-        if rowDirectories.count > 10000 {
+        hoverCache = nil
+        // Pruning sorts every key, so let the table overshoot rather than sort on each capture.
+        if rowDirectories.count > 12000 {
             let oldest = rowDirectories.keys.sorted().prefix(rowDirectories.count - 10000)
             for key in oldest { rowDirectories.removeValue(forKey: key) }
         }
@@ -130,7 +151,7 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
         clearHighlight()
         guard event.window === window, event.modifierFlags.contains(.command),
               event.type != .scrollWheel, event.type != .leftMouseDragged,
-              let window, let hit = fileHit(at: convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
+              let window, let hit = cachedFileHit(at: convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
         NSCursor.pointingHand.set()
         for rect in hit.rects {
             let underline = CALayer()
@@ -141,13 +162,30 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
         }
     }
 
+    // Mouse moves arrive per pixel; the hit (regex plus a stat per token) only changes per cell or when output arrives.
+    private func cachedFileHit(at point: NSPoint) -> (reference: TerminalFileReference, rects: [NSRect])? {
+        let cell = cellSize()
+        guard cell.width > 0, cell.height > 0 else { return fileHit(at: point) }
+        let key = [Int((bounds.maxY - point.y) / cell.height), Int((point.x - bounds.minX) / cell.width)]
+        let now = ProcessInfo.processInfo.systemUptime
+        if let cache = hoverCache, cache.cell == key, now - cache.time < 0.5 { return cache.hit }
+        let hit = fileHit(at: point)
+        hoverCache = (key, now, hit)
+        return hit
+    }
+
+    private func cellSize() -> CGSize {
+        let size = getWindowSize()
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        return CGSize(width: CGFloat(size.ws_xpixel) / CGFloat(max(1, size.ws_col)) / scale,
+                      height: CGFloat(size.ws_ypixel) / CGFloat(max(1, size.ws_row)) / scale)
+    }
+
     // Snapshot cells preserve wide Unicode glyphs and soft wraps without reading mutable terminal state.
     func fileHit(at point: NSPoint) -> (reference: TerminalFileReference, rects: [NSRect])? {
         guard bounds.contains(point), let snapshot = terminalContentSnapshot(region: .viewport), !snapshot.inputState.isAlternateBuffer else { return nil }
-        let size = getWindowSize()
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-        let cellWidth = CGFloat(size.ws_xpixel) / CGFloat(max(1, size.ws_col)) / scale
-        let cellHeight = CGFloat(size.ws_ypixel) / CGFloat(max(1, size.ws_row)) / scale
+        let cell = cellSize()
+        let (cellWidth, cellHeight) = (cell.width, cell.height)
         guard cellWidth > 0, cellHeight > 0 else { return nil }
         let rowIndex = Int((bounds.maxY - point.y) / cellHeight)
         let column = Int((point.x - bounds.minX) / cellWidth)
