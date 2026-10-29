@@ -1,9 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
-// Last-used panel geometry, shared by all windows like the file browser's placement/width.
+// Last-used panel edge, seeding new windows like the file browser's placement/width.
 extern NSString* const kUserDefaultsTerminalPanelPlacementKey;
-extern NSString* const kUserDefaultsTerminalPanelWidthKey;
-extern NSString* const kUserDefaultsTerminalPanelHeightKey;
 
 // Hosts the existing project layout alongside an independently docked terminal panel.
 @interface TerminalPanelViewController : NSViewController
@@ -19,6 +17,7 @@ extern NSString* const kUserDefaultsTerminalPanelHeightKey;
 @property (nonatomic, copy) void (^detachSessionHandler)(NSUUID*);
 @property (nonatomic, copy) void (^lastSessionClosedHandler)(void); // not called when sessions are moved out or the panel is stopped
 @property (nonatomic, copy) void (^openTerminalFile)(NSURL*, NSInteger, NSInteger);
+@property (nonatomic, readonly) BOOL hasTerminal; // YES once a shell has been started or received
 - (void)startTerminalInDirectory:(NSString*)directory;
 - (void)focusTerminal;
 - (void)applyTerminalFont:(NSFont*)font;

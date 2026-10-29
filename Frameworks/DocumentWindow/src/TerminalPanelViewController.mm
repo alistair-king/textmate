@@ -5,11 +5,12 @@
 #endif
 
 NSString* const kUserDefaultsTerminalPanelPlacementKey = @"terminalPanelPlacement";
-NSString* const kUserDefaultsTerminalPanelWidthKey     = @"terminalPanelWidth";
-NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
+static NSString* const kUserDefaultsTerminalPanelWidthKey  = @"terminalPanelWidth";
+static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeight";
 
 @interface TerminalPanelSplitView : NSSplitView
 @property (nonatomic) BOOL trackingDivider;
+@property (nonatomic, copy) void (^didFinishTrackingDivider)(void);
 @end
 
 @implementation TerminalPanelSplitView
@@ -18,6 +19,8 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 	self.trackingDivider = YES;
 	[super mouseDown:event];
 	self.trackingDivider = NO;
+	if(self.didFinishTrackingDivider)
+		self.didFinishTrackingDivider();
 }
 @end
 
@@ -58,6 +61,13 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		_splitView = [[TerminalPanelSplitView alloc] initWithFrame:NSZeroRect];
 		_splitView.dividerStyle = NSSplitViewDividerStyleThin;
 		_splitView.delegate = self;
+		__weak TerminalPanelViewController* weakSelf = self;
+		_splitView.didFinishTrackingDivider = ^{
+			// Persist once per drag; the resize delegate fires for every pixel.
+			NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+			[defaults setDouble:weakSelf.panelWidth forKey:kUserDefaultsTerminalPanelWidthKey];
+			[defaults setDouble:weakSelf.panelHeight forKey:kUserDefaultsTerminalPanelHeightKey];
+		};
 		self.view = _splitView;
 		_minimumWidthConstraint = [_splitView.widthAnchor constraintGreaterThanOrEqualToConstant:0];
 		_minimumHeightConstraint = [_splitView.heightAnchor constraintGreaterThanOrEqualToConstant:0];
@@ -104,6 +114,15 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		[_terminalController applyFont:_terminalFont];
 	if(_terminalColors)
 		[_terminalController applyThemeWithBackground:_terminalColors[0] foreground:_terminalColors[1] caret:_terminalColors[2] selection:_terminalColors[3]];
+#endif
+}
+
+- (BOOL)hasTerminal
+{
+#if HAVE_OAK_SWIFTUI
+	return _terminalController != nil;
+#else
+	return NO;
 #endif
 }
 
@@ -285,12 +304,10 @@ NSString* const kUserDefaultsTerminalPanelHeightKey    = @"terminalPanelHeight";
 		if(_splitView.isVertical)
 		{
 			_panelWidth = NSWidth(_panelView.frame);
-			[NSUserDefaults.standardUserDefaults setDouble:_panelWidth forKey:kUserDefaultsTerminalPanelWidthKey];
 		}
 		else
 		{
 			_panelHeight = NSHeight(_panelView.frame);
-			[NSUserDefaults.standardUserDefaults setDouble:_panelHeight forKey:kUserDefaultsTerminalPanelHeightKey];
 		}
 	}
 }

@@ -825,7 +825,7 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 
 - (void)observeValueForKeyPath:(NSString*)keyPath ofObject:(id)anObject change:(NSDictionary*)change context:(void*)context
 {
-	if([keyPath isEqualToString:@"textView.font"] || [keyPath isEqualToString:@"textView.fontScaleFactor"] || [keyPath isEqualToString:@"textView.themeUUID"] || [keyPath isEqualToString:@"selectedDocument.fileType"] || [keyPath isEqualToString:@"selectedDocument"])
+	if(self.terminalPanelController.hasTerminal && ([keyPath isEqualToString:@"textView.font"] || [keyPath isEqualToString:@"textView.fontScaleFactor"] || [keyPath isEqualToString:@"textView.themeUUID"] || [keyPath isEqualToString:@"selectedDocument.fileType"] || [keyPath isEqualToString:@"selectedDocument"]))
 	{
 		// Theme notifications can arrive while OakTextView is replacing its document view.
 		dispatch_async(dispatch_get_main_queue(), ^{ [self updateTerminalTheme]; });
@@ -1935,6 +1935,8 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 
 - (void)updateTerminalTheme
 {
+	if(!self.terminalPanelController.hasTerminal) // nothing to theme until the shell has been started once
+		return;
 	NSFont* font = self.textView.font;
 	if(font)
 		[self.terminalPanelController applyTerminalFont:[NSFont fontWithDescriptor:font.fontDescriptor size:font.pointSize * self.textView.fontScaleFactor]];
@@ -2378,9 +2380,19 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 
 	BOOL active = YES;
 	if([menuItem action] == @selector(toggleTerminalPanel:))
+	{
 		[menuItem setTitle:self.terminalPanelController.panelVisible ? @"Hide Terminal Panel" : @"Show Terminal Panel"];
+#if !HAVE_OAK_SWIFTUI
+		active = NO; // built without the Swift terminal component
+#endif
+	}
 	else if([menuItem action] == @selector(takeTerminalPanelPositionFrom:))
+	{
 		menuItem.state = [self.terminalPanelController.panelPosition isEqual:menuItem.representedObject] ? NSControlStateValueOn : NSControlStateValueOff;
+#if !HAVE_OAK_SWIFTUI
+		active = NO;
+#endif
+	}
 	else if([menuItem action] == @selector(toggleFileBrowser:))
 		[menuItem setTitle:self.fileBrowserVisible ? @"Hide File Browser" : @"Show File Browser"];
 	else if([menuItem action] == @selector(toggleHTMLOutput:))
@@ -2698,7 +2710,10 @@ static NSUInteger DisableSessionSavingCount = 0;
 
 	// Start the shell once the project/document context exists, so it opens in the window's folder.
 	if(self.terminalPanelController.panelVisible)
+	{
 		[self.terminalPanelController startTerminalInDirectory:self.terminalStartDirectory];
+		[self updateTerminalTheme];
+	}
 }
 
 - (NSDictionary*)sessionInfoIncludingUntitledDocuments:(BOOL)includeUntitled
