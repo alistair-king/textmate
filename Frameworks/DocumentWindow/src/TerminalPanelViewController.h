@@ -17,6 +17,10 @@ extern NSString* const kUserDefaultsTerminalPanelPlacementKey;
 @property (nonatomic, copy) void (^detachSessionHandler)(NSUUID*);
 @property (nonatomic, copy) void (^lastSessionClosedHandler)(void); // not called when sessions are moved out or the panel is stopped
 @property (nonatomic, copy) void (^openTerminalFile)(NSURL*, NSInteger, NSInteger);
+@property (nonatomic, copy) NSString* terminalShellPath;                // overrides the account's login shell; for tests
+@property (nonatomic, copy) NSArray<NSString*>* terminalShellArguments; // used with terminalShellPath
+@property (nonatomic, readonly) NSArray<NSUUID*>* terminalSessionIdentifiers;
+- (void)closeTerminalSessions:(NSArray<NSUUID*>*)identifiers; // asks for confirmation when work is running
 @property (nonatomic, readonly) BOOL hasTerminal; // YES once a shell has been started or received
 - (void)startTerminalInDirectory:(NSString*)directory;
 - (void)focusTerminal;

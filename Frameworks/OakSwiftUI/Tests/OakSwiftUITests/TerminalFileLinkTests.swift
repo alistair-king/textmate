@@ -34,7 +34,7 @@ import Testing
     for parent in [folder, other] {
         try "test".write(to: parent.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
     }
-    let owner = OakTerminalPanelController()
+    let owner = makeTerminalController()
     let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
     terminal.owner = owner
     terminal.launchDirectory = folder.path
@@ -87,7 +87,7 @@ import Testing
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
-    let controller = OakTerminalPanelController()
+    let controller = makeTerminalController()
     controller.startSession(inDirectory: NSHomeDirectory())
     defer { controller.stopSession() }
     let terminal = try #require(controller.terminal as? FileLinkTerminalView)
@@ -122,4 +122,22 @@ import Testing
     #expect(hit.reference.line == 12)
     #expect(hit.reference.column == 3)
     #expect(Set(hit.rects.map(\.minY)).count > 1)
+}
+
+@Test func localHostMatchesShortAndQualifiedNames() {
+    var buffer = [CChar](repeating: 0, count: 256)
+    gethostname(&buffer, buffer.count - 1)
+    let short = String(cString: buffer).split(separator: ".").first.map(String.init) ?? ""
+    #expect(LocalHost.isLocal(nil))
+    #expect(LocalHost.isLocal(""))
+    #expect(LocalHost.isLocal("LocalHost"))
+    #expect(LocalHost.isLocal(short))
+    #expect(LocalHost.isLocal("\(short.uppercased()).example.invalid"))
+    #expect(!LocalHost.isLocal("remote.invalid"))
+}
+
+@MainActor
+@Test func terminalOptsOutOfEditorKeyEquivalents() {
+    let terminal = FileLinkTerminalView(frame: .zero)
+    #expect(terminal.responds(to: NSSelectorFromString("oak_ownsKeyEquivalents")))
 }

@@ -7,7 +7,7 @@ import Darwin
 @MainActor
 @Test func clearShortcutRequiresTerminalFocus() async throws {
     _ = NSApplication.shared
-    let controller = OakTerminalPanelController()
+    let controller = makeTerminalController()
     controller.startSession(inDirectory: NSTemporaryDirectory())
     defer { controller.stopSession() }
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: .titled, backing: .buffered, defer: false)
@@ -37,7 +37,7 @@ import Darwin
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("TextMate terminal test \(UUID().uuidString)")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: folder) }
-    let controller = OakTerminalPanelController()
+    let controller = makeTerminalController()
     controller.applyTheme(background: .black, foreground: .white, caret: .green, selection: .blue)
     controller.startSession(inDirectory: folder.path)
     defer { controller.stopSession() }
@@ -128,7 +128,7 @@ import Darwin
 @MainActor
 @Test func terminalTabsKeepIndependentSessions() async throws {
     _ = NSApplication.shared
-    let controller = OakTerminalPanelController()
+    let controller = makeTerminalController()
     controller.startSession(inDirectory: NSTemporaryDirectory())
     defer { controller.stopSession() }
     let first = try #require(controller.terminal)
@@ -172,7 +172,7 @@ import Darwin
 @MainActor
 @Test func terminalTabShortcutsRequirePaneFocus() throws {
     _ = NSApplication.shared
-    let controller = OakTerminalPanelController()
+    let controller = makeTerminalController()
     controller.startSession(inDirectory: NSTemporaryDirectory())
     defer { controller.stopSession() }
     let first = try #require(controller.terminal)
@@ -220,7 +220,7 @@ import Darwin
     }
     defer { try? FileManager.default.removeItem(at: root) }
     var projectFolder = firstFolder
-    let controller = OakTerminalPanelController()
+    let controller = makeTerminalController()
     controller.workingDirectoryProvider = { projectFolder.path }
     // Simulate a panel initialized before its window acquired the project context.
     controller.startSession(inDirectory: FileManager.default.currentDirectoryPath)
@@ -245,8 +245,8 @@ import Darwin
 @MainActor
 @Test func nativeTabOrderAndTransferPreserveShells() throws {
     _ = NSApplication.shared
-    let source = OakTerminalPanelController()
-    let target = OakTerminalPanelController()
+    let source = makeTerminalController()
+    let target = makeTerminalController()
     source.startSession(inDirectory: NSTemporaryDirectory())
     target.startSession(inDirectory: NSTemporaryDirectory())
     defer { source.stopSession(); target.stopSession() }
@@ -273,8 +273,8 @@ import Darwin
 @MainActor
 @Test func terminalFontFollowsEditorAcrossSessions() throws {
     _ = NSApplication.shared
-    let controller = OakTerminalPanelController()
-    let destination = OakTerminalPanelController()
+    let controller = makeTerminalController()
+    let destination = makeTerminalController()
     defer { controller.stopSession(); destination.stopSession() }
     let initialFont = try #require(NSFont(name: "Menlo", size: 15))
     let updatedFont = try #require(NSFont(name: "Monaco", size: 18))
@@ -296,4 +296,13 @@ import Darwin
     #expect(destination.terminal === first)
     #expect(first.font == initialFont)
     #expect(first.process.shellPid == pid)
+}
+
+/// A plain sh without rc files, so results do not depend on the user's login shell, prompt plugins or dotfiles.
+@MainActor
+func makeTerminalController() -> OakTerminalPanelController {
+    let controller = OakTerminalPanelController()
+    controller.shellPath = "/bin/sh"
+    controller.shellArguments = []
+    return controller
 }

@@ -116,6 +116,9 @@ private final class TerminalContainer: NSView {
     @objc public var openFile: ((URL, Int, Int) -> Void)?
     @objc public var workingDirectoryProvider: (() -> String)?
     /// Base environment for a new shell started in the given directory. Without one the shell inherits the app's own environment.
+    /// Replaces the account's login shell; used by tests so they do not depend on the user's rc files.
+    @objc public var shellPath: String?
+    @objc public var shellArguments: [String]?
     @objc public var environmentProvider: ((String) -> [String: String])?
     private var directory = NSHomeDirectory()
     private var terminalFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -198,7 +201,7 @@ private final class TerminalContainer: NSView {
         updateTerminalColors()
         selectSession(id: id)
 
-        let configuredShell = getpwuid(getuid()).flatMap { $0.pointee.pw_shell }.map { String(cString: $0) } ?? "/bin/zsh"
+        let configuredShell = shellPath ?? getpwuid(getuid()).flatMap { $0.pointee.pw_shell }.map { String(cString: $0) } ?? "/bin/zsh"
         let shell = FileManager.default.isExecutableFile(atPath: configuredShell) ? configuredShell : "/bin/zsh"
         var environment = environmentProvider?(launchDirectory) ?? ProcessInfo.processInfo.environment
         // A Dock or Finder launch has no locale; without one the shell runs in the C locale and mangles non-ASCII text.
@@ -214,7 +217,7 @@ private final class TerminalContainer: NSView {
         for key in Array(environment.keys) where key.hasPrefix("DYLD_") || key == "ASAN_OPTIONS" {
             environment.removeValue(forKey: key)
         }
-        terminal.startProcess(executable: shell, args: ["-l"], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
+        terminal.startProcess(executable: shell, args: shellArguments ?? ["-l"], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
     }
 
     @objc public func focusTerminal() {

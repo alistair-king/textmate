@@ -99,6 +99,8 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 		_terminalController.lastSessionDidClose = ^{
 			if(weakSelf.lastSessionClosedHandler) weakSelf.lastSessionClosedHandler();
 		};
+		_terminalController.shellPath = self.terminalShellPath;
+		_terminalController.shellArguments = self.terminalShellArguments;
 		_terminalController.workingDirectoryProvider = self.terminalDirectoryProvider;
 		_terminalController.environmentProvider = ^NSDictionary<NSString*, NSString*>*(NSString* directory){
 			return weakSelf.terminalEnvironmentProvider ? weakSelf.terminalEnvironmentProvider(directory) : NSProcessInfo.processInfo.environment;
@@ -123,6 +125,22 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 	return _terminalController != nil;
 #else
 	return NO;
+#endif
+}
+
+- (NSArray<NSUUID*>*)terminalSessionIdentifiers
+{
+#if HAVE_OAK_SWIFTUI
+	return _terminalController.sessionIdentifiers ?: @[ ];
+#else
+	return @[ ];
+#endif
+}
+
+- (void)closeTerminalSessions:(NSArray<NSUUID*>*)identifiers
+{
+#if HAVE_OAK_SWIFTUI
+	[_terminalController closeSessionsWithIdentifiers:identifiers];
 #endif
 }
 
