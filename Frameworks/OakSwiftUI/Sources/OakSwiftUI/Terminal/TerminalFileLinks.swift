@@ -95,6 +95,9 @@ final class FileLinkTerminalView: LocalProcessTerminalView {
 
     func clearFileLinkHistory() { rowDirectories.removeAll(); hoverCache = nil; clearHighlight() }
 
+    /// Looked up by selector in OakTextView.performKeyEquivalent: so editor bundle bindings skip the document while the terminal has focus.
+    @objc func oak_ownsKeyEquivalents() -> Bool { true }
+
     static func processDirectory(pid: pid_t) -> String? {
         guard pid > 0 else { return nil }
         var info = proc_vnodepathinfo()
