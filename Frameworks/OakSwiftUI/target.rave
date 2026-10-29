@@ -1,4 +1,0 @@
-target "${dirname}" {
-	swift_package "${dir}"
-	add LN_FLAGS "-Wl,-rpath,@executable_path/../Frameworks"
-}

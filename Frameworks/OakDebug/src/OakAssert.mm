@@ -1,5 +1,6 @@
 #import "OakDebug.h"
 #import <oak/oak.h>
+#import <oak/compat.h>
 #import <text/format.h>
 
 @interface OakExceptionHandlerDelegate : NSObject { }
@@ -28,7 +29,7 @@ std::string OakStackDump (int linesToSkip)
 	int output[2];
 	pipe(&output[0]);
 
-	pid_t pid = vfork();
+	pid_t pid = oak::vfork();
 	if(pid == 0)
 	{
 		close(STDOUT_FILENO); close(STDERR_FILENO);
@@ -40,11 +41,11 @@ std::string OakStackDump (int linesToSkip)
 		int mib[2] = { CTL_USER, USER_CS_PATH };
 		size_t len = 0;
 		sysctl(mib, 2, NULL, &len, NULL, 0);
-		char buf[len + 5];
-		strcpy(buf, "PATH=");
-		sysctl(mib, 2, buf + 5, &len, NULL, 0);
+		std::vector<char> buf(len + 5);
+		strcpy(buf.data(), "PATH=");
+		sysctl(mib, 2, buf.data() + 5, &len, NULL, 0);
 
-		char const* envp[] = { "LANG=en_US.UTF-8", "LC_CTYPE=en_US.UTF-8", buf, NULL };
+		char const* envp[] = { "LANG=en_US.UTF-8", "LC_CTYPE=en_US.UTF-8", buf.data(), NULL };
 		execve(argv[0], (char* const*)argv, (char* const*)envp);
 		_exit(EXIT_FAILURE);
 	}
@@ -119,6 +120,16 @@ void OakPrintBadAssertion (char const* lhs, char const* op, char const* rhs, std
 {
 	if([[exception name] isEqualToString:@"FSExecutionErrorException"])
 		return NO;
+
+	for(NSString* frame in [exception callStackSymbols])
+	{
+		if([frame containsString:@"Accessibility"] || [frame containsString:@"_AX"])
+		{
+			os_log_info(OS_LOG_DEFAULT, "Suppressed accessibility exception: %{public}@: %{public}@", exception.name, exception.reason);
+			return NO;
+		}
+	}
+
 	os_log_error(OS_LOG_DEFAULT, "%{public}@: %{public}@\n", exception.name, exception.reason);
 	abort();
 	return YES;

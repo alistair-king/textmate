@@ -1,4 +1,5 @@
 #import "OakTabBarView.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <OakAppKit/NSImage Additions.h>
 #import <OakAppKit/OakUIConstructionFunctions.h>
 #import <OakAppKit/OakAppKit.h>
@@ -6,9 +7,7 @@
 #import <OakFoundation/OakFoundation.h>
 #import <TMFileReference/TMFileReference.h>
 #import <oak/misc.h>
-
-static NSString* kUserDefaultsTabItemMinWidthKey = @"tabItemMinWidth";
-static NSString* kUserDefaultsTabItemMaxWidthKey = @"tabItemMaxWidth";
+#import <Preferences/Keys.h>
 
 static void DisableImplicitAnimationForBlock (void(^handler)())
 {
@@ -78,7 +77,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 
 - (NSArray*)writableTypesForPasteboard:(NSPasteboard*)aPasteboard
 {
-	return OakIsEmptyString(_path) ? @[ OakTabItemPasteboardType ] : @[ OakTabItemPasteboardType, (NSString*)kUTTypeFileURL ];
+	return OakIsEmptyString(_path) ? @[ OakTabItemPasteboardType ] : @[ OakTabItemPasteboardType, UTTypeFileURL.identifier ];
 }
 
 - (NSPasteboardWritingOptions)writingOptionsForType:(NSString*)aType pasteboard:(NSPasteboard*)aPasteboard
@@ -88,7 +87,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 
 - (id)pasteboardPropertyListForType:(NSString*)aType
 {
-	if([aType isEqualToString:(NSString*)kUTTypeFileURL])
+	if([aType isEqualToString:UTTypeFileURL.identifier])
 		return [NSURL fileURLWithPath:_path].absoluteString;
 
 	NSMutableDictionary* dict = [NSMutableDictionary dictionary];
@@ -277,8 +276,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 		self.overflowButton.hidden = YES;
 
-		if(@available(macos 10.13, *))
-			[NSWorkspace.sharedWorkspace addObserver:self forKeyPath:@"voiceOverEnabled" options:NSKeyValueObservingOptionInitial context:kOakTabViewVoiceOverContext];
+		[NSWorkspace.sharedWorkspace addObserver:self forKeyPath:@"voiceOverEnabled" options:NSKeyValueObservingOptionInitial context:kOakTabViewVoiceOverContext];
 
 		NSDictionary* views = @{
 			@"background": _backgroundView,
@@ -320,8 +318,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 - (void)dealloc
 {
 	self.tabItem = nil;
-	if(@available(macos 10.13, *))
-		[NSWorkspace.sharedWorkspace removeObserver:self forKeyPath:@"voiceOverEnabled" context:kOakTabViewVoiceOverContext];
+	[NSWorkspace.sharedWorkspace removeObserver:self forKeyPath:@"voiceOverEnabled" context:kOakTabViewVoiceOverContext];
 }
 
 - (void)setHidden:(BOOL)flag
@@ -478,8 +475,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 {
 	if(context == kOakTabViewVoiceOverContext)
 	{
-		if(@available(macos 10.13, *))
-			self.voiceOverEnabled = NSWorkspace.sharedWorkspace.isVoiceOverEnabled;
+		self.voiceOverEnabled = NSWorkspace.sharedWorkspace.isVoiceOverEnabled;
 	}
 	else if(context == kOakTabViewTitleContext)
 		self.textField.stringValue = self.tabItem.title;
@@ -684,14 +680,6 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 - (instancetype)initWithFrame:(NSRect)aRect
 {
-	static dispatch_once_t onceToken;
-	dispatch_once(&onceToken, ^{
-		[NSUserDefaults.standardUserDefaults registerDefaults:@{
-			kUserDefaultsTabItemMinWidthKey: @(120),
-			kUserDefaultsTabItemMaxWidthKey: @(250),
-		}];
-	});
-
 	if(self = [super initWithFrame:aRect])
 	{
 		self.accessibilityRole  = NSAccessibilityTabGroupRole;
@@ -864,7 +852,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		}
 		else
 		{
-			item.image = [[NSWorkspace.sharedWorkspace iconForFileType:NSFileTypeForHFSTypeCode(kUnknownFSObjectIcon)] copy];
+			item.image = [[NSWorkspace.sharedWorkspace iconForContentType:UTTypeData] copy];
 			item.image.size = NSMakeSize(16, 16);
 		}
 

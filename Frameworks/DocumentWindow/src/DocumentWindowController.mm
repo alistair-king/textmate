@@ -37,11 +37,6 @@
 #import <kvdb/kvdb.h>
 #import <crash/info.h>
 
-static NSString* const kUserDefaultsAlwaysFindInDocument = @"alwaysFindInDocument";
-static NSString* const kUserDefaultsDisableFolderStateRestore = @"disableFolderStateRestore";
-static NSString* const kUserDefaultsHideStatusBarKey = @"hideStatusBar";
-static NSString* const kUserDefaultsDisableBundleSuggestionsKey = @"disableBundleSuggestions";
-static NSString* const kUserDefaultsGrammarsToNeverSuggestKey = @"grammarsToNeverSuggest";
 
 static bool can_reach_host (char const* host)
 {
@@ -206,6 +201,9 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 		self.window.releasedWhenClosed = NO;
 
 		_titlebarViewController = [[NSTitlebarAccessoryViewController alloc] init];
+		// AppKit otherwise forces the accessory to its standard 36pt height on macOS 26+
+		// instead of the tab bar's 23pt intrinsic height.
+		_titlebarViewController.automaticallyAdjustsSize = NO;
 		self.tabBarView.frameSize = self.tabBarView.intrinsicContentSize;
 		_titlebarViewController.view = self.tabBarView;
 		_titlebarViewController.fullScreenMinHeight = NSHeight(self.tabBarView.frame);
@@ -346,6 +344,10 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	[self.terminalPanelController stopTerminal];
 	if((([self.window styleMask] & NSWindowStyleMaskFullScreen) != NSWindowStyleMaskFullScreen) && !self.window.isZoomed)
 		[NSUserDefaults.standardUserDefaults setObject:NSStringFromRect([self windowFrame]) forKey:@"DocumentControllerWindowFrame"];
+
+	// Resign first responder before teardown to let TextInputUI disconnect cleanly
+	if([self.window.firstResponder isKindOfClass:[NSView class]])
+		[self.window makeFirstResponder:nil];
 
 	[_arrayController unbind:NSContentBinding];
 
@@ -1525,6 +1527,15 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	attributes.insert(_projectScopeAttributes.begin(), _projectScopeAttributes.end());
 	attributes.insert(_externalScopeAttributes.begin(), _externalScopeAttributes.end());
 
+	if (self.fileBrowserVisible) {
+		NSResponder *first = [self.window firstResponder];
+		if ([first isKindOfClass:[NSView class]] &&
+			[(NSView *)first isDescendantOf:self.fileBrowser.view])
+		{
+			attributes.insert("attr.filebrowser");
+		}
+	}
+
 	return [NSString stringWithCxxString:text::join(attributes, " ")];
 }
 
@@ -2554,6 +2565,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 	++DisableSessionSavingCount;
 
 	NSWindow* keyWindow;
+	NSMutableArray<NSWindow*>* fullScreenWindows = [NSMutableArray array];
 
 	NSDictionary* session = [NSDictionary dictionaryWithContentsOfFile:[self sessionPath]];
 	for(NSDictionary* project in session[@"projects"])
@@ -2572,13 +2584,16 @@ static NSUInteger DisableSessionSavingCount = 0;
 
 		if([project[@"miniaturized"] boolValue])
 		{
+			[controller.window orderBack:self];
 			[controller.window miniaturize:nil];
+		}
+		else if([project[@"fullScreen"] boolValue])
+		{
+			[fullScreenWindows addObject:controller.window];
 		}
 		else
 		{
-			if([project[@"fullScreen"] boolValue])
-				[controller.window toggleFullScreen:self];
-			else if([project[@"zoomed"] boolValue])
+			if([project[@"zoomed"] boolValue])
 				[controller.window zoom:self];
 
 			[controller.window orderFront:self];
@@ -2589,6 +2604,15 @@ static NSUInteger DisableSessionSavingCount = 0;
 	}
 
 	[keyWindow makeKeyWindow];
+
+	// Defer fullscreen transitions until regular windows are fully ordered
+	if(fullScreenWindows.count)
+	{
+		dispatch_async(dispatch_get_main_queue(), ^{
+			for(NSWindow* window in fullScreenWindows)
+				[window toggleFullScreen:self];
+		});
+	}
 
 	--DisableSessionSavingCount;
 	return res;
@@ -2767,8 +2791,14 @@ static NSUInteger DisableSessionSavingCount = 0;
 
 	if(NSString* projectDir = self.projectPath)
 	{
-		res["TM_PROJECT_DIRECTORY"] = [projectDir fileSystemRepresentation];
-		res["TM_PROJECT_UUID"]      = to_s(self.identifier);
+		// The project path is seeded once (session restore, first pathed document,
+		// project folder menu) and never re-validated, so it can outlive the folder
+		// it names. Skip the variable rather than clear the path: consumers fall back
+		// to TM_DIRECTORY, and an offline volume recovers when it is mounted again.
+		BOOL isDirectory = NO;
+		if([NSFileManager.defaultManager fileExistsAtPath:projectDir isDirectory:&isDirectory] && isDirectory)
+			res["TM_PROJECT_DIRECTORY"] = [projectDir fileSystemRepresentation];
+		res["TM_PROJECT_UUID"] = to_s(self.identifier);
 	}
 
 	return res;
