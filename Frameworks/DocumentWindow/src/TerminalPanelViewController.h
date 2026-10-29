@@ -26,7 +26,8 @@ extern NSString* const kUserDefaultsTerminalPanelPlacementKey;
 - (void)focusTerminal;
 - (void)applyTerminalFont:(NSFont*)font;
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection;
-- (BOOL)confirmTerminalClose;
+@property (nonatomic, readonly) BOOL terminalHasRunningWork; // a session is running a foreground program
+- (void)confirmTerminalCloseInWindow:(NSWindow*)window completionHandler:(void(^)(BOOL canClose))callback; // sheet on window; immediate when idle
 - (void)stopTerminal;
 - (instancetype)initWithContentView:(NSView*)contentView;
 @end

@@ -91,6 +91,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
 @property (nonatomic) ProjectLayoutView*          layoutView;
 @property (nonatomic) TerminalPanelViewController* terminalPanelController;
+@property (nonatomic) BOOL                         terminalCloseConfirmed; // set once the user approved ending running shells, so the re-issued close does not ask again
 @property (nonatomic) BOOL                         terminalOnlyWindow; // created by detaching a terminal tab; closes with its last session while the placeholder document is untouched
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
@@ -657,14 +658,28 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 
 - (BOOL)windowShouldClose:(id)sender
 {
-	if(![self.terminalPanelController confirmTerminalClose])
+	BOOL terminalConfirmed = self.terminalCloseConfirmed;
+	self.terminalCloseConfirmed = NO;
+	if(!terminalConfirmed && self.terminalPanelController.terminalHasRunningWork)
+	{
+		[self.terminalPanelController confirmTerminalCloseInWindow:self.window completionHandler:^(BOOL canClose){
+			if(canClose)
+			{
+				self.terminalCloseConfirmed = YES;
+				[self.window performClose:nil];
+			}
+		}];
 		return NO;
+	}
 
 	if(!self.htmlOutputInWindow && _htmlOutputView.isRunningCommand)
 	{
 		[_htmlOutputView stopLoadingWithUserInteraction:YES completionHandler:^(BOOL didStop){
 			if(didStop)
+			{
+				self.terminalCloseConfirmed = YES; // already asked above
 				[sender performSelector:@selector(performClose:) withObject:self afterDelay:0];
+			}
 		}];
 		return NO;
 	}
@@ -762,14 +777,45 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	}
 }
 
++ (void)confirmTerminalCloseForControllers:(NSArray<DocumentWindowController*>*)controllers completionHandler:(void(^)(BOOL canClose))callback
+{
+	if(controllers.count == 0)
+		return callback(YES);
+
+	DocumentWindowController* controller = controllers.firstObject;
+	[controller.window makeKeyAndOrderFront:nil]; // the sheet needs to say which window it belongs to
+	[controller.terminalPanelController confirmTerminalCloseInWindow:controller.window completionHandler:^(BOOL canClose){
+		if(canClose)
+				[self confirmTerminalCloseForControllers:[controllers subarrayWithRange:NSMakeRange(1, controllers.count-1)] completionHandler:callback];
+		else	callback(NO);
+	}];
+}
+
 + (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender
 {
+	NSMutableArray<DocumentWindowController*>* busy = [NSMutableArray array];
 	for(DocumentWindowController* controller in SortedControllers())
 	{
-		if(![controller.terminalPanelController confirmTerminalClose])
-			return NSTerminateCancel;
+		if(controller.terminalPanelController.terminalHasRunningWork)
+			[busy addObject:controller];
 	}
 
+	if(busy.count == 0)
+		return [self applicationShouldTerminateAfterTerminalCheck];
+
+	[self confirmTerminalCloseForControllers:busy completionHandler:^(BOOL canClose){
+		if(!canClose)
+			return [NSApp replyToApplicationShouldTerminate:NO];
+
+		NSApplicationTerminateReply reply = [self applicationShouldTerminateAfterTerminalCheck];
+		if(reply != NSTerminateLater) // otherwise the unsaved-documents flow replies itself
+			[NSApp replyToApplicationShouldTerminate:reply == NSTerminateNow];
+	}];
+	return NSTerminateLater;
+}
+
++ (NSApplicationTerminateReply)applicationShouldTerminateAfterTerminalCheck
+{
 	NSMutableArray<DocumentWindowController*>* controllers = [NSMutableArray array];
 	NSMutableArray<OakDocument*>* documents = [NSMutableArray array];
 	for(DocumentWindowController* controller in SortedControllers())

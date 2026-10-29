@@ -190,13 +190,22 @@ static NSString* const kUserDefaultsTerminalPanelHeightKey = @"terminalPanelHeig
 #endif
 }
 
-- (BOOL)confirmTerminalClose
+- (BOOL)terminalHasRunningWork
 {
 #if HAVE_OAK_SWIFTUI
-	return !_terminalController || [_terminalController confirmClose];
+	return _terminalController.hasRunningWork;
 #else
-	return YES;
+	return NO;
 #endif
+}
+
+- (void)confirmTerminalCloseInWindow:(NSWindow*)window completionHandler:(void(^)(BOOL canClose))callback
+{
+#if HAVE_OAK_SWIFTUI
+	if(_terminalController)
+		return [_terminalController confirmCloseIn:window completion:callback];
+#endif
+	callback(YES);
 }
 
 - (void)stopTerminal

@@ -110,8 +110,11 @@ private final class TerminalContainer: NSView {
 
     @objc public func closeSessions(withIdentifiers identifiers: [UUID]) {
         let closing = sessions.filter { identifiers.contains($0.uuid) }
-        guard confirmClose(terminals: closing.map(\.terminal)) else { return }
-        for session in closing { removeSession(id: session.id) }
+        confirmClose(terminals: closing.map(\.terminal), in: nil) { [weak self] canClose in
+            guard canClose, let self else { return }
+            // The confirmation sheet is asynchronous; a session may have exited while it was up.
+            for session in closing { self.removeSession(id: session.id) }
+        }
     }
     @objc public var openFile: ((URL, Int, Int) -> Void)?
     @objc public var workingDirectoryProvider: (() -> String)?
@@ -243,18 +246,23 @@ private final class TerminalContainer: NSView {
         return foreground > 0 && foreground != process.shellPid
     }
 
-    @objc public func confirmClose() -> Bool {
-        confirmClose(terminals: sessions.map(\.terminal))
+    /// Asks, as a sheet on the given window, before ending sessions that run a foreground program; calls back immediately when nothing is running.
+    @objc public func confirmClose(in window: NSWindow?, completion: @escaping (Bool) -> Void) {
+        confirmClose(terminals: sessions.map(\.terminal), in: window, completion: completion)
     }
 
-    private func confirmClose(terminals: [LocalProcessTerminalView]) -> Bool {
-        guard terminals.contains(where: { hasRunningWork(in: $0) }) else { return true }
+    private func confirmClose(terminals: [LocalProcessTerminalView], in window: NSWindow?, completion: @escaping (Bool) -> Void) {
+        guard terminals.contains(where: { hasRunningWork(in: $0) }) else { return completion(true) }
         let alert = NSAlert()
         alert.messageText = "Close terminal sessions?"
         alert.informativeText = "Programs are still running in the terminal sessions being closed. Closing them will end those sessions."
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Close")
-        return alert.runModal() == .alertSecondButtonReturn
+        if let window = window ?? view.window, window.isVisible {
+            alert.beginSheetModal(for: window) { completion($0 == .alertSecondButtonReturn) }
+        } else {
+            completion(alert.runModal() == .alertSecondButtonReturn)
+        }
     }
 
     @objc public func stopSession() {
