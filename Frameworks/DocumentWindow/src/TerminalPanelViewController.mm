@@ -178,6 +178,11 @@ typedef NS_ENUM(NSInteger, TerminalDividerDrag) {
 		_terminalTabBarController.detachSessionHandler = ^(NSUUID* identifier){
 			if(weakSelf.detachSessionHandler) weakSelf.detachSessionHandler(identifier);
 		};
+		// The tab bar owns the controller's `tabsDidChange` block; this rides on its single reload seam.
+		_terminalTabBarController.tabsDidReloadHandler = ^{
+			if(weakSelf.terminalAttentionDidChange)
+				weakSelf.terminalAttentionDidChange();
+		};
 		_terminalController.shellPath = self.terminalShellPath;
 		_terminalController.shellArguments = self.terminalShellArguments;
 		_terminalController.delegate = self;
@@ -238,6 +243,22 @@ typedef NS_ENUM(NSInteger, TerminalDividerDrag) {
 {
 #if HAVE_OAK_SWIFTUI
 	[_terminalController closeSessionsWithIdentifiers:identifiers];
+#endif
+}
+
+- (NSString*)terminalAttentionSubtitle
+{
+#if HAVE_OAK_SWIFTUI
+	return _terminalController.attentionSubtitle;
+#else
+	return nil;
+#endif
+}
+
+- (void)simulateSessionAttentionAtIndex:(NSInteger)index state:(NSString*)state kind:(NSString*)kind
+{
+#if HAVE_OAK_SWIFTUI
+	[_terminalController simulateSessionAttentionAt:index state:state kind:kind];
 #endif
 }
 

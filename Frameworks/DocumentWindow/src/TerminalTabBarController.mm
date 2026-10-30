@@ -29,6 +29,10 @@
 {
 	[self.tabBar reloadData];
 	self.tabBar.selectedTabIndex = self.controller.selectedSessionIndex;
+	// Single fan-out point: consumers that only need the resulting state hook here instead of
+	// fighting over the controller's one `tabsDidChange` block.
+	if(self.tabsDidReloadHandler)
+		self.tabsDidReloadHandler();
 }
 
 - (NSUInteger)numberOfRowsInTabBarView:(OakTabBarView*)bar { return self.controller.sessionIdentifiers.count; }

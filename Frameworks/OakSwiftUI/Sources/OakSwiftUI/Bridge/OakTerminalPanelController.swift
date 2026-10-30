@@ -66,6 +66,8 @@ private final class TerminalContainer: NSView {
     @objc public var sessionTitles: [String] { sessions.map(\.title) }
     /// Unseen OSC 7501 completions, parallel to `sessionIdentifiers`; drives the tab bar dot.
     @objc public var sessionNeedsAttention: [Bool] { sessions.map(\.attention.needsAttention) }
+    /// Worst unseen state across this panel's sessions, as window subtitle text; nil when nothing needs the user.
+    @objc public var attentionSubtitle: String? { TerminalAttention.subtitle(for: sessions.map(\.attention)) }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
     @objc public weak var delegate: OakTerminalPanelControllerDelegate?
@@ -328,6 +330,15 @@ private final class TerminalContainer: NSView {
     }
 
     private func rebuildTabs() { tabsDidChange?() }
+
+    /// Test hook: raises or clears one session's unseen flag without a program reporting status, so the
+    /// surrounding plumbing can be tested without spawning a child that speaks OSC 7501.
+    @objc public func simulateSessionAttention(at index: Int, state: String?, kind: String?) {
+        guard sessions.indices.contains(index) else { return }
+        let raised = state.flatMap(TerminalProgramStatusState.init(rawValue:))
+        sessions[index].attention.force(raised, blockedKind: kind.flatMap(TerminalProgramStatusKind.init(rawValue:)))
+        rebuildTabs()
+    }
 
     private func removeSession(id: Int) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }

@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <OakTabBarView/OakTabBarView.h>
 #import "../src/TerminalPanelViewController.h"
+#import "../src/DocumentWindowController.h"
 
 // A plain sh without rc files, so tests do not depend on the user's login shell or dotfiles.
 static TerminalPanelViewController* MakePanel (NSView* content)
@@ -210,3 +211,52 @@ void test_terminal_panel_placement_and_last_session ()
 		}
 	});
 }
+
+#if HAVE_OAK_SWIFTUI
+// The panel is collapsed by default, so this also covers the state the user cannot see: the window
+// subtitle is the only indicator when the terminal panel is hidden or the window is in the background.
+void test_terminal_attention_drives_window_subtitle ()
+{
+	dispatch_sync(dispatch_get_main_queue(), ^{
+		@autoreleasepool
+		{
+			[NSApplication sharedApplication];
+			[DocumentWindowController disableSessionSave];
+			DocumentWindowController* controller = [[DocumentWindowController alloc] init];
+			TerminalPanelViewController* panel = [controller valueForKey:@"terminalPanelController"];
+			panel.terminalShellPath      = @"/bin/sh";
+			panel.terminalShellArguments = @[ ];
+			[panel startTerminal];
+			if(panel.hasTerminal) // built without the Swift terminal component, or no shell could start
+			{
+				NSWindow* window = controller.window;
+				OAK_ASSERT(window.subtitle.length == 0);
+
+				[panel simulateSessionAttentionAtIndex:0 state:@"done" kind:nil];
+				OAK_ASSERT([window.subtitle isEqualToString:@"terminal finished"]);
+
+				[panel simulateSessionAttentionAtIndex:0 state:@"blocked" kind:@"permission"];
+				OAK_ASSERT([window.subtitle isEqualToString:@"terminal needs permission"]);
+
+				[panel simulateSessionAttentionAtIndex:0 state:@"blocked" kind:@"question"];
+				OAK_ASSERT([window.subtitle isEqualToString:@"terminal needs your input"]);
+
+				[panel simulateSessionAttentionAtIndex:0 state:@"blocked" kind:nil];
+				OAK_ASSERT([window.subtitle isEqualToString:@"terminal needs your input"]);
+
+				// A visible panel must not change the outcome.
+				panel.panelVisible = YES;
+				[panel simulateSessionAttentionAtIndex:0 state:@"done" kind:nil];
+				OAK_ASSERT([window.subtitle isEqualToString:@"terminal finished"]);
+
+				// Closing the only session removes the fact the subtitle was reporting.
+				[panel closeTerminalSessions:panel.terminalSessionIdentifiers];
+				OAK_ASSERT(window.subtitle.length == 0);
+
+				[panel stopTerminal];
+			}
+			[DocumentWindowController enableSessionSave];
+		}
+	});
+}
+#endif

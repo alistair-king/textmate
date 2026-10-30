@@ -92,6 +92,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
 @property (nonatomic) ProjectLayoutView*          layoutView;
 @property (nonatomic) TerminalPanelViewController* terminalPanelController;
+@property (nonatomic, copy) NSString*              terminalSubtitle; // the subtitle text this window last wrote for terminal attention, nil when none
 @property (nonatomic) BOOL                         terminalCloseConfirmed; // set once the user approved ending running shells, so the re-issued close does not ask again
 @property (nonatomic) BOOL                         terminalOnlyWindow; // created by detaching a terminal tab; closes with its last session while the placeholder document is untouched
 @property (nonatomic) OakTabBarView*              tabBarView;
@@ -230,6 +231,9 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 			NSMutableDictionary* item = [@{ @"path": url.path } mutableCopy];
 			if(line > 0) item[@"selectionString"] = [NSString stringWithFormat:@"%ld:%ld", (long)line, (long)MAX(1, column)];
 			[terminalOwner openItems:@[ item ] closingOtherTabs:NO activate:YES];
+		};
+		self.terminalPanelController.terminalAttentionDidChange = ^{
+			[terminalOwner updateTerminalAttentionSubtitle];
 		};
 		self.terminalPanelController.detachSessionHandler = ^(NSUUID* identifier){
 			DocumentWindowController* source = terminalOwner;
@@ -1409,6 +1413,22 @@ static NSArray* const kObservedKeyPaths = @[ @"textView.font", @"textView.fontSc
 	{
 		self.window.title = @"«no documents»";
 	}
+}
+
+// The terminal's unseen state is the only thing this window puts in the subtitle; the title and the
+// document tab bar's `documentEdited` flag stay the document's business. `subtitle` (unlike `title`)
+// is invisible in fullscreen and while minimized, so this only helps a window the user can see.
+- (void)updateTerminalAttentionSubtitle
+{
+	NSString* subtitle = self.terminalPanelController.terminalAttentionSubtitle;
+	if(subtitle.length == 0)
+		subtitle = nil;
+	if(self.terminalSubtitle == subtitle || [self.terminalSubtitle isEqualToString:subtitle])
+		return;
+	// Remembered only to skip redundant writes; the terminal is the sole writer of this subtitle.
+	self.terminalSubtitle = subtitle;
+	// AppKit rejects nil here even though the getter starts out empty; "" is the cleared state.
+	self.window.subtitle = subtitle ?: @"";
 }
 
 - (void)updateExternalAttributes

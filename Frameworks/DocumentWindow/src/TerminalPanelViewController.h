@@ -26,6 +26,13 @@ extern NSString* const kTerminalPanelPositionBottom;
 @property (nonatomic, copy) NSArray<NSString*>* terminalShellArguments; // used with terminalShellPath
 @property (nonatomic, readonly) NSArray<NSUUID*>* terminalSessionIdentifiers;
 - (void)closeTerminalSessions:(NSArray<NSUUID*>*)identifiers; // asks for confirmation when work is running
+// Nil unless a session is holding an unseen completion or a blocked program; feeds the window subtitle.
+// Recomputed from the session list, so it is correct while the panel is hidden and after a session moves away.
+@property (nonatomic, readonly) NSString* terminalAttentionSubtitle;
+// Called whenever the session list or one session's state changed, including while the panel is hidden.
+@property (nonatomic, copy) void (^terminalAttentionDidChange)(void);
+// Test hook: raises or clears one session's unseen flag (state: done/blocked, nil clears) without a program report.
+- (void)simulateSessionAttentionAtIndex:(NSInteger)index state:(NSString*)state kind:(NSString*)kind;
 @property (nonatomic, readonly) BOOL hasTerminal; // YES once a shell has been started or received
 - (void)startTerminal; // starts the first shell in the directory from terminalDirectoryProvider
 - (void)focusTerminal;

@@ -307,8 +307,8 @@ import Darwin
 
 // `#expect` cannot call a mutating member inline, so the transitions go through this wrapper.
 @discardableResult
-private func record(_ attention: inout TerminalAttention, _ states: [TerminalProgramStatusState], selected: Bool = false) -> Bool {
-    attention.update(states: states, isSelected: selected)
+private func record(_ attention: inout TerminalAttention, _ states: [TerminalProgramStatusState], kind: TerminalProgramStatusKind? = nil, selected: Bool = false) -> Bool {
+    attention.update(states: states, blockedKind: kind, isSelected: selected)
 }
 
 @MainActor
@@ -376,6 +376,58 @@ private func record(_ attention: inout TerminalAttention, _ states: [TerminalPro
 }
 
 @MainActor
+@Test func terminalAttentionKeepsTheKindThatRaisedIt() {
+    var permission = TerminalAttention()
+    #expect(!record(&permission, [.working]))
+    #expect(record(&permission, [.blocked], kind: .permission))
+    #expect(permission.needsAttention)
+    #expect(permission.raisedState == .blocked)
+    #expect(permission.blockedKind == .permission)
+    permission.clear()
+    #expect(!permission.needsAttention)
+    // The kind belongs to the transition, so clearing the dot drops it too.
+    #expect(permission.blockedKind == nil)
+
+    // A blocked record without a kind is still blocked; the window falls back to the generic wording.
+    var bare = TerminalAttention()
+    #expect(record(&bare, [.blocked]))
+    #expect(bare.raisedState == .blocked)
+    #expect(bare.blockedKind == nil)
+
+    // A done transition must not inherit the previous kind, since a tracker outlives the prompt.
+    var reusable = TerminalAttention()
+    #expect(record(&reusable, [.blocked], kind: .question))
+    reusable.clear()
+    #expect(record(&reusable, [.done]))
+    #expect(reusable.raisedState == .done)
+    #expect(reusable.blockedKind == nil)
+}
+
+@MainActor
+@Test func terminalAttentionSubtitleFoldsTheWholeWindow() {
+    func pending(_ state: TerminalProgramStatusState, kind: TerminalProgramStatusKind? = nil) -> TerminalAttention {
+        var attention = TerminalAttention()
+        _ = record(&attention, [.working])
+        _ = record(&attention, [state], kind: kind)
+        return attention
+    }
+    let quiet = TerminalAttention()
+
+    #expect(TerminalAttention.subtitle(for: []) == nil)
+    #expect(TerminalAttention.subtitle(for: [quiet, quiet]) == nil)
+    #expect(TerminalAttention.subtitle(for: [pending(.done)]) == "terminal finished")
+    #expect(TerminalAttention.subtitle(for: [pending(.blocked)]) == "terminal needs your input")
+    #expect(TerminalAttention.subtitle(for: [pending(.blocked, kind: .question)]) == "terminal needs your input")
+    #expect(TerminalAttention.subtitle(for: [pending(.blocked, kind: .auth)]) == "terminal needs your input")
+    #expect(TerminalAttention.subtitle(for: [pending(.blocked, kind: .permission)]) == "terminal needs permission")
+    // A blocked tab outranks a finished one, and permission outranks the other kinds that raise the dot.
+    #expect(TerminalAttention.subtitle(for: [pending(.done), quiet, pending(.blocked)]) == "terminal needs your input")
+    #expect(TerminalAttention.subtitle(for: [pending(.done), pending(.blocked, kind: .auth)]) == "terminal needs your input")
+    #expect(TerminalAttention.subtitle(for: [pending(.blocked, kind: .permission), pending(.blocked, kind: .question)]) == "terminal needs permission")
+    #expect(TerminalAttention.subtitle(for: [pending(.done), quiet]) == "terminal finished")
+}
+
+@MainActor
 @Test func osc7501LightsDotOnBackgroundTabUntilSelected() async throws {
     _ = NSApplication.shared
     let controller = makeTerminalController()
@@ -419,6 +471,10 @@ private func record(_ attention: inout TerminalAttention, _ states: [TerminalPro
     first.feed(text: oscStatus("state=blocked:kind=permission"))
     let blocked = try await waitForAttention(controller, [true, false])
     #expect(blocked)
+    // The window subtitle carries the same fact for a collapsed panel or a background window.
+    #expect(controller.attentionSubtitle == "terminal needs permission")
+    controller.selectSession(id: 1)
+    #expect(controller.attentionSubtitle == nil)
 }
 
 @MainActor
@@ -437,11 +493,14 @@ private func record(_ attention: inout TerminalAttention, _ states: [TerminalPro
     first.feed(text: oscStatus("state=done"))
     let lit = try await waitForAttention(source, [true, false])
     #expect(lit)
+    #expect(source.attentionSubtitle == "terminal finished")
 
     source.transferSession(identifier: identifier, to: target, at: 0)
     #expect(source.sessionCount == 1)
     #expect(target.sessionCount == 2)
     #expect(target.terminal === first)
+    // The attention the source window was showing left with the tab.
+    #expect(source.attentionSubtitle == nil)
     // The moved session lands selected in the destination, so the usual selection rule clears
     // its dot; the tracker travels with it, so the same snapshot cannot re-light it either.
     #expect(target.sessionNeedsAttention == [false, false])
