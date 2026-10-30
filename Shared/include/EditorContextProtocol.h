@@ -133,24 +133,6 @@ inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
         }
         return nil;
     }
-    if([method isEqual:@"propose_selection_fix"] || [method isEqual:@"get_selection_fix_status"]) {
-        BOOL proposal = [method isEqual:@"propose_selection_fix"];
-        NSArray* keys = proposal ? @[@"fixId", @"replacements", @"summary"] : @[@"fixId"];
-        for(NSString* key in arguments) if(![keys containsObject:key]) return @"Unknown argument";
-        if(![arguments[@"fixId"] isKindOfClass:NSString.class] || ![arguments[@"fixId"] length] || [arguments[@"fixId"] length] > 128) return @"fixId must identify a Fix Selection request";
-        if(proposal) {
-            if(![arguments[@"summary"] isKindOfClass:NSString.class] || ![arguments[@"summary"] length] || [arguments[@"summary"] length] > 2048) return @"summary must contain between 1 and 2,048 characters";
-            NSArray* replacements = arguments[@"replacements"];
-            if(![replacements isKindOfClass:NSArray.class] || !replacements.count || replacements.count > 128) return @"replacements must contain between 1 and 128 strings";
-            NSUInteger length = 0;
-            for(id text in replacements) {
-                if(![text isKindOfClass:NSString.class] || ![text canBeConvertedToEncoding:NSUTF8StringEncoding]) return @"Every replacement must be valid Unicode text";
-                length += [text length];
-                if(length > 32768) return @"Replacements may contain at most 32,768 UTF-16 units in total";
-            }
-        }
-        return nil;
-    }
     if([method isEqual:@"navigate_editor"]) {
         for(NSString* key in arguments)
             if(![@[@"documentId", @"path", @"line", @"column", @"endLine", @"endColumn", @"revision", @"focus"] containsObject:key]) return @"Unknown argument";

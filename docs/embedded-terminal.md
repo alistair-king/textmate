@@ -38,14 +38,6 @@ Relative paths use the session's shell working directory (queried from macOS, wi
 
 The bundled MCP server lets an agent query the current file, selected text, open documents, and unsaved buffer contents in its terminal's window. In a new terminal tab, run `tm-codex`, `tm-claude`, or `tm-opencode` to start the corresponding agent with editor context. Each launcher accepts `--check` to test the connection. Other MCP clients can obtain configuration with `"$TM_MCP_SERVER" --print-config`. See [Editor context MCP](editor-context-mcp.md) for setup and tool details.
 
-## Explain Selection
-
-Select text in the editor, then choose **Edit → Explain Selection…** or press **⌃⌥⌘E**. Choose Codex, Claude Code, or OpenCode and click **Explain**. TextMate remembers the last agent you chose. The agent must already be installed and signed in, just as when using its `tm-` launcher manually.
-
-The action opens a separate terminal tab in the document's project folder (or the usual terminal starting directory) with an initial request to explain the selection. Existing terminal sessions keep running. The request contains a snapshot of the selected text, its file information, and line positions, including unsaved or untitled content. Later edits or selection changes do not change that request. Disjoint and rectangular selections are supported, up to 128 ranges and 8,192 UTF-16 code units in total; larger selections produce a message asking you to select less text.
-
-The agent is asked to explain without editing files or executing the excerpt. Its normal permissions still apply, and its TextMate MCP connection can read additional context. The selected text is passed as a process argument, never typed into an existing shell. When the agent exits, the tab stays open with a login shell so its output or startup errors remain visible. The action is disabled when no text is selected or the terminal component is unavailable.
-
 ## Diagnostics for terminal agents
 
 With an agent running through `tm-codex`, `tm-claude`, or `tm-opencode`, ask it to **“Read TextMate's diagnostics and explain the errors and warnings in this file.”** The `get_diagnostics` tool reads the language-server reports behind the editor's inline diagnostics, including messages, severity, source, codes, and source ranges. Ask for file locations in the response, then Command-click a location to jump to that line.
@@ -66,22 +58,12 @@ For clients that use tools, ask **“Follow my current file and selection, using
 
 Subscriptions are optional, and there are no background editor queries without a subscriber. The feature does not automatically start model turns or recurring calls in tool-only clients. See [Follow editor changes](editor-context-mcp.md#follow-editor-changes) for the subscription protocol and cursor behavior.
 
-## Fix Selection
-
-Select code and choose **Edit → Fix Selection…**. Choose Codex, Claude Code, or OpenCode. The agent investigates the selected code to identify what needs fixing. TextMate opens a new terminal conversation with a snapshot of the selected passages and available cached LSP diagnostics. The agent must already be installed and signed in.
-
-The agent submits a proposed replacement through MCP. TextMate displays a **Review Selection Fix** window with a unified diff and **Apply Fix** / **Discard** buttons. Minus lines are removed; plus lines are added. Applying updates the live editor buffer, including unsaved or untitled documents, as one undoable action. Save when ready. Discard leaves the buffer untouched.
-
-Proposals are restricted to the captured selections. Moving the cursor or switching tabs does not retarget the fix. Any change to the document before application makes the request stale; invoke Fix Selection again using the current code. Multiple and rectangular selections are supported within the same 128-range / 8,192 UTF-16-unit snapshot limits as Explain Selection. A replacement can be empty to remove selected code; combined replacements are limited to 32,768 UTF-16 units.
-
-One Fix Selection request is retained per window; starting another replaces the previous request. Closing the document or window invalidates the pending fix. The prompt instructs the agent to propose through MCP rather than edit files on disk; the agent's own CLI permissions still apply. If the required fix extends beyond the selected passages, the agent is asked to explain and request a larger selection.
-
 ## Agent-proposed buffer edits
 
-While chatting with an agent started through `tm-codex`, `tm-claude`, or `tm-opencode`, ask it to propose changes to an open buffer. For example: **“Simplify this function and propose the edits in TextMate for review.”** A prior Fix Selection command is not required.
+While chatting with an agent started through `tm-codex`, `tm-claude`, or `tm-opencode`, ask it to propose changes to an open buffer. For example: **“Simplify this function and propose the edits in TextMate for review.”**
 
 The agent reads the current live text and submits `propose_document_edits`. Review its diff in the **Review Buffer Edits** window and choose **Apply Edits** or **Discard**. This supports unsaved and untitled documents, insertions, replacements, and deletions. Apply groups the changes into one undo action; save the document when ready. If you change the target buffer while the agent works, the stale proposal cannot overwrite your newer edits.
 
 See [Propose edits to live buffers](editor-context-mcp.md#propose-edits-to-live-buffers) for coordinates, limits, and proposal status.
 
-Edit review windows (Fix Selection and agent-proposed buffer edits) can be moved and resized independently of the editor. The diff expands with the window. Closing a review window discards the proposal; Apply still checks that the buffer has not changed.
+Buffer edit review windows can be moved and resized independently of the editor. The diff expands with the window. Closing a review window discards the proposal; Apply still checks that the buffer has not changed.

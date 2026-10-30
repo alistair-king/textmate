@@ -212,20 +212,9 @@ private final class TerminalContainer: NSView {
         return path
     }
 
-    /// Start in a separate tab; pass arguments directly, never as shell source or PTY input.
-    @objc(startCommandWithExecutable:arguments:title:inDirectory:)
-    public func startCommand(executable: String, arguments: [String], title: String, inDirectory path: String) -> Bool {
-        guard executable.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: executable),
-              !([executable] + arguments).contains(where: { $0.contains("\0") }) else { return false }
-        started = true
-        launchShell(command: [executable] + arguments, title: title, inDirectory: path)
-        focusTerminal()
-        return true
-    }
-
-    private func launchShell(command: [String]? = nil, title: String? = nil, inDirectory path: String? = nil) {
+    private func launchShell() {
         _ = view
-        let launchDirectory = Self.existingDirectory(path ?? delegate?.terminalPanelWorkingDirectory?(self))
+        let launchDirectory = Self.existingDirectory(delegate?.terminalPanelWorkingDirectory?(self))
         let terminal = FileLinkTerminalView(frame: NSRect(x: 0, y: 0, width: max(32, view.bounds.width), height: max(32, view.bounds.height)))
         terminal.owner = self
         terminal.launchDirectory = launchDirectory
@@ -245,7 +234,7 @@ private final class TerminalContainer: NSView {
         let id = nextID
         nextID += 1
         let sessionUUID = UUID()
-        sessions.append(Session(id: id, uuid: sessionUUID, terminal: terminal, title: title ?? Self.defaultTitle(forID: id)))
+        sessions.append(Session(id: id, uuid: sessionUUID, terminal: terminal, title: Self.defaultTitle(forID: id)))
         updateTerminalColors()
         selectSession(id: id)
 
@@ -276,9 +265,7 @@ private final class TerminalContainer: NSView {
         for key in Array(environment.keys) where key.hasPrefix("DYLD_") || key == "ASAN_OPTIONS" {
             environment.removeValue(forKey: key)
         }
-        // Pass the command as positional parameters so its arguments are never interpreted as shell source.
-        let args = command.map { ["-l", "-i", "-c", "\"$@\"; exec \"$SHELL\" -l", "tm-explain-selection"] + $0 } ?? (shellArguments ?? ["-l"])
-        terminal.startProcess(executable: command == nil ? shell : "/bin/zsh", args: args, environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
+        terminal.startProcess(executable: shell, args: shellArguments ?? ["-l"], environment: environment.map { "\($0.key)=\($0.value)" }, currentDirectory: launchDirectory)
     }
 
     // Run before AppKit's key-equivalent search: the editor and global bundle menu

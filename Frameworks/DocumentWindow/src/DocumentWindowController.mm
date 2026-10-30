@@ -5,8 +5,7 @@
 #import "EditorContextDiagnostics.h"
 #import "EditorLanguageIntelligence.h"
 #import "EditorContextChanges.h"
-#import "SelectionExplanation.h"
-#import "SelectionFix.h"
+#import "BufferEditProposal.h"
 #import "ProjectChangesWindowController.h"
 #import <selection/selection.h>
 #import <EditorContextProtocol.h>
@@ -109,10 +108,8 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic, copy) NSString*              terminalSubtitle; // the subtitle text this window last wrote for terminal attention, nil when none
 @property (nonatomic) BOOL                         terminalCloseConfirmed; // set once the user approved ending running shells, so the re-issued close does not ask again
 @property (nonatomic) BOOL                         terminalOnlyWindow; // created by detaching a terminal tab; closes with its last session while the placeholder document is untouched
-@property (nonatomic) BOOL preparingSelectionExplanation;
-@property (nonatomic) SelectionFix* selectionFix;
 @property (nonatomic) EditReviewWindowController* editReviewController;
-@property (nonatomic) NSMutableDictionary<NSString*, SelectionFix*>* editProposals;
+@property (nonatomic) NSMutableDictionary<NSString*, BufferEditProposal*>* editProposals;
 @property (nonatomic) ProjectChangesWindowController* projectChangesController;
 @property (nonatomic) NSUInteger editorNavigationGeneration;
 @property (nonatomic) EditorContextChanges* editorChanges;
@@ -145,7 +142,6 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 
 - (EditorContextSnapshot*)editorContextForMethod:(NSString*)method arguments:(NSDictionary*)arguments;
 - (EditorContextSnapshot*)editorNavigation:(NSDictionary*)arguments;
-- (EditorContextSnapshot*)editorSelectionFix:(NSString*)method arguments:(NSDictionary*)arguments;
 - (EditorContextSnapshot*)editorDocumentEdits:(NSString*)method arguments:(NSDictionary*)arguments;
 - (void)loadNavigationDocument:(OakDocument*)document arguments:(NSDictionary*)arguments deadline:(double)deadline canCommit:(BOOL(^)(void))canCommit completion:(void(^)(NSDictionary*))completion;
 + (void)scheduleSessionBackup:(id)sender;
@@ -226,7 +222,6 @@ static NSDictionary* ContextDocument(OakDocument* document)
     }
     if([method isEqual:@"propose_document_edits"] || [method isEqual:@"get_edit_proposal_status"]) return [self editorDocumentEdits:method arguments:arguments];
     if([method isEqual:@"navigate_editor"]) return [self editorNavigation:arguments];
-    if([method isEqual:@"propose_selection_fix"] || [method isEqual:@"get_selection_fix_status"]) return [self editorSelectionFix:method arguments:arguments];
     if([method isEqual:@"get_editor_change_token"])
         return [EditorContextSnapshot response:@{ @"cursor": self.editorChanges.cursor, @"windowId": self.identifier.UUIDString }];
     if([method isEqual:@"get_editor_changes"]) {
@@ -295,7 +290,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 - (EditorContextSnapshot*)editorDocumentEdits:(NSString*)method arguments:(NSDictionary*)arguments
 {
 	if([method isEqual:@"get_edit_proposal_status"]) {
-		SelectionFix* proposal = self.editProposals[arguments[@"proposalId"]];
+		BufferEditProposal* proposal = self.editProposals[arguments[@"proposalId"]];
 		if(!proposal) return [EditorContextSnapshot response:editor_context::failure(@"This edit proposal is no longer available in this window.", @"proposal_unavailable")];
 		OakDocument* target = nil;
 		for(OakDocument* candidate in self.documents)
@@ -318,7 +313,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 			NSDictionary* plan = [buffer editPlanForArguments:arguments document:metadata deadline:deadline];
 			NSString* error = nil;
-			SelectionFix* proposal = plan[@"error"] ? nil : [[SelectionFix alloc] initWithEditPlan:plan summary:arguments[@"summary"] error:&error];
+			BufferEditProposal* proposal = plan[@"error"] ? nil : [[BufferEditProposal alloc] initWithEditPlan:plan summary:arguments[@"summary"] error:&error];
 			dispatch_async(dispatch_get_main_queue(), ^{
 				DocumentWindowController* controller = weakSelf;
 				if(!canCommit() || ![controller.identifier isEqual:ownerId]) { completion(editor_context::failure(@"The proposal expired or its terminal session changed.", @"proposal_cancelled")); return; }
@@ -346,47 +341,6 @@ static NSDictionary* ContextDocument(OakDocument* document)
 				completion(@{ @"proposalId": proposal.identifier, @"status": @"pending_review", @"applied": @NO, @"document": metadata });
 			});
 		});
-	}];
-}
-
-- (EditorContextSnapshot*)editorSelectionFix:(NSString*)method arguments:(NSDictionary*)arguments
-{
-	SelectionFix* fix = self.selectionFix;
-	if(!fix || ![fix.identifier isEqual:arguments[@"fixId"]])
-		return [EditorContextSnapshot response:editor_context::failure(@"This Fix Selection request is no longer available in this window. Invoke Fix Selection again.", @"fix_unavailable")];
-	__weak DocumentWindowController* weakSelf = self;
-	return [EditorContextSnapshot action:^(double deadline, BOOL (^canCommit)(void), void (^completion)(NSDictionary*)){
-		DocumentWindowController* controller = weakSelf;
-		if(!canCommit() || controller.selectionFix != fix) { completion(editor_context::failure(@"The fix request is no longer available.", @"fix_unavailable")); return; }
-		OakDocument* document = nil;
-		for(OakDocument* candidate in controller.documents)
-			if([candidate.identifier.UUIDString isEqual:fix.documentId]) { document = candidate; break; }
-		BOOL active = [fix.status isEqual:@"awaiting_proposal"] || [fix.status isEqual:@"pending_review"];
-		if(active && ![fix matchesDocument:document]) [fix markStale];
-		if([method isEqual:@"get_selection_fix_status"]) {
-			completion(@{ @"fixId": fix.identifier, @"status": fix.status });
-			return;
-		}
-		if([fix.status isEqual:@"stale"]) { completion(editor_context::failure(@"The document changed or closed. Invoke Fix Selection again.", @"document_changed")); return; }
-		if(controller.editReviewController || controller.window.attachedSheet || !controller.window.isVisible) { completion(editor_context::failure(@"The editor cannot show the review now. Close its current review or dialog and try again.", @"review_unavailable")); return; }
-		NSString* error = [fix prepareReplacements:arguments[@"replacements"] summary:arguments[@"summary"]];
-		if(error) { completion(editor_context::failure(error, @"invalid_proposal")); return; }
-		if(!canCommit()) { [fix discard]; completion(editor_context::failure(@"The fix proposal expired before review. Invoke Fix Selection again.", @"fix_unavailable")); return; }
-		controller.editReviewController = [fix reviewControllerWithCompletion:^(NSModalResponse response){
-			DocumentWindowController* owner = weakSelf;
-			owner.editReviewController = nil;
-			BOOL available = owner.selectionFix == fix && [owner.documents containsObject:document];
-			if(response != NSAlertFirstButtonReturn) { [fix discard]; return; }
-			if(!available || ![fix applyToDocument:document]) {
-				[fix markStale];
-				if(owner.window.isVisible)
-					[[NSAlert tmAlertWithMessageText:@"Fix Could Not Be Applied" informativeText:@"The document changed or closed while the fix was being prepared. Select the current code and invoke Fix Selection again." buttons:@"OK", nil] beginSheetModalForWindow:owner.window completionHandler:nil];
-				return;
-			}
-		}];
-		[controller.editReviewController.window center];
-		[controller.editReviewController showWindow:nil];
-		completion(@{ @"fixId": fix.identifier, @"status": @"pending_review", @"applied": @NO });
 	}];
 }
 
@@ -2407,17 +2361,6 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	[[self class] scheduleSessionBackup:self];
 }
 
-- (BOOL)canExplainSelection
-{
-#if HAVE_OAK_SWIFTUI
-	if(self.preparingSelectionExplanation || self.editReviewController || self.window.attachedSheet || !self.selectedDocument.isLoaded)
-		return NO;
-	for(auto const& range : [self.textView editorContextByteRanges])
-		if(range.min().index != range.max().index) return YES;
-#endif
-	return NO;
-}
-
 - (IBAction)showProjectChanges:(id)sender
 {
 	if(!self.projectChangesController) {
@@ -2433,75 +2376,6 @@ static NSDictionary* ContextDocument(OakDocument* document)
 		}];
 	}
 	[self.projectChangesController showWindow:sender];
-}
-
-- (IBAction)explainSelection:(id)sender { [self startSelectionAgentAction:NO]; }
-- (IBAction)fixSelection:(id)sender { [self startSelectionAgentAction:YES]; }
-
-- (void)startSelectionAgentAction:(BOOL)fixing
-{
-	if(![self canExplainSelection]) { NSBeep(); return; }
-	// Capture before displaying the sheet or moving focus to the terminal.
-	EditorContextSnapshot* snapshot = [self editorContextForMethod:@"get_editor_context" arguments:@{}];
-	EditorContextSnapshot* diagnostics = fixing ? [self editorContextForMethod:@"get_diagnostics" arguments:@{}] : nil;
-	ng::ranges_t ranges = fixing ? ng::dissect_columnar([self.selectedDocument buffer], [self.textView editorContextByteRanges], 129) : ng::ranges_t();
-	NSString* directory = [self.terminalStartDirectory copy];
-	self.preparingSelectionExplanation = YES;
-	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		NSString* error = nil;
-		NSDictionary* context = [snapshot renderBefore:editor_context::now()+3];
-		SelectionFix* fix = fixing ? [[SelectionFix alloc] initWithContext:context byteRanges:ranges diagnostics:[diagnostics renderBefore:editor_context::now()+3] error:&error] : nil;
-		NSString* prompt = fixing ? (fix ? @"" : nil) : SelectionExplanationPrompt(context, &error);
-		dispatch_async(dispatch_get_main_queue(), ^{
-			self.preparingSelectionExplanation = NO;
-			if(!self.window.isVisible || self.window.attachedSheet) return;
-			if(!prompt)
-			{
-				[[NSAlert tmAlertWithMessageText:fixing ? @"Cannot Fix Selection" : @"Cannot Explain Selection" informativeText:error buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
-				return;
-			}
-			NSArray* agents = @[@"codex", @"claude", @"opencode"];
-			NSPopUpButton* choices = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 260, 26) pullsDown:NO];
-			[choices addItemsWithTitles:@[@"Codex", @"Claude Code", @"OpenCode"]];
-			choices.accessibilityLabel = @"Agent";
-			NSUInteger index = [agents indexOfObject:[NSUserDefaults.standardUserDefaults stringForKey:@"selectionExplanationAgent"] ?: @"codex"];
-			[choices selectItemAtIndex:index == NSNotFound ? 0 : index];
-			NSAlert* alert = [NSAlert tmAlertWithMessageText:fixing ? @"Fix Selection" : @"Explain Selection" informativeText:fixing ? @"Choose an installed agent to investigate the selected code and available diagnostics. You will review the proposed changes before applying them." : @"Choose an installed agent to explain the selected text in a new terminal tab." buttons:fixing ? @"Find Fix" : @"Explain", @"Cancel", nil];
-			alert.accessoryView = choices;
-			[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
-				if(response != NSAlertFirstButtonReturn) return;
-				NSString* agent = agents[choices.indexOfSelectedItem];
-				NSString* launcher = [NSBundle.mainBundle.executablePath.stringByDeletingLastPathComponent stringByAppendingPathComponent:SelectionExplanationLauncher(agent)];
-				if(![NSFileManager.defaultManager isExecutableFileAtPath:launcher])
-				{
-					[[NSAlert tmAlertWithMessageText:@"Cannot Start Agent" informativeText:@"The bundled agent launcher is missing. Rebuild or reinstall TextMate." buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
-					return;
-				}
-				[NSUserDefaults.standardUserDefaults setObject:agent forKey:@"selectionExplanationAgent"];
-				self.terminalPanelController.panelVisible = YES;
-				[self updateTerminalTheme];
-				NSString* title = [NSString stringWithFormat:@"%@ · %@", fixing ? @"Fix" : @"Explain", choices.titleOfSelectedItem];
-				if(fixing) {
-					OakDocument* target = nil;
-					for(OakDocument* candidate in self.documents)
-						if([candidate.identifier.UUIDString isEqual:fix.documentId]) { target = candidate; break; }
-					if(![fix matchesDocument:target]) {
-						[[NSAlert tmAlertWithMessageText:@"Selection Changed" informativeText:@"The document changed while preparing the request. Select the code and invoke Fix Selection again." buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
-						return;
-					}
-					self.selectionFix = fix;
-				}
-				NSString* requestPrompt = fixing ? [fix prompt] : prompt;
-				if(![self.terminalPanelController startCommand:launcher arguments:SelectionExplanationArguments(agent, requestPrompt) title:title inDirectory:directory])
-				{
-					[[NSAlert tmAlertWithMessageText:@"Cannot Start Agent" informativeText:@"The terminal could not start the agent launcher." buttons:@"OK", nil] beginSheetModalForWindow:self.window completionHandler:nil];
-					return;
-				}
-				[self.terminalPanelController focusTerminal];
-				[[self class] scheduleSessionBackup:self];
-			}];
-		});
-	});
 }
 
 - (IBAction)takeTerminalPanelPositionFrom:(NSMenuItem*)sender
@@ -2914,8 +2788,6 @@ static NSDictionary* ContextDocument(OakDocument* document)
 		active = NO; // built without the Swift terminal component
 #endif
 	}
-	else if([menuItem action] == @selector(explainSelection:) || [menuItem action] == @selector(fixSelection:))
-		active = [self canExplainSelection];
 	else if([menuItem action] == @selector(takeTerminalPanelPositionFrom:))
 	{
 		menuItem.state = [self.terminalPanelController.panelPosition isEqual:menuItem.representedObject] ? NSControlStateValueOn : NSControlStateValueOff;

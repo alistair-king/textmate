@@ -5,8 +5,7 @@
 #import "../src/EditorContextDiagnostics.h"
 #import "../src/EditorLanguageIntelligence.h"
 #import "../src/EditorContextChanges.h"
-#import "../src/SelectionExplanation.h"
-#import "../src/SelectionFix.h"
+#import "../src/BufferEditProposal.h"
 #import "../src/ProjectChangesWindowController.h"
 #import <selection/selection.h>
 #import <document/OakDocument Private.h>
@@ -114,63 +113,6 @@ void test_editor_context_live_buffers_and_unicode ()
         [window close];
         [DocumentWindowController enableSessionSave];
     } });
-}
-
-void test_selection_explanation_snapshot_and_validation ()
-{
-    __block DocumentWindowController* window;
-    __block OakDocument* document;
-    __block EditorContextSnapshot* snapshot;
-    __block BOOL loaded = NO;
-    dispatch_semaphore_t ready = dispatch_semaphore_create(0);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        [NSApplication sharedApplication];
-        [DocumentWindowController disableSessionSave];
-        window = [[DocumentWindowController alloc] init];
-        document = [OakDocument documentWithString:@"one\nA😀B\nlast" fileType:@"text.plain" customName:@"unsaved selection"];
-        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
-            loaded = status == OakDocumentIOResultSuccess;
-            dispatch_semaphore_signal(ready);
-        }];
-    });
-    OAK_ASSERT(dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0 && loaded);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        [window setDocuments:@[document]];
-        [window setSelectedDocument:document];
-        NSMenuItem* action = [[NSMenuItem alloc] initWithTitle:@"Explain Selection…" action:NSSelectorFromString(@"explainSelection:") keyEquivalent:@""];
-        window.textView.selectionString = @"1:1";
-        OAK_ASSERT(![(id<NSMenuItemValidation>)window validateMenuItem:action]);
-        window.textView.selectionString = @"1:1-1:4&2:2-2:6";
-        OAK_ASSERT([(id<NSMenuItemValidation>)window validateMenuItem:action]);
-        snapshot = [window editorContextForMethod:@"get_editor_context" arguments:@{}];
-        document.content = @"edited after invoking Explain Selection";
-    });
-    NSString* error = nil;
-    NSString* prompt = SelectionExplanationPrompt([snapshot renderBefore:editor_context::now()+3], &error);
-    OAK_ASSERT(prompt != nil && error == nil);
-    NSRange start = [prompt rangeOfString:@"\n\n{" options:NSBackwardsSearch];
-    OAK_ASSERT(start.location != NSNotFound);
-    NSDictionary* excerpt = editor_context::parse([[prompt substringFromIndex:start.location+2] dataUsingEncoding:NSUTF8StringEncoding]);
-    OAK_ASSERT([excerpt[@"document"][@"name"] isEqual:@"unsaved selection"]);
-    OAK_ASSERT(excerpt[@"document"][@"path"] == NSNull.null);
-    OAK_ASSERT([excerpt[@"selections"] count] == 2);
-    OAK_ASSERT([excerpt[@"selections"][0][@"text"] isEqual:@"one"]);
-    OAK_ASSERT([excerpt[@"selections"][1][@"text"] isEqual:@"😀"]);
-    OAK_ASSERT([excerpt[@"selections"][1][@"start"][@"line"] integerValue] == 2);
-    for(NSString* agent in @[@"codex", @"claude", @"opencode"])
-        OAK_ASSERT([SelectionExplanationArguments(agent, prompt).lastObject isEqual:prompt]);
-    OAK_ASSERT(SelectionExplanationArguments(@"unknown", prompt) == nil);
-    OAK_ASSERT(SelectionExplanationPrompt(@{ @"document": @{}, @"selections": @[@{ @"text": @"" }] }, &error) == nil && error != nil);
-    OAK_ASSERT(SelectionExplanationPrompt(@{ @"document": @{}, @"selections": @[@{ @"text": @"partial", @"truncated": @YES }] }, &error) == nil);
-    OAK_ASSERT(SelectionExplanationPrompt(@{ @"document": @{}, @"selectionsTruncated": @YES, @"selections": @[] }, &error) == nil);
-    OAK_ASSERT(SelectionExplanationPrompt(@{ @"error": @"The editor request timed out." }, &error) == nil);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        [window setSelectedDocument:nil];
-        [window setDocuments:@[]];
-        [document close];
-        [window close];
-        [DocumentWindowController enableSessionSave];
-    });
 }
 
 void test_editor_context_diagnostics_reports_and_window_boundary ()
@@ -600,179 +542,6 @@ void test_editor_context_real_terminal_transfer_and_window_close ()
     OAK_ASSERT([context_test_query(secondEnvironment)[@"code"] isEqual:@"session_unavailable"]);
 }
 
-void test_selection_fix_review_unicode_undo_and_stale_buffers ()
-{
-    __block DocumentWindowController* window;
-    __block OakDocument* document;
-    dispatch_semaphore_t ready = dispatch_semaphore_create(0);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        [NSApplication sharedApplication];
-        [DocumentWindowController disableSessionSave];
-        window = [[DocumentWindowController alloc] init];
-        document = [OakDocument documentWithString:@"one\nA😀B\nlast" fileType:@"text.plain" customName:@"fix unsaved selection"];
-        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
-            OAK_ASSERT(status == OakDocumentIOResultSuccess);
-            dispatch_semaphore_signal(ready);
-        }];
-    });
-    OAK_ASSERT(dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        [window setDocuments:@[document]]; [window setSelectedDocument:document];
-        NSMenuItem* action = [[NSMenuItem alloc] initWithTitle:@"Fix Selection…" action:NSSelectorFromString(@"fixSelection:") keyEquivalent:@""];
-        window.textView.selectionString = @"1:1";
-        OAK_ASSERT(![(id<NSMenuItemValidation>)window validateMenuItem:action]);
-        window.textView.selectionString = @"1:1-1:4&2:2-2:6";
-        OAK_ASSERT([(id<NSMenuItemValidation>)window validateMenuItem:action]);
-        NSDictionary* context = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}];
-        ng::ranges_t ranges = ng::dissect_columnar([document buffer], [window.textView editorContextByteRanges], 129);
-        NSString* error = nil;
-        SelectionFix* fix = [[SelectionFix alloc] initWithContext:context byteRanges:ranges diagnostics:@{} error:&error];
-        OAK_ASSERT(fix && !error);
-        OAK_ASSERT([[fix prompt] containsString:fix.identifier]);
-        OAK_ASSERT([[fix prompt] containsString:@"propose_selection_fix"]);
-        OAK_ASSERT([fix prepareReplacements:@[@"two"] summary:@"Fix"] != nil);
-        OAK_ASSERT(([fix prepareReplacements:@[@"one", @"😀"] summary:@"No changes"] != nil));
-        OAK_ASSERT(![fix applyToDocument:document]); // No proposal, no mutation.
-        OAK_ASSERT(([fix prepareReplacements:@[@"two", @"🛠️"] summary:@"Correct both values"] == nil));
-        OAK_ASSERT([fix.status isEqual:@"pending_review"]);
-        OAK_ASSERT([fix.diff containsString:@"-one"] && [fix.diff containsString:@"+two"]);
-        OAK_ASSERT([document.content isEqual:@"one\nA😀B\nlast"]);
-        EditReviewWindowController* review = [fix reviewControllerWithCompletion:nil];
-        OAK_ASSERT(review.window.styleMask & NSWindowStyleMaskResizable);
-        OAK_ASSERT(review.window.isMovable);
-        NSSize before = review.diffScrollView.frame.size;
-        [review.window setContentSize:NSMakeSize(960, 650)];
-        OAK_ASSERT(review.diffScrollView.frame.size.width == before.width + 200);
-        OAK_ASSERT(review.diffScrollView.frame.size.height == before.height + 150);
-        [review close];
-        __block NSUInteger discarded = 0;
-        EditReviewWindowController* closing = [fix reviewControllerWithCompletion:^(NSModalResponse response){
-            OAK_ASSERT(response == NSAlertSecondButtonReturn);
-            ++discarded;
-        }];
-        [closing showWindow:nil];
-        [closing.window performClose:nil];
-        [closing close];
-        OAK_ASSERT(discarded == 1);
-        window.textView.selectionString = @"3:1"; // Live cursor is irrelevant.
-        OAK_ASSERT([fix applyToDocument:document]);
-        OAK_ASSERT([document.content isEqual:@"two\nA🛠️B\nlast"]);
-        OAK_ASSERT([fix.status isEqual:@"applied"] && document.path == nil);
-        OAK_ASSERT(![fix applyToDocument:document]); // Cannot replay a fix.
-        [document undo];
-        OAK_ASSERT([document.content isEqual:@"one\nA😀B\nlast"]);
-        [document redo];
-        OAK_ASSERT([document.content isEqual:@"two\nA🛠️B\nlast"]);
-        [document undo];
-        window.textView.selectionString = @"1:1-1:4";
-        context = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}];
-        ranges = [window.textView editorContextByteRanges];
-        fix = [[SelectionFix alloc] initWithContext:context byteRanges:ranges diagnostics:@{} error:&error];
-        OAK_ASSERT([fix prepareReplacements:@[@""] summary:@"Remove code"] == nil);
-        [fix discard];
-        OAK_ASSERT(![fix applyToDocument:document] && [fix.status isEqual:@"discarded"]);
-        window.textView.selectionString = @"1:1x3:2";
-        NSDictionary* rectangular = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}];
-        ng::ranges_t rows = ng::dissect_columnar([document buffer], [window.textView editorContextByteRanges], 129);
-        SelectionFix* columnFix = [[SelectionFix alloc] initWithContext:rectangular byteRanges:rows diagnostics:@{} error:&error];
-        OAK_ASSERT(([columnFix prepareReplacements:@[@"O", @"Z", @"L"] summary:@"Fix each row"] == nil));
-        OAK_ASSERT([columnFix applyToDocument:document]);
-        OAK_ASSERT([document.content isEqual:@"One\nZ😀B\nLast"]);
-        [document undo];
-        OAK_ASSERT([document.content isEqual:@"one\nA😀B\nlast"]);
-        window.textView.selectionString = @"1:1-1:4";
-        context = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}];
-        ranges = [window.textView editorContextByteRanges];
-        fix = [[SelectionFix alloc] initWithContext:context byteRanges:ranges diagnostics:@{} error:&error];
-        OAK_ASSERT([fix prepareReplacements:@[@"fixed"] summary:@"Fix"] == nil);
-        document.content = @"new user edits";
-        OAK_ASSERT(![fix applyToDocument:document]);
-        OAK_ASSERT([fix.status isEqual:@"stale"] && [document.content isEqual:@"new user edits"]);
-        [window setSelectedDocument:nil]; [window setDocuments:@[]];
-        [document close]; [window close];
-        [DocumentWindowController enableSessionSave];
-    });
-}
-
-void test_selection_fix_mcp_review_and_window_boundary ()
-{
-    __block DocumentWindowController* window;
-    __block OakDocument* document;
-    __block SelectionFix* fix;
-    __block NSDictionary* environment;
-    NSUUID* session = NSUUID.UUID;
-    NSString* path = [@"/tmp/textmate-selection-fix-" stringByAppendingString:NSUUID.UUID.UUIDString];
-    OAK_ASSERT([@"return 0;\n" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
-    dispatch_semaphore_t ready = dispatch_semaphore_create(0);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        [NSApplication sharedApplication];
-        [DocumentWindowController disableSessionSave];
-        window = [[DocumentWindowController alloc] init];
-        document = [OakDocument documentWithPath:path];
-        document.fileType = @"text.plain";
-        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
-            OAK_ASSERT(status == OakDocumentIOResultSuccess);
-            dispatch_semaphore_signal(ready);
-        }];
-    });
-    OAK_ASSERT(dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        [window setDocuments:@[document]]; [window setSelectedDocument:document];
-        [window showWindow:nil];
-        window.textView.selectionString = @"1:1-1:10";
-        NSDictionary* context = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}];
-        NSString* error = nil;
-        fix = [[SelectionFix alloc] initWithContext:context byteRanges:[window.textView editorContextByteRanges] diagnostics:@{} error:&error];
-        OAK_ASSERT(fix && !error);
-        [window setValue:fix forKey:@"selectionFix"];
-        DocumentWindowController* foreign = [[DocumentWindowController alloc] init];
-        OAK_ASSERT(([foreign testEditorContextForMethod:@"get_selection_fix_status" arguments:@{ @"fixId": fix.identifier }][@"error"] != nil));
-        [foreign close];
-        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString* method, NSDictionary* arguments){
-            return [window editorContextForMethod:method arguments:arguments];
-        }];
-    });
-    OAK_ASSERT([context_test_query(environment, @"get_selection_fix_status", @{ @"fixId": fix.identifier })[@"status"] isEqual:@"awaiting_proposal"]);
-    OAK_ASSERT(context_test_query(environment, @"propose_selection_fix", @{ @"fixId": @"foreign", @"summary": @"Fix", @"replacements": @[@"return 42;"] })[@"error"] != nil);
-    NSDictionary* arguments = @{ @"fixId": fix.identifier, @"summary": @"Correct the return value", @"replacements": @[@"return 42;"] };
-    NSDictionary* result = context_test_query(environment, @"propose_selection_fix", arguments);
-    OAK_ASSERT([result[@"status"] isEqual:@"pending_review"] && ![result[@"applied"] boolValue]);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        EditReviewWindowController* review = [window valueForKey:@"editReviewController"];
-        OAK_ASSERT(review.window.isVisible && window.window.attachedSheet == nil);
-        if(NSString* imagePath = NSProcessInfo.processInfo.environment[@"TEXTMATE_FIX_REVIEW_IMAGE"]) {
-            NSView* content = review.window.contentView;
-            [content layoutSubtreeIfNeeded];
-            NSBitmapImageRep* image = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
-            [content cacheDisplayInRect:content.bounds toBitmapImageRep:image];
-            OAK_ASSERT([[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:imagePath atomically:YES]);
-        }
-        OAK_ASSERT([document.content isEqual:@"return 0;\n"]);
-        [(EditReviewWindowController*)[window valueForKey:@"editReviewController"] apply:nil];
-    });
-    for(int i = 0; i < 100; ++i) {
-        __block BOOL done;
-        dispatch_sync(dispatch_get_main_queue(), ^{ done = [fix.status isEqual:@"applied"]; });
-        if(done) break;
-        usleep(10000);
-    }
-    OAK_ASSERT([context_test_query(environment, @"get_selection_fix_status", @{ @"fixId": fix.identifier })[@"status"] isEqual:@"applied"]);
-    OAK_ASSERT(context_test_query(environment, @"propose_selection_fix", arguments)[@"error"] != nil);
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        OAK_ASSERT([document.content isEqual:@"return 42;\n"]);
-        OAK_ASSERT(document.isDocumentEdited);
-        OAK_ASSERT([[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] isEqual:@"return 0;\n"]);
-        [document undo];
-        OAK_ASSERT([document.content isEqual:@"return 0;\n"]);
-        [EditorContextService.sharedService revokeSession:session];
-        [window setSelectedDocument:nil]; [window setDocuments:@[]];
-        [document close]; [window close];
-        [DocumentWindowController enableSessionSave];
-    });
-    OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:path error:nil]);
-}
-
-
 void test_project_changes_unsaved_snapshot_and_navigation ()
 {
     NSString* directory = [@"/tmp/textmate-changes-buffer-" stringByAppendingString:NSUUID.UUID.UUIDString];
@@ -974,7 +743,7 @@ void test_document_edit_plan_unicode_insert_delete_and_undo ()
         @{ @"offset": @3, @"length": @1, @"text": @"" }]) document:metadata deadline:editor_context::now()+3];
     OAK_ASSERT(plan[@"error"] == nil);
     NSString* error = nil;
-    SelectionFix* proposal = [[SelectionFix alloc] initWithEditPlan:plan summary:@"Update the buffer" error:&error];
+    BufferEditProposal* proposal = [[BufferEditProposal alloc] initWithEditPlan:plan summary:@"Update the buffer" error:&error];
     OAK_ASSERT(proposal != nil && error == nil);
     dispatch_sync(dispatch_get_main_queue(), ^{
         OAK_ASSERT([document.content isEqual:@"A😀B\nkeep\n"]);
@@ -997,14 +766,14 @@ void test_document_edit_plan_unicode_insert_delete_and_undo ()
         OAK_ASSERT(invalid[@"error"] != nil);
     }
     plan = [buffer editPlanForArguments:arguments(@[@{ @"offset": @0, @"length": @0, @"text": @"" }]) document:metadata deadline:editor_context::now()+3];
-    OAK_ASSERT([[SelectionFix alloc] initWithEditPlan:plan summary:@"No change" error:&error] == nil);
+    OAK_ASSERT([[BufferEditProposal alloc] initWithEditPlan:plan summary:@"No change" error:&error] == nil);
     dispatch_sync(dispatch_get_main_queue(), ^{
         document.content = @"";
         metadata = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}][@"document"];
         buffer = [EditorContextBuffer bufferForDocument:document revision:metadata[@"revision"]];
     });
     plan = [buffer editPlanForArguments:arguments(@[@{ @"offset": @0, @"length": @0, @"text": @"new 😀" }]) document:metadata deadline:editor_context::now()+3];
-    proposal = [[SelectionFix alloc] initWithEditPlan:plan summary:@"Start an empty document" error:&error];
+    proposal = [[BufferEditProposal alloc] initWithEditPlan:plan summary:@"Start an empty document" error:&error];
     OAK_ASSERT(proposal != nil);
     dispatch_sync(dispatch_get_main_queue(), ^{
         OAK_ASSERT([proposal applyToDocument:document]);
@@ -1012,7 +781,7 @@ void test_document_edit_plan_unicode_insert_delete_and_undo ()
         [document undo]; OAK_ASSERT([document.content isEqual:@""]);
     });
     // A later edit invalidates even an insertion into the empty buffer.
-    proposal = [[SelectionFix alloc] initWithEditPlan:plan summary:@"Stale change" error:&error];
+    proposal = [[BufferEditProposal alloc] initWithEditPlan:plan summary:@"Stale change" error:&error];
     dispatch_sync(dispatch_get_main_queue(), ^{
         document.content = @"user typing";
         OAK_ASSERT(![proposal applyToDocument:document] && [proposal.status isEqual:@"stale"]);
@@ -1034,7 +803,7 @@ static void document_edit_test_end_review(DocumentWindowController* window, NSMo
         __block BOOL closed;
         dispatch_sync(dispatch_get_main_queue(), ^{
             closed = [window valueForKey:@"editReviewController"] == nil;
-            for(SelectionFix* proposal in [[window valueForKey:@"editProposals"] allValues])
+            for(BufferEditProposal* proposal in [[window valueForKey:@"editProposals"] allValues])
                 if([proposal.status isEqual:@"pending_review"]) closed = NO;
         });
         if(closed) break;
@@ -1122,7 +891,7 @@ void test_document_edit_proposals_live_review_window_scope_and_disk ()
             NSWindow* sheet = window.window.attachedSheet;
             if(sheet && [sheet.title isEqual:@"Edits Could Not Be Applied"]) rejected = YES;
             // NSAlert sheets do not consistently expose their message as title.
-            SelectionFix* pending = [window valueForKey:@"editProposals"][proposal[@"proposalId"]];
+            BufferEditProposal* pending = [window valueForKey:@"editProposals"][proposal[@"proposalId"]];
             if([pending.status isEqual:@"stale"]) { rejected = YES; if(sheet) [window.window endSheet:sheet returnCode:NSAlertFirstButtonReturn]; }
         });
         if(rejected) break;

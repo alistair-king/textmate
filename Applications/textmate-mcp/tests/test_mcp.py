@@ -124,35 +124,6 @@ class MCPTests(unittest.TestCase):
             for i, args in enumerate(invalid)])
         self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
 
-    def test_selection_fix_proposal_and_status(self):
-        received = []
-        def propose(message, _):
-            received.append(message)
-            return {"fixId": "request-id", "status": "pending_review", "applied": False}
-        expected = {"fixId": "request-id", "replacements": ["return 42;", ""], "summary": "Fix return value"}
-        with context_server(propose) as environment:
-            replies = self.run_server([INITIALIZE, READY,
-                request(2, "tools/call", name="propose_selection_fix", arguments=expected),
-                request(3, "tools/call", name="get_selection_fix_status", arguments={"fixId": "request-id"})], environment)
-        calls = {message["method"]: message["arguments"] for message in received}
-        self.assertEqual(calls["propose_selection_fix"], expected)
-        self.assertEqual(calls["get_selection_fix_status"], {"fixId": "request-id"})
-        proposal = next(reply for reply in replies if reply["id"] == 2)
-        self.assertFalse(json.loads(proposal["result"]["content"][0]["text"])["applied"])
-
-    def test_selection_fix_invalid_arguments(self):
-        base = {"fixId": "request-id", "replacements": ["fixed"], "summary": "Fix"}
-        invalid = [dict(base, fixId=""), dict(base, fixId=12), dict(base, fixId="x"*129),
-                   dict(base, replacements=[]), dict(base, replacements="text"),
-                   dict(base, replacements=[True]), dict(base, replacements=["x"*32769]),
-                   dict(base, replacements=[""]*129), dict(base, summary=""),
-                   dict(base, summary="x"*2049), dict(base, extra=True)]
-        replies = self.run_server([INITIALIZE, READY] + [
-            request(index+2, "tools/call", name="propose_selection_fix", arguments=value)
-            for index, value in enumerate(invalid)])
-        self.assertEqual(len(replies), 1+len(invalid))
-        self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
-
     def test_initialization_tools_notifications_and_pipelining(self):
         replies = self.run_server([
             INITIALIZE,
@@ -165,8 +136,8 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-11-25")
         tools = replies[1]["result"]["tools"]
         self.assertEqual([t["name"] for t in tools],
-                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "get_definition", "find_references", "get_document_symbols", "search_workspace_symbols", "get_hover", "navigate_editor", "propose_document_edits", "get_edit_proposal_status", "propose_selection_fix", "get_selection_fix_status", "get_editor_changes"])
-        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools if t["name"] not in ("navigate_editor", "propose_selection_fix", "propose_document_edits")))
+                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "get_definition", "find_references", "get_document_symbols", "search_workspace_symbols", "get_hover", "navigate_editor", "propose_document_edits", "get_edit_proposal_status", "get_editor_changes"])
+        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools if t["name"] not in ("navigate_editor", "propose_document_edits")))
         self.assertFalse(next(t for t in tools if t["name"] == "navigate_editor")["annotations"]["readOnlyHint"])
         self.assertEqual(replies[2]["result"], {})
         self.assertEqual(replies[3]["error"]["code"], -32601)

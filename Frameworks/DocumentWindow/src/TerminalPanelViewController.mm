@@ -287,16 +287,6 @@ typedef NS_ENUM(NSInteger, TerminalDividerDrag) {
 	self.panelHeight   = source.panelHeight;
 }
 
-- (BOOL)startCommand:(NSString*)executable arguments:(NSArray<NSString*>*)arguments title:(NSString*)title inDirectory:(NSString*)directory
-{
-#if HAVE_OAK_SWIFTUI
-	[self prepareTerminalController];
-	return [_terminalController startCommandWithExecutable:executable arguments:arguments title:title inDirectory:directory ?: NSHomeDirectory()];
-#else
-	return NO;
-#endif
-}
-
 - (void)applyTerminalBackground:(NSColor*)background foreground:(NSColor*)foreground caret:(NSColor*)caret selection:(NSColor*)selection syntaxColors:(NSArray<NSColor*>*)syntaxColors
 {
 #if HAVE_OAK_SWIFTUI

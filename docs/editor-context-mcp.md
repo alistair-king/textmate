@@ -2,8 +2,6 @@
 
 TextMate bundles an editor MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`), Claude Code (`tm-claude`), and OpenCode (`tm-opencode`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
 
-For a ready-made explanation, select text and choose **Edit → Explain Selection…** (**⌃⌥⌘E**). Choose an agent to start a new terminal conversation with a snapshot of the selection, including unsaved text. See [Explain Selection](embedded-terminal.md#explain-selection) for details.
-
 ## Start Codex
 
 Launch the updated TextMate app and open a **new terminal tab**, then run:
@@ -210,15 +208,6 @@ python3 Applications/textmate-mcp/tests/test_opencode_cli.py \
   build-debug/Applications/textmate-mcp/textmate-mcp /absolute/path/to/opencode
 ```
 
-## Proposed selection fixes
-
-**Edit → Fix Selection…** creates an opaque `fixId` and includes it with immutable document/selection metadata, selected text, and cached diagnostics in the agent's initial prompt. This is the entry point for proposing changes; an MCP client cannot create an arbitrary edit request.
-
-- `propose_selection_fix`: requires `fixId`, `summary` (1–2,048 UTF-16 units), and `replacements` (one complete string for each nonempty captured selection, in snapshot order; combined maximum 32,768 UTF-16 units). Empty strings delete selected code. Unknown requests, changed/closed documents, overlapping selections, unchanged proposals, and replacement-count mismatches are rejected. A busy review window returns `review_unavailable`; retry after closing its review or dialog. This tool is marked `readOnlyHint: false` because it opens a review window, but never applies or saves text itself.
-- `get_selection_fix_status`: requires `fixId`. Returns `awaiting_proposal`, `pending_review`, `applied`, `discarded`, or `stale`. Unknown or superseded requests return `fix_unavailable`. Query when needed rather than polling repeatedly.
-
-The proposal call returns `pending_review` and `applied: false` promptly, within the normal socket deadline. Human review happens separately without holding an MCP request open. The user applies all proposed selection replacements together or discards them. Apply checks document identity and revision again, changes only the live buffer, and groups the replacements as one undoable edit. It never saves a file. There is one retained request per window, and applied/discarded/stale requests cannot be replayed. A request belongs to its original editor window; moving a terminal does not move the request.
-
 ## Language intelligence
 
 Terminal agents can ask TextMate's existing language server for semantic code information. These tools are read-only: they do not move the cursor, open files, apply edits, or save documents. Targets must be loaded, named documents in the terminal's owning window. Configure and start LSP through normal editing first; queries do not launch or restart a server.
@@ -229,7 +218,7 @@ Terminal agents can ask TextMate's existing language server for semantic code in
 - `search_workspace_symbols`: requires a nonempty `query` of up to 256 characters. Uses the server attached to the current or specified `documentId`. It searches that server's workspace, rather than combining every language server in a mixed-language project.
 - `get_hover`: bounded type information/documentation at the current cursor or an explicit position. Returns `hover.text`, an optional range, and `textTruncated`; a successful `hover: null` means the server has no hover information at that position.
 
-For example, ask an agent: **“Use TextMate's language tools to find the definition of the symbol under my cursor and explain its callers.”** Or: **“List this document's symbols, then search the workspace for related implementations.”** The Explain Selection and Fix Selection conversations can also use these tools.
+For example, ask an agent: **“Use TextMate's language tools to find the definition of the symbol under my cursor and explain its callers.”** Or: **“List this document's symbols, then search the workspace for related implementations.”**
 
 Positions use one-based lines and UTF-16 columns, with half-open ranges. `column` defaults to 1 when `line` is given. Omit both to use the current cursor; an inactive document requires an explicit position. Invalid positions, including the middle of a surrogate pair, are rejected. Optional `revision` rejects a query against an outdated source buffer. Pending edits to the source document are sent before the request. If its content, path, or terminal session changes before completion, the result is rejected. Language-server indexes can still be incomplete or indexing other project files.
 
@@ -247,7 +236,7 @@ A successful empty `items` array means the supported request returned no matches
 
 ## Propose edits to live buffers
 
-Agents can propose changes to any loaded document in their terminal's editor window with `propose_document_edits`. This works with unsaved and untitled buffers, including inactive editor tabs, and does not require invoking Fix Selection first.
+Agents can propose changes to any loaded document in their terminal's editor window with `propose_document_edits`. This works with unsaved and untitled buffers, including inactive editor tabs.
 
 First use `get_editor_context`, `list_open_documents`, or `read_document` to identify the buffer and its opaque `revision`. Read the text being edited from the live buffer rather than a disk copy. Then provide `documentId`, the exact `revision`, a short `summary`, and an `edits` array. Each edit contains:
 
@@ -279,4 +268,4 @@ Both preparation and application check the target identity, path, and content re
 
 A useful request is: **“Refactor this open buffer and propose the edits in TextMate for me to review.”** The agent's own CLI permissions still apply; this tool supplies a buffer-aware review path rather than restricting every external action that agent can perform.
 
-Edit review windows (Fix Selection and agent-proposed buffer edits) can be moved and resized independently of the editor. The diff expands with the window. Closing a review window discards the proposal; Apply still checks that the buffer has not changed.
+Buffer edit review windows can be moved and resized independently of the editor. The diff expands with the window. Closing a review window discards the proposal; Apply still checks that the buffer has not changed.
