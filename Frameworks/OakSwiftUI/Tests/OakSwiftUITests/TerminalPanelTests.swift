@@ -574,6 +574,37 @@ private func waitForRecords(_ terminal: LocalProcessTerminalView, _ state: Termi
 }
 
 @MainActor
+private final class TerminalToggleTarget: NSObject {
+    var panelVisible = true
+    @objc func toggleTerminalPanel(_ sender: Any?) { panelVisible.toggle() }
+}
+
+@MainActor
+@Test func terminalPanelToggleShortcutReachesMenuFromTerminalFocus() throws {
+    _ = NSApplication.shared
+    let controller = makeTerminalController()
+    controller.startSession()
+    defer { controller.stopSession() }
+    let terminal = try #require(controller.terminal)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300), styleMask: .titled, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = controller.view
+    defer { window.contentView = nil }
+    window.makeFirstResponder(terminal)
+
+    let target = TerminalToggleTarget()
+    let menu = NSMenu()
+    let item = menu.addItem(withTitle: "Hide Terminal Panel", action: #selector(TerminalToggleTarget.toggleTerminalPanel(_:)), keyEquivalent: "`")
+    item.keyEquivalentModifierMask = [.control]
+    item.target = target
+    let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.control], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{00}", charactersIgnoringModifiers: "`", isARepeat: false, keyCode: 50))
+    #expect(!controller.handleTerminalKeyEvent(event, source: terminal))
+    #expect(!controller.view.performKeyEquivalent(with: event))
+    #expect(menu.performKeyEquivalent(with: event))
+    #expect(!target.panelVisible)
+}
+
+@MainActor
 @Test func terminalControlKeysStayWithFocusedSession() async throws {
     _ = NSApplication.shared
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

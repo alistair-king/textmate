@@ -276,6 +276,8 @@ private final class TerminalContainer: NSView {
               terminal === source else { return false }
         if let index = sessions.firstIndex(where: { $0.terminal === source }) { acknowledgeResults(at: index) }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        // The app menu owns Ctrl+` so the panel can also be hidden from terminal focus.
+        if modifiers == [.control] && event.charactersIgnoringModifiers == "`" { return false }
         if modifiers.contains(.control) && !modifiers.contains(.command) {
             source.keyDown(with: event)
             return true
