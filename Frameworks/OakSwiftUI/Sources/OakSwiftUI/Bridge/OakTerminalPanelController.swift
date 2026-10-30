@@ -54,6 +54,7 @@ private final class TerminalContainer: NSView {
         let uuid: UUID
         let terminal: LocalProcessTerminalView
         var title: String
+        var attention = TerminalAttention()
     }
     private var sessions: [Session] = []
     private var selectedID: Int?
@@ -63,6 +64,8 @@ private final class TerminalContainer: NSView {
     var sessionCount: Int { sessions.count }
     @objc public var sessionIdentifiers: [UUID] { sessions.map(\.uuid) }
     @objc public var sessionTitles: [String] { sessions.map(\.title) }
+    /// Unseen OSC 7501 completions, parallel to `sessionIdentifiers`; drives the tab bar dot.
+    @objc public var sessionNeedsAttention: [Bool] { sessions.map(\.attention.needsAttention) }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }
     @objc public var tabsDidChange: (() -> Void)?
     @objc public weak var delegate: OakTerminalPanelControllerDelegate?
@@ -103,7 +106,7 @@ private final class TerminalContainer: NSView {
         destination.started = true
         session.terminal.processDelegate = destination
         (session.terminal as? FileLinkTerminalView)?.owner = destination
-        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title), at: min(max(0, insertionIndex), destination.sessions.count))
+        destination.sessions.insert(Session(id: newID, uuid: session.uuid, terminal: session.terminal, title: session.title, attention: session.attention), at: min(max(0, insertionIndex), destination.sessions.count))
         destination.applyFont(destination.terminalFont)
         destination.updateTerminalColors()
         destination.selectSession(id: newID)
@@ -300,9 +303,15 @@ private final class TerminalContainer: NSView {
     }
 
     func selectSession(id: Int) {
-        guard sessions.contains(where: { $0.id == id }) else { return }
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         selectedID = id
+        let hadAttention = sessions[index].attention.needsAttention
+        sessions[index].attention.clear()
         showSelectedSession()
+        // OakTabBarView only re-reads the dot in reloadData, so clearing it needs a repaint here.
+        if hadAttention {
+            rebuildTabs()
+        }
     }
 
     private func showSelectedSession() {
@@ -346,6 +355,12 @@ private final class TerminalContainer: NSView {
             terminal.reportedDirectory = url.path
         } else if directory.hasPrefix("/") {
             terminal.reportedDirectory = directory
+        }
+    }
+    public func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {
+        guard let index = sessions.firstIndex(where: { $0.terminal === source }) else { return }
+        if sessions[index].attention.update(records: records, isSelected: sessions[index].id == selectedID) {
+            rebuildTabs()
         }
     }
     public func processTerminated(source: TerminalView, exitCode: Int32?) {

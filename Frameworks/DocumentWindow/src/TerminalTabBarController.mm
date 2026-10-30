@@ -35,7 +35,11 @@
 - (NSString*)tabBarView:(OakTabBarView*)bar titleForIndex:(NSUInteger)index { return self.controller.sessionTitles[index]; }
 - (NSString*)tabBarView:(OakTabBarView*)bar pathForIndex:(NSUInteger)index { return @""; }
 - (NSUUID*)tabBarView:(OakTabBarView*)bar UUIDForIndex:(NSUInteger)index { return self.controller.sessionIdentifiers[index]; }
-- (BOOL)tabBarView:(OakTabBarView*)bar isEditedAtIndex:(NSUInteger)index { return NO; }
+- (BOOL)tabBarView:(OakTabBarView*)bar isEditedAtIndex:(NSUInteger)index
+{
+	NSArray<NSNumber*>* attention = self.controller.sessionNeedsAttention;
+	return index < attention.count && attention[index].boolValue;
+}
 - (BOOL)tabBarView:(OakTabBarView*)bar shouldSelectIndex:(NSUInteger)index
 {
 	[self.controller selectSessionAt:index];

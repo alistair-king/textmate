@@ -303,6 +303,173 @@ import Darwin
     #expect(first.process.shellPid == pid)
 }
 
+// MARK: - OSC 7501 completion dot
+
+// `#expect` cannot call a mutating member inline, so the transitions go through this wrapper.
+@discardableResult
+private func record(_ attention: inout TerminalAttention, _ states: [TerminalProgramStatusState], selected: Bool = false) -> Bool {
+    attention.update(states: states, isSelected: selected)
+}
+
+@MainActor
+@Test func terminalAttentionIgnoresFinishedStateWhileSelected() {
+    var attention = TerminalAttention()
+    #expect(!record(&attention, [.working], selected: true))
+    #expect(!record(&attention, [.done], selected: true))
+    #expect(!attention.needsAttention)
+    #expect(!record(&attention, [.blocked], selected: true))
+    #expect(!attention.needsAttention)
+}
+
+@MainActor
+@Test func terminalAttentionLightsBackgroundCompletionUntilSelected() {
+    var attention = TerminalAttention()
+    #expect(!record(&attention, [.working]))
+    #expect(record(&attention, [.done]))
+    #expect(attention.needsAttention)
+
+    // Selecting the session clears the dot; snapshots of the same state stay silent.
+    attention.clear()
+    #expect(!attention.needsAttention)
+    #expect(!record(&attention, [.done]))
+    #expect(!attention.needsAttention)
+}
+
+@MainActor
+@Test func terminalAttentionKeepsDotThroughLaterWorkingStates() {
+    var attention = TerminalAttention()
+    #expect(!record(&attention, [.working]))
+    #expect(record(&attention, [.done]))
+    // Further output in a background tab must not take the unseen completion away.
+    #expect(!record(&attention, [.working]))
+    #expect(attention.needsAttention)
+    // ... nor re-light it (no repaint) when it finishes again.
+    #expect(!record(&attention, [.done]))
+    #expect(attention.needsAttention)
+}
+
+@MainActor
+@Test func terminalAttentionFoldsConcurrentRecords() {
+    // Several 7501 records can live at once; blocked outranks done outranks the rest.
+    #expect(TerminalAttention.aggregate([.done, .working, .blocked]) == .blocked)
+    #expect(TerminalAttention.aggregate([.idle, .done]) == .done)
+    #expect(TerminalAttention.aggregate([.working, .idle]) == .idle)
+    #expect(TerminalAttention.aggregate([]) == nil)
+
+    var attention = TerminalAttention()
+    #expect(!record(&attention, [.working]))
+    #expect(record(&attention, [.done, .working]))
+    #expect(attention.needsAttention)
+}
+
+@MainActor
+@Test func terminalAttentionToleratesRecordsDisappearingAtExit() {
+    var attention = TerminalAttention()
+    #expect(!record(&attention, [.working]))
+    // Process exit removes working/blocked records; an empty store must not raise the dot.
+    #expect(!record(&attention, []))
+    #expect(!attention.needsAttention)
+    #expect(record(&attention, [.done]))
+    #expect(attention.needsAttention)
+    #expect(!record(&attention, [.done]))
+    #expect(attention.needsAttention)
+}
+
+@MainActor
+@Test func osc7501LightsDotOnBackgroundTabUntilSelected() async throws {
+    _ = NSApplication.shared
+    let controller = makeTerminalController()
+    controller.startSession()
+    defer { controller.stopSession() }
+    let first = try #require(controller.terminal)
+
+    // A completion reported while the tab is selected is already being looked at.
+    first.feed(text: oscStatus("state=done"))
+    let stored = try await waitForRecords(first, .done)
+    #expect(stored)
+    // The status event is a separate main-queue hop; give it its turn before asserting nothing happened.
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(controller.sessionNeedsAttention == [false])
+
+    controller.newTerminal()
+    let second = try #require(controller.terminal)
+    #expect(second !== first)
+    #expect(controller.sessionNeedsAttention == [false, false])
+
+    first.feed(text: oscStatus("state=working"))
+    // Let the working snapshot reach the delegate; back-to-back reports are coalesced and the
+    // intermediate state would otherwise be lost, hiding the transition.
+    try await Task.sleep(for: .milliseconds(300))
+    first.feed(text: oscStatus("state=done"))
+    let lit = try await waitForAttention(controller, [true, false])
+    #expect(lit)
+
+    // Selecting the tab shows the output and clears the dot.
+    controller.selectSession(id: 1)
+    #expect(controller.terminal === first)
+    #expect(controller.sessionNeedsAttention == [false, false])
+
+    // Switching away must not re-light it without a new done/blocked transition.
+    controller.selectSession(id: 2)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(controller.sessionNeedsAttention == [false, false])
+
+    first.feed(text: oscStatus("state=working"))
+    try await Task.sleep(for: .milliseconds(300))
+    first.feed(text: oscStatus("state=blocked:kind=permission"))
+    let blocked = try await waitForAttention(controller, [true, false])
+    #expect(blocked)
+}
+
+@MainActor
+@Test func transferringSessionMovesAttentionAndSelectionClearsIt() async throws {
+    _ = NSApplication.shared
+    let source = makeTerminalController()
+    let target = makeTerminalController()
+    source.startSession()
+    target.startSession()
+    defer { source.stopSession(); target.stopSession() }
+
+    let first = try #require(source.terminal)
+    let identifier = try #require(source.sessionIdentifiers.first)
+    source.newTerminal()
+    first.feed(text: oscStatus("state=working"))
+    first.feed(text: oscStatus("state=done"))
+    let lit = try await waitForAttention(source, [true, false])
+    #expect(lit)
+
+    source.transferSession(identifier: identifier, to: target, at: 0)
+    #expect(source.sessionCount == 1)
+    #expect(target.sessionCount == 2)
+    #expect(target.terminal === first)
+    // The moved session lands selected in the destination, so the usual selection rule clears
+    // its dot; the tracker travels with it, so the same snapshot cannot re-light it either.
+    #expect(target.sessionNeedsAttention == [false, false])
+    first.feed(text: oscStatus("state=done"))
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(target.sessionNeedsAttention == [false, false])
+}
+
+private func oscStatus(_ fields: String) -> String { "\u{1b}]7501;\(fields)\u{07}" }
+
+@MainActor
+private func waitForAttention(_ controller: OakTerminalPanelController, _ expected: [Bool]) async throws -> Bool {
+    for _ in 0..<150 {
+        if controller.sessionNeedsAttention == expected { return true }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    return false
+}
+
+@MainActor
+private func waitForRecords(_ terminal: LocalProcessTerminalView, _ state: TerminalProgramStatusState) async throws -> Bool {
+    for _ in 0..<150 {
+        if terminal.programStatusRecords.contains(where: { $0.state == state }) { return true }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    return false
+}
+
 /// A plain sh without rc files, so results do not depend on the user's login shell, prompt plugins or dotfiles.
 @MainActor
 func makeTerminalController() -> OakTerminalPanelController {
