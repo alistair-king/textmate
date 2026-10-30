@@ -30,6 +30,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 @property (nonatomic, readonly) NSString* identifier;
 @property (nonatomic) NSString* title;
 @property (nonatomic) NSString* path;
+@property (nonatomic) NSString* toolTip; // empty or nil keeps the path tooltip
 @property (nonatomic, getter = isModified) BOOL modified;
 @property (nonatomic, getter = isSelected) BOOL selected;
 @property (nonatomic) CGFloat fittingWidth;
@@ -228,6 +229,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 static void* kOakTabViewVoiceOverContext = &kOakTabViewVoiceOverContext;
 static void* kOakTabViewTitleContext     = &kOakTabViewTitleContext;
 static void* kOakTabViewPathContext      = &kOakTabViewPathContext;
+static void* kOakTabViewToolTipContext   = &kOakTabViewToolTipContext;
 static void* kOakTabViewModifiedContext  = &kOakTabViewModifiedContext;
 static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
@@ -367,6 +369,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 {
 	[_tabItem removeObserver:self forKeyPath:@"title"    context:kOakTabViewTitleContext];
 	[_tabItem removeObserver:self forKeyPath:@"path"     context:kOakTabViewPathContext];
+	[_tabItem removeObserver:self forKeyPath:@"toolTip"  context:kOakTabViewToolTipContext];
 	[_tabItem removeObserver:self forKeyPath:@"modified" context:kOakTabViewModifiedContext];
 	[_tabItem removeObserver:self forKeyPath:@"selected" context:kOakTabViewSelectedContext];
 
@@ -374,6 +377,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 	[_tabItem addObserver:self forKeyPath:@"title"    options:NSKeyValueObservingOptionInitial context:kOakTabViewTitleContext];
 	[_tabItem addObserver:self forKeyPath:@"path"     options:NSKeyValueObservingOptionInitial context:kOakTabViewPathContext];
+	[_tabItem addObserver:self forKeyPath:@"toolTip"  options:NSKeyValueObservingOptionInitial context:kOakTabViewToolTipContext];
 	[_tabItem addObserver:self forKeyPath:@"modified" options:NSKeyValueObservingOptionInitial context:kOakTabViewModifiedContext];
 	[_tabItem addObserver:self forKeyPath:@"selected" options:NSKeyValueObservingOptionInitial context:kOakTabViewSelectedContext];
 
@@ -394,6 +398,14 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		self.topBorderView.alphaValue  = 1;
 		self.overflowButtonVisible     = NO;
 	}
+}
+
+// A data source that describes the tab's state (a terminal's attention dot, for instance) wins over the
+// path, which remains the tooltip for the data sources that have a better answer in their path.
+- (void)updateToolTip
+{
+	NSString* toolTip = self.tabItem.toolTip;
+	self.toolTip = OakNotEmptyString(toolTip) ? toolTip : self.tabItem.path.stringByAbbreviatingWithTildeInPath;
 }
 
 - (void)updateCloseButtonImage
@@ -480,7 +492,9 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 	else if(context == kOakTabViewTitleContext)
 		self.textField.stringValue = self.tabItem.title;
 	else if(context == kOakTabViewPathContext)
-		self.toolTip = self.tabItem.path.stringByAbbreviatingWithTildeInPath;
+		[self updateToolTip];
+	else if(context == kOakTabViewToolTipContext)
+		[self updateToolTip];
 	else if(context == kOakTabViewModifiedContext)
 		self.modified = self.tabItem.isModified;
 	else if(context == kOakTabViewSelectedContext)
@@ -759,6 +773,14 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 	[self updateToLayout:[self makeLayout]];
 }
 
+- (NSString*)toolTipForIndex:(NSUInteger)anIndex
+{
+	// A data source without an opinion keeps the path tooltip OakTabView derives itself.
+	if([_dataSource respondsToSelector:@selector(tabBarView:toolTipForIndex:)])
+		return [_dataSource tabBarView:self toolTipForIndex:anIndex];
+	return nil;
+}
+
 - (void)reloadData
 {
 	if(!_tabItems)
@@ -792,6 +814,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		{
 			tabItem = [[OakTabItem alloc] initWithTitle:[_dataSource tabBarView:self titleForIndex:i] path:[_dataSource tabBarView:self pathForIndex:i] identifier:identifier modified:[_dataSource tabBarView:self isEditedAtIndex:i]];
 		}
+		tabItem.toolTip = [self toolTipForIndex:i];
 		[newTabItems addObject:tabItem];
 	}
 

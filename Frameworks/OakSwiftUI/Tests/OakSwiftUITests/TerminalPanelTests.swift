@@ -428,6 +428,50 @@ private func record(_ attention: inout TerminalAttention, _ states: [TerminalPro
 }
 
 @MainActor
+@Test func terminalAttentionToolTipNamesTheReasonForTheDot() {
+    func lit(_ state: TerminalProgramStatusState, kind: TerminalProgramStatusKind? = nil) -> TerminalAttention {
+        var attention = TerminalAttention()
+        _ = record(&attention, [.working])
+        _ = record(&attention, [state], kind: kind)
+        return attention
+    }
+
+    #expect(lit(.done).toolTip == "Terminal: Finished")
+    #expect(lit(.blocked, kind: .permission).toolTip == "Terminal: Needs permission")
+    #expect(lit(.blocked, kind: .question).toolTip == "Terminal: Waiting for input")
+    #expect(lit(.blocked, kind: .auth).toolTip == "Terminal: Waiting for input")
+    #expect(lit(.blocked).toolTip == "Terminal: Waiting for input")
+
+    // No dot means no tooltip; AppKit shows nothing for an empty one.
+    #expect(TerminalAttention().toolTip == "")
+    var cleared = lit(.done)
+    cleared.clear()
+    #expect(cleared.toolTip == "")
+}
+
+@MainActor
+@Test func sessionToolTipsTrackEachSessionsDot() async throws {
+    _ = NSApplication.shared
+    let controller = makeTerminalController()
+    #expect(controller.sessionToolTips == [])
+    controller.startSession()
+    defer { controller.stopSession() }
+    controller.newTerminal()
+    #expect(controller.sessionToolTips == ["", ""])
+
+    controller.simulateSessionAttention(at: 0, state: "done", kind: nil)
+    #expect(controller.sessionToolTips == ["Terminal: Finished", ""])
+    controller.simulateSessionAttention(at: 1, state: "blocked", kind: "permission")
+    #expect(controller.sessionToolTips == ["Terminal: Finished", "Terminal: Needs permission"])
+
+    // Selecting a tab clears its dot, so its tooltip has to go with it.
+    controller.selectSession(at: 0)
+    #expect(controller.sessionToolTips == ["", "Terminal: Needs permission"])
+    controller.simulateSessionAttention(at: 1, state: nil, kind: nil)
+    #expect(controller.sessionToolTips == ["", ""])
+}
+
+@MainActor
 @Test func osc7501LightsDotOnBackgroundTabUntilSelected() async throws {
     _ = NSApplication.shared
     let controller = makeTerminalController()

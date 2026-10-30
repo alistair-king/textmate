@@ -18,9 +18,135 @@
 
 <div>
 
+<h3 class="commit-group-heading">Oct 30, 2026</h3>
+
+<ol class="commit-group">
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/06cb3954e50f2ef5a004012d555033360e4bb794" class="message">Show terminal attention in the window subtitle</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>The tab dot is invisible whenever the panel is collapsed or the window is
+behind another app, which is the case it exists for. The document tab bar
+and documentEdited already mean &quot;unsaved&quot;, so the window subtitle is the
+one unused surface that carries a different fact.
+
+Fold the unseen state over every session in the window, blocked before
+done and permission before the generic wording, so two tabs needing
+different things cannot disagree. The panel keeps polling nothing: the
+tab bar&#39;s reload seam fans out to the window, which also covers a hidden
+panel and a session moving to another window.
+
+AppKit rejects a nil subtitle, so an empty string is the cleared state.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/06cb3954e50f2ef5a004012d555033360e4bb794" class="gobutton">
+          <span class="sha">06cb3954e5<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/06cb3954e50f2ef5a004012d555033360e4bb794" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-30T08:18:00Z" title="2026-10-30 08:18:00">October 30, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/03bf7a8fc5614f72958472b3040a1ca579fa3fb4" class="message">Flag unseen terminal completions on the tab bar</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>A program can report its state with OSC 7501, which this SwiftTerm fork
+already forwards to LocalProcessTerminalViewDelegate. Fold the per-session
+records into one state and set an unseen flag only when that state changes
+into done or blocked while the tab is not selected, so a repeated snapshot
+cannot re-light a dot the user has already looked at.
+
+The terminal tab bar already reuses OakTabBarView, whose modified channel
+draws a dot instead of the close glyph, so the flag only has to answer
+tabBarView:isEditedAtIndex: and ask for a repaint. Clearing it in
+selectSession(id:) has to trigger that repaint itself: OakTabBarView reads
+the flag in reloadData only, and setSelectedTabIndex: just toggles the
+selected bit.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/03bf7a8fc5614f72958472b3040a1ca579fa3fb4" class="gobutton">
+          <span class="sha">03bf7a8fc5<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/03bf7a8fc5614f72958472b3040a1ca579fa3fb4" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-30T07:56:18Z" title="2026-10-30 07:56:18">October 30, 2026</time>
+      </div>
+    </div>
+</li>
+
+</ol>
+
 <h3 class="commit-group-heading">Oct 29, 2026</h3>
 
 <ol class="commit-group">
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/ac9b21aea67ac1bb76539b719ecfd8a17d42aea8" class="message">Document the terminal panel</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>Covers how to open and place the panel, session handling, file links from output, and the user defaults that persist size and placement. Screenshot included so the feature is discoverable from the README.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/ac9b21aea67ac1bb76539b719ecfd8a17d42aea8" class="gobutton">
+          <span class="sha">ac9b21aea6<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/ac9b21aea67ac1bb76539b719ecfd8a17d42aea8" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T15:56:40Z" title="2026-10-29 15:56:40">October 29, 2026</time>
+      </div>
+    </div>
+</li>
+
+<li class="commit commit-group-item">
+    <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">
+    <p class="commit-title">
+      <a href="https://github.com/tectiv3/textmate/commit/c0b2a9193e3422783508c8d6c1d0282fa35def10" class="message">Replace NSSplitView with Auto Layout-based terminal panel layout</a>
+        <span class="hidden-text-expander inline"><a href="javascript:;" class="js-details-target">…</a></span>
+</p>
+<div class="commit-desc"><pre>Fix (Frameworks/DocumentWindow/src/TerminalPanelViewController.mm):
+  - TerminalPanelSplitView is replaced by TerminalPanelLayoutView, which positions the content, a 1pt
+    divider and the panel with constraints only, the same way ProjectLayoutView handles the HTML output
+    panel.
+  - The panel&#39;s size constraint sits just below the window&#39;s own resize priority, so a smaller window
+    squeezes the panel first, and it returns to its saved size when the window grows. The content keeps a
+    minimum of 240 wide or 120 high.
+  - The content view&#39;s own constraints now set the window&#39;s minimum size directly. That removes the manual
+    fittingSize copying in layoutPanels, the NSSplitView delegate methods and _adjustingLayout.
+  - Divider dragging reuses ProjectLayoutView&#39;s drag loop, with the same size limits as before, and saves
+    the size to defaults once at the end of each drag.
+</pre></div>
+<div class="commit-meta">
+      <div class="commit-links">
+        <a href="https://github.com/tectiv3/textmate/commit/c0b2a9193e3422783508c8d6c1d0282fa35def10" class="gobutton">
+          <span class="sha">c0b2a9193e<span class="mini-icon mini-icon-arr-right-mini"></span></span>
+        </a>
+        <a href="https://github.com/tectiv3/textmate/tree/c0b2a9193e3422783508c8d6c1d0282fa35def10" class="browse-button" title="Browse the code at this point in the history" rel="nofollow">Browse code <span class="mini-icon mini-icon-arr-right"></span></a>
+      </div>
+      <div class="authorship">
+        <span class="author-name"><a href="https://github.com/tectiv3">tectiv3</a></span>
+        authored <time class="js-relative-date" datetime="2026-10-29T15:44:28Z" title="2026-10-29 15:44:28">October 29, 2026</time>
+      </div>
+    </div>
+</li>
 
 <li class="commit commit-group-item">
     <img class="gravatar" src="https://www.gravatar.com/avatar/e904dfc2f19fa297256c24c2a620c629?s=48&amp;d=https://a248.e.akamai.net/assets.github.com%2Fimages%2Fgravatars%2Fgravatar-user-420.png" height="36" width="36">

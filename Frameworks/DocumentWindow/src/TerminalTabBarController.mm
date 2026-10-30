@@ -44,6 +44,12 @@
 	NSArray<NSNumber*>* attention = self.controller.sessionNeedsAttention;
 	return index < attention.count && attention[index].boolValue;
 }
+- (NSString*)tabBarView:(OakTabBarView*)bar toolTipForIndex:(NSUInteger)index
+{
+	// A terminal tab has no path to show, so the attention dot is the only thing worth describing.
+	NSArray<NSString*>* toolTips = self.controller.sessionToolTips;
+	return index < toolTips.count ? toolTips[index] : @"";
+}
 - (BOOL)tabBarView:(OakTabBarView*)bar shouldSelectIndex:(NSUInteger)index
 {
 	[self.controller selectSessionAt:index];

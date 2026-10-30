@@ -66,6 +66,8 @@ private final class TerminalContainer: NSView {
     @objc public var sessionTitles: [String] { sessions.map(\.title) }
     /// Unseen OSC 7501 completions, parallel to `sessionIdentifiers`; drives the tab bar dot.
     @objc public var sessionNeedsAttention: [Bool] { sessions.map(\.attention.needsAttention) }
+    /// Per-tab hover tooltip for that dot, parallel to `sessionIdentifiers`; "" means no tooltip.
+    @objc public var sessionToolTips: [String] { sessions.map(\.attention.toolTip) }
     /// Worst unseen state across this panel's sessions, as window subtitle text; nil when nothing needs the user.
     @objc public var attentionSubtitle: String? { TerminalAttention.subtitle(for: sessions.map(\.attention)) }
     @objc public var selectedSessionIndex: Int { sessions.firstIndex { $0.id == selectedID } ?? NSNotFound }

@@ -17,6 +17,17 @@ struct TerminalAttention: Equatable {
 
     var needsAttention: Bool { raisedState != nil }
 
+    /// Hover text for the tab, parallel to the dot: empty when nothing is lit, since an empty tooltip is no tooltip.
+    ///
+    /// Capitalised `Subject: state` wording, matching the Copilot indicator's tooltip.
+    var toolTip: String {
+        switch raisedState {
+        case .done: return "Terminal: Finished"
+        case .blocked: return blockedKind == .permission ? "Terminal: Needs permission" : "Terminal: Waiting for input"
+        default: return ""
+        }
+    }
+
     /// Returns true when the dot changed, i.e. when the tab bar needs a repaint.
     @discardableResult
     mutating func update(records: [TerminalProgramStatus], isSelected: Bool) -> Bool {

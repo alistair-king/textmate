@@ -213,6 +213,18 @@ void test_terminal_panel_placement_and_last_session ()
 }
 
 #if HAVE_OAK_SWIFTUI
+static OakTabBarView* FindTabBarView (NSView* view)
+{
+	if([view isKindOfClass:OakTabBarView.class])
+		return (OakTabBarView*)view;
+	for(NSView* child in view.subviews)
+	{
+		if(OakTabBarView* res = FindTabBarView(child))
+			return res;
+	}
+	return nil;
+}
+
 // The panel is collapsed by default, so this also covers the state the user cannot see: the window
 // subtitle is the only indicator when the terminal panel is hidden or the window is in the background.
 void test_terminal_attention_drives_window_subtitle ()
@@ -244,10 +256,30 @@ void test_terminal_attention_drives_window_subtitle ()
 				[panel simulateSessionAttentionAtIndex:0 state:@"blocked" kind:nil];
 				OAK_ASSERT([window.subtitle isEqualToString:@"terminal needs your input"]);
 
-				// A visible panel must not change the outcome.
+				// The same fact as a tab tooltip. This reads the data source the tab bar actually installed,
+				// so it proves the wiring up to `OakTabItem`; the `NSToolTip` that OakTabView derives from it
+				// lives in private internals and is not covered by this assertion.
+				// The panel has to be visible for its subviews to be in the layout view's hierarchy.
 				panel.panelVisible = YES;
+				OakTabBarView* tabBar = FindTabBarView(panel.view);
+				OAK_ASSERT(tabBar != nil);
+				id <OakTabBarViewDataSource> dataSource = tabBar.dataSource;
+				OAK_ASSERT([dataSource respondsToSelector:@selector(tabBarView:toolTipForIndex:)]);
+				OAK_ASSERT([[dataSource tabBarView:tabBar toolTipForIndex:0] isEqualToString:@"Terminal: Waiting for input"]);
+
 				[panel simulateSessionAttentionAtIndex:0 state:@"done" kind:nil];
+				OAK_ASSERT([[dataSource tabBarView:tabBar toolTipForIndex:0] isEqualToString:@"Terminal: Finished"]);
 				OAK_ASSERT([window.subtitle isEqualToString:@"terminal finished"]);
+
+				[panel simulateSessionAttentionAtIndex:0 state:@"blocked" kind:@"permission"];
+				OAK_ASSERT([[dataSource tabBarView:tabBar toolTipForIndex:0] isEqualToString:@"Terminal: Needs permission"]);
+
+				[panel simulateSessionAttentionAtIndex:0 state:@"blocked" kind:@"auth"];
+				OAK_ASSERT([[dataSource tabBarView:tabBar toolTipForIndex:0] isEqualToString:@"Terminal: Waiting for input"]);
+
+				// No dot, no tooltip: an empty string falls back to the tab's own (also empty) path tooltip.
+				[panel simulateSessionAttentionAtIndex:0 state:nil kind:nil];
+				OAK_ASSERT([[dataSource tabBarView:tabBar toolTipForIndex:0] isEqualToString:@""]);
 
 				// Closing the only session removes the fact the subtitle was reporting.
 				[panel closeTerminalSessions:panel.terminalSessionIdentifiers];
