@@ -1,4 +1,5 @@
 #import "EditorContextBuffer.h"
+#import "EditorContextService.h"
 #import <document/OakDocument Private.h>
 #import <EditorContextProtocol.h>
 #import <objc/runtime.h>
@@ -151,12 +152,24 @@ static NSDictionary* position_json(position_t const& point) {
 }
 @property NSString* revision;
 @end
+// A snapshot may only carry the revision it actually observed. Kept in step with
+// ContextDocument() in DocumentWindowController.mm.
+static NSString* context_buffer_revision(OakDocument* document) {
+    return [NSString stringWithFormat:@"%zu:%lu", [document buffer].revision(), (unsigned long)[EditorContextService.sharedService contentGenerationForDocument:document]];
+}
 static char contextBufferCacheKey;
 @implementation EditorContextBuffer
 + (void)invalidateDocument:(OakDocument*)document { objc_setAssociatedObject(document, &contextBufferCacheKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
 + (instancetype)bufferForDocument:(OakDocument*)document revision:(NSString*)revision {
+    // A caller with no revision in hand only needs an immutable snapshot, so label
+    // it with the state it is copied from.
+    if(!revision) revision = context_buffer_revision(document);
     EditorContextBuffer* snapshot = objc_getAssociatedObject(document, &contextBufferCacheKey);
     if(![snapshot.revision isEqual:revision]) {
+        // Copying the buffer now observes the document as it is now, so a caller
+        // naming a different revision would get current content under a stale
+        // label. Refuse instead of returning a snapshot that misdescribes itself.
+        if(![context_buffer_revision(document) isEqual:revision]) return nil;
         snapshot = [[self alloc] init];
         snapshot.revision = revision;
         snapshot->_buffer = std::make_shared<context_buffer_t>([document buffer]);

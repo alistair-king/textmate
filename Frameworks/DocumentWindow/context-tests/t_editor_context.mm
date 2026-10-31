@@ -351,15 +351,19 @@ void test_editor_context_navigation_late_actions_and_session_transfer ()
     OAK_ASSERT(dispatch_group_wait(query, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) == 0);
     OAK_ASSERT([result[@"code"] isEqual:@"navigation_cancelled"] && effects == 0);
     OAK_ASSERT(dispatch_semaphore_wait(completed, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) == 0);
+    // renderBefore hops to the main queue before it invokes the action, and the
+    // queued block re-checks the deadline, so a budget shorter than main-queue
+    // latency in parallel runs drops the action uninvoked and it can never
+    // signal completion. The deferral must still outlast the render deadline.
     EditorContextSnapshot* late = [EditorContextSnapshot action:^(double deadline, BOOL (^canCommit)(void), void (^completion)(NSDictionary*)){
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100*NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2*NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             if(canCommit()) ++effects;
             completion(@{});
             dispatch_semaphore_signal(completed);
         });
     }];
-    OAK_ASSERT([[late renderBefore:editor_context::now()+0.03][@"code"] isEqual:@"timeout"]);
-    OAK_ASSERT(dispatch_semaphore_wait(completed, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC)) == 0);
+    OAK_ASSERT([[late renderBefore:editor_context::now()+1.0][@"code"] isEqual:@"timeout"]);
+    OAK_ASSERT(dispatch_semaphore_wait(completed, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
     OAK_ASSERT(effects == 0);
     dispatch_sync(dispatch_get_main_queue(), ^{ [EditorContextService.sharedService revokeSession:session]; });
 }
@@ -455,7 +459,7 @@ void test_editor_context_large_immutable_snapshot ()
     OAK_ASSERT(dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0);
     OAK_ASSERT(loaded);
     dispatch_sync(dispatch_get_main_queue(), ^{
-        snapshot = [EditorContextBuffer bufferForDocument:document revision:@"test-before-edit"];
+        snapshot = [EditorContextBuffer bufferForDocument:document revision:nil];
         document.content = @"edited after snapshot";
     });
     // Render on this worker thread after the live document changed.
@@ -497,7 +501,7 @@ void test_editor_context_stray_continuation_byte_offsets ()
         // The open path rejects undecodable files, so the raw buffer is edited directly.
         document.buffer.insert(1, "\x80\x80", 2);
         OAK_ASSERT(document.buffer.size() == 4);
-        snapshot = [EditorContextBuffer bufferForDocument:document revision:@"stray continuation byte"];
+        snapshot = [EditorContextBuffer bufferForDocument:document revision:nil];
     });
     auto read = ^NSDictionary*(NSUInteger offset, NSUInteger length){
         return [snapshot responseForMethod:@"read_document" arguments:@{ @"offset": @(offset), @"length": @(length) }
@@ -759,6 +763,69 @@ void test_editor_language_queries_real_server_and_session_boundary ()
     OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:path error:nil]);
 }
 
+
+void test_editor_language_queries_refused_for_non_utf16_server ()
+{
+    NSString* path = [@"/tmp/textmate-language-encoding-" stringByAppendingString:NSUUID.UUID.UUIDString];
+    OAK_ASSERT([@"A😀B\n" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    __block OakDocument* document;
+    __block DocumentWindowController* window;
+    __block LSPClient* client;
+    __block NSDictionary* environment;
+    NSUUID* session = NSUUID.UUID;
+    dispatch_semaphore_t loaded = dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        document = [OakDocument documentWithPath:path]; document.fileType = @"text.plain";
+        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+            OAK_ASSERT(status == OakDocumentIOResultSuccess); dispatch_semaphore_signal(loaded);
+        }];
+        NSString* fixture = [@(__FILE__).stringByDeletingLastPathComponent stringByAppendingPathComponent:@"language_server.py"];
+        client = [[LSPClient alloc] initWithCommand:@"/usr/bin/python3" arguments:@[fixture, @"--position-encoding=utf-8"] workingDirectory:@"/tmp" initOptions:nil];
+    });
+    OAK_ASSERT(dispatch_semaphore_wait(loaded, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
+    for(int i = 0; i < 500; ++i) {
+        __block BOOL initialized = NO;
+        dispatch_sync(dispatch_get_main_queue(), ^{ initialized = client.initialized; });
+        if(initialized) break;
+        usleep(10000);
+    }
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        // The handshake succeeded, so a refusal below comes from the position gate and not from a dead server.
+        OAK_ASSERT(client.initialized);
+        // LSPClient keeps a query only when the server leaves positionEncoding out or advertises
+        // "utf-16", so a server advertising "utf-8" loses every language-query method.
+        OAK_ASSERT(![client supportsLanguageQuery:@"textDocument/definition"]);
+        OAK_ASSERT(![client supportsLanguageQuery:@"textDocument/references"]);
+        OAK_ASSERT(![client supportsLanguageQuery:@"textDocument/hover"]);
+        OAK_ASSERT(![client supportsLanguageQuery:@"textDocument/documentSymbol"]);
+        OAK_ASSERT(![client supportsLanguageQuery:@"workspace/symbol"]);
+        [window setDocuments:@[document]]; [window setSelectedDocument:document];
+        [client openDocument:document languageId:@"plaintext"];
+        LSPManager* manager = LSPManager.sharedManager;
+        [manager valueForKey:@"documentClients"][document.identifier] = client;
+        [[manager valueForKey:@"openDocuments"] addObject:document.identifier];
+        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString* method, NSDictionary* args){ return [window editorContextForMethod:method arguments:args]; }];
+        window.textView.selectionString = @"1:1";
+    });
+    for(NSString* method in @[@"get_definition", @"get_hover", @"find_references"]) {
+        NSDictionary* refusal = context_test_query(environment, method);
+        // LSPManager calls back with "unsupported_capability" before sending the request, and
+        // EditorLanguageIntelligence turns that into a failure response with no result payload.
+        OAK_MASSERT([refusal.description UTF8String] ?: "No refusal was returned", [refusal[@"code"] isEqual:@"unsupported_capability"]);
+        OAK_ASSERT([refusal[@"error"] containsString:@"using UTF-16 positions"]);
+        OAK_ASSERT([refusal[@"items"] count] == 0 && refusal[@"hover"] == nil);
+    }
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [LSPManager.sharedManager documentWillClose:document];
+        [client shutdown];
+        [window setSelectedDocument:nil]; [window setDocuments:@[]]; [document close]; [window close];
+        [DocumentWindowController enableSessionSave];
+    });
+    OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:path error:nil]);
+}
 
 void test_document_edit_plan_unicode_insert_delete_and_undo ()
 {
@@ -1043,4 +1110,134 @@ void test_editor_context_navigation_project_boundary ()
     });
     OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:root error:nil]);
     OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:sibling error:nil]);
+}
+
+void test_editor_context_buffer_rejects_stale_revision ()
+{
+    __block DocumentWindowController* window;
+    __block OakDocument* document;
+    __block NSDictionary* metadata;
+    __block EditorContextBuffer* current;
+    __block NSString* staleRevision;
+    dispatch_semaphore_t loaded = dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication]; [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        document = [OakDocument documentWithString:@"first\n" fileType:@"text.plain" customName:@"stale revision buffer"];
+        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+            OAK_ASSERT(status == OakDocumentIOResultSuccess); dispatch_semaphore_signal(loaded);
+        }];
+    });
+    OAK_ASSERT(dispatch_semaphore_wait(loaded, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setDocuments:@[document]]; [window setSelectedDocument:document];
+        metadata = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}][@"document"];
+        staleRevision = metadata[@"revision"];
+        OAK_ASSERT([EditorContextBuffer bufferForDocument:document revision:staleRevision] != nil);
+        document.content = @"second\n";
+        metadata = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}][@"document"];
+        OAK_ASSERT(![metadata[@"revision"] isEqual:staleRevision]);
+        // Current content under the old label is exactly what must not be handed out.
+        OAK_ASSERT([EditorContextBuffer bufferForDocument:document revision:staleRevision] == nil);
+        current = [EditorContextBuffer bufferForDocument:document revision:metadata[@"revision"]];
+        OAK_ASSERT(current != nil && [[current valueForKey:@"revision"] isEqual:metadata[@"revision"]]);
+        // A refused request must leave the cache untouched: the fresh snapshot stays cached.
+        OAK_ASSERT([EditorContextBuffer bufferForDocument:document revision:metadata[@"revision"]] == current);
+        OAK_ASSERT([EditorContextBuffer bufferForDocument:document revision:staleRevision] == nil);
+        [window setSelectedDocument:nil]; [window setDocuments:@[]]; [document close]; [window close];
+        [DocumentWindowController enableSessionSave];
+    });
+}
+
+void test_document_edit_proposal_across_undo_revision_rewind ()
+{
+    __block DocumentWindowController* window;
+    __block OakDocument* document;
+    __block NSDictionary* initial;
+    __block NSDictionary* edited;
+    __block NSDictionary* rewritten;
+    __block NSDictionary* decided;
+    __block EditorContextBuffer* initialBuffer;
+    __block EditorContextBuffer* editedBuffer;
+    __block EditorContextBuffer* rewrittenBuffer;
+    __block size_t revisionAtStart = 0, revisionAfterEdit = 0, revisionAfterUndo = 0, revisionAfterRewrite = 0;
+    dispatch_semaphore_t loaded = dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication]; [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        document = [OakDocument documentWithString:@"A😀B\nkeep\n" fileType:@"text.plain" customName:@"undo rewind buffer"];
+        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+            OAK_ASSERT(status == OakDocumentIOResultSuccess); dispatch_semaphore_signal(loaded);
+        }];
+    });
+    OAK_ASSERT(dispatch_semaphore_wait(loaded, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setDocuments:@[document]]; [window setSelectedDocument:document];
+        initial = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}][@"document"];
+        initialBuffer = [EditorContextBuffer bufferForDocument:document revision:initial[@"revision"]];
+        revisionAtStart = [document buffer].revision();
+    });
+    OAK_ASSERT(initialBuffer != nil);
+    NSDictionary* (^arguments)(NSDictionary*, NSArray*) = ^NSDictionary*(NSDictionary* metadata, NSArray* edits){
+        return @{ @"documentId": metadata[@"documentId"], @"revision": metadata[@"revision"], @"summary": @"Edit across an undo rewind", @"edits": edits };
+    };
+    NSString* error = nil;
+    NSDictionary* plan = [initialBuffer editPlanForArguments:arguments(initial, @[@{ @"offset": @1, @"length": @2, @"text": @"🛠️" }]) document:initial deadline:editor_context::now()+3];
+    OAK_ASSERT(plan[@"error"] == nil && [plan[@"edits"][0][@"text"] isEqual:@"😀"]);
+    BufferEditProposal* first = [[BufferEditProposal alloc] initWithEditPlan:plan summary:@"Replace the emoji" error:&error];
+    OAK_ASSERT(first != nil && error == nil);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        OAK_ASSERT([first applyToDocument:document]);
+        OAK_ASSERT([document.content isEqual:@"A🛠️B\nkeep\n"]);
+        edited = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}][@"document"];
+        revisionAfterEdit = [document buffer].revision();
+        editedBuffer = [EditorContextBuffer bufferForDocument:document revision:edited[@"revision"]];
+        [document undo];
+        OAK_ASSERT([document.content isEqual:@"A😀B\nkeep\n"]);
+        revisionAfterUndo = [document buffer].revision();
+        rewritten = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}][@"document"];
+    });
+    // Undo rewinds buffer.revision(), so one numeric revision labels both the state
+    // before the undone edit and the state after it; only the generation separates them.
+    OAK_ASSERT(revisionAfterUndo == revisionAtStart && revisionAfterEdit > revisionAtStart);
+    OAK_ASSERT([[initial[@"revision"] componentsSeparatedByString:@":"].firstObject isEqual:[rewritten[@"revision"] componentsSeparatedByString:@":"].firstObject]);
+    OAK_ASSERT(![rewritten[@"revision"] isEqual:initial[@"revision"]]);
+    // A proposal built before the edit and applied after the undo: its ranges still
+    // describe the restored text, so only the revision label can retire it.
+    BufferEditProposal* expired = [[BufferEditProposal alloc] initWithEditPlan:plan summary:@"Replace the emoji" error:&error];
+    OAK_ASSERT(expired != nil && error == nil);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        OAK_ASSERT(![expired applyToDocument:document] && [expired.status isEqual:@"stale"]);
+        OAK_ASSERT([document.content isEqual:@"A😀B\nkeep\n"]);
+        rewrittenBuffer = [EditorContextBuffer bufferForDocument:document revision:rewritten[@"revision"]];
+    });
+    // Proposing against the rewound state must land on the content it was built from.
+    OAK_ASSERT(rewrittenBuffer != nil);
+    NSDictionary* rewindPlan = [rewrittenBuffer editPlanForArguments:arguments(rewritten, @[@{ @"offset": @10, @"length": @0, @"text": @"tail\n" }]) document:rewritten deadline:editor_context::now()+3];
+    OAK_ASSERT(rewindPlan[@"error"] == nil && [rewindPlan[@"edits"][0][@"text"] isEqual:@""]);
+    BufferEditProposal* afterUndo = [[BufferEditProposal alloc] initWithEditPlan:rewindPlan summary:@"Append after undo" error:&error];
+    OAK_ASSERT(afterUndo != nil && error == nil);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        OAK_ASSERT([afterUndo applyToDocument:document]);
+        OAK_ASSERT([document.content isEqual:@"A😀B\nkeep\ntail\n"]);
+        revisionAfterRewrite = [document buffer].revision();
+        decided = [window testEditorContextForMethod:@"get_editor_context" arguments:@{}][@"document"];
+    });
+    // This path never revisits a revision number already used, so a divergent buffer
+    // sharing buffer.revision() with an earlier one is not reachable through undo.
+    OAK_ASSERT(revisionAfterRewrite > revisionAfterEdit);
+    OAK_ASSERT(![decided[@"revision"] isEqual:edited[@"revision"]]);
+    // Its range still holds the text the proposal was built from, so the substring
+    // backstop cannot catch it; it is retired only because its label belongs to an
+    // earlier buffer state.
+    NSDictionary* editedPlan = [editedBuffer editPlanForArguments:arguments(edited, @[@{ @"offset": @0, @"length": @1, @"text": @"B" }]) document:edited deadline:editor_context::now()+3];
+    OAK_ASSERT(editedPlan[@"error"] == nil && [editedPlan[@"edits"][0][@"text"] isEqual:@"A"]);
+    BufferEditProposal* fromEarlierState = [[BufferEditProposal alloc] initWithEditPlan:editedPlan summary:@"Edit an earlier state" error:&error];
+    OAK_ASSERT(fromEarlierState != nil && error == nil);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        OAK_ASSERT(![fromEarlierState applyToDocument:document] && [fromEarlierState.status isEqual:@"stale"]);
+        OAK_ASSERT([document.content isEqual:@"A😀B\nkeep\ntail\n"]);
+        [window setSelectedDocument:nil]; [window setDocuments:@[]]; [document close]; [window close];
+        [DocumentWindowController enableSessionSave];
+    });
 }

@@ -3,6 +3,13 @@ import json
 import sys
 import time
 
+# Pass --position-encoding=utf-8 to answer as a server that advertises UTF-16 but
+# encodes positions differently; the default keeps every other fixture test intact.
+position_encoding = "utf-16"
+for argument in sys.argv[1:]:
+    if argument.startswith("--position-encoding="):
+        position_encoding = argument.split("=", 1)[1]
+
 
 def send(message):
     data = json.dumps(message).encode()
@@ -35,7 +42,7 @@ while True:
     params = message.get("params", {})
     identifier = message.get("id")
     if method == "initialize":
-        reply(identifier, {"capabilities": {"positionEncoding": "utf-16", "textDocumentSync": 1,
+        reply(identifier, {"capabilities": {"positionEncoding": position_encoding, "textDocumentSync": 1,
             "definitionProvider": True, "referencesProvider": True, "hoverProvider": True,
             "documentSymbolProvider": True, "workspaceSymbolProvider": True}})
     elif method == "textDocument/didOpen":
