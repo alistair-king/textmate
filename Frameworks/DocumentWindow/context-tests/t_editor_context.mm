@@ -1336,3 +1336,115 @@ void test_editor_context_snapshot_survives_later_edits ()
     fprintf(stderr, "snapshot under edits: %lu rounds, %s grammar\n", (unsigned long)rounds, grammarWasLoaded ? "with" : "without");
     dispatch_sync(dispatch_get_main_queue(), ^{ [document close]; });
 }
+
+// EditorContextChanges belongs to the window, not to a session: it is a window ivar
+// (DocumentWindowController.mm:115, created at :469) and every get_editor_changes
+// answers from self.editorChanges (:228), so all sessions registered against one
+// window share one event sequence and its 128-event cap (EditorContextChanges.mm:16).
+// Events carry type and documentId only, so the journal cannot attribute an event to
+// the session that caused it.
+void test_editor_context_change_journal_is_per_window ()
+{
+    __block DocumentWindowController* window;
+    __block OakDocument* first;
+    __block OakDocument* second;
+    __block NSUUID* firstSession;
+    __block NSUUID* secondSession;
+    __block NSDictionary* firstEnvironment;
+    __block NSDictionary* secondEnvironment;
+    dispatch_group_t loaded = dispatch_group_create();
+    __block BOOL success = YES;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        first = [OakDocument documentWithString:@"first window journal\n" fileType:@"text.plain" customName:@"journal first"];
+        second = [OakDocument documentWithString:@"second window journal\n" fileType:@"text.plain" customName:@"journal second"];
+        for(OakDocument* document in @[first, second]) {
+            dispatch_group_enter(loaded);
+            [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+                success = success && status == OakDocumentIOResultSuccess;
+                dispatch_group_leave(loaded);
+            }];
+        }
+    });
+    OAK_ASSERT(dispatch_group_wait(loaded, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0 && success);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setDocuments:@[first, second]];
+        [window setSelectedDocument:first];
+        // Two distinct sessions, one provider: both resolve this window's state.
+        EditorContextProvider provider = ^EditorContextSnapshot*(NSString* method, NSDictionary* arguments){
+            return [window editorContextForMethod:method arguments:arguments];
+        };
+        firstSession = NSUUID.UUID;
+        secondSession = NSUUID.UUID;
+        firstEnvironment = [EditorContextService.sharedService environmentForSession:firstSession provider:provider];
+        secondEnvironment = [EditorContextService.sharedService environmentForSession:secondSession provider:provider];
+    });
+
+    // Identity: two sessions reading the same untouched journal get byte-identical
+    // cursors, because both were rendered from the same EditorContextChanges instance.
+    NSDictionary* initialFirst = context_test_query(firstEnvironment, @"get_editor_changes", @{});
+    NSDictionary* initialSecond = context_test_query(secondEnvironment, @"get_editor_changes", @{});
+    OAK_ASSERT([initialFirst[@"windowId"] isEqual:initialSecond[@"windowId"]]);
+    OAK_ASSERT([initialFirst[@"cursor"] isEqual:initialSecond[@"cursor"]]);
+    OAK_ASSERT([initialFirst[@"reset"] boolValue] && [initialSecond[@"reset"] boolValue]);
+    NSString* cursor = initialFirst[@"cursor"];
+
+    // A change the first session observes: switch document, then edit content.
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [window setSelectedDocument:second];
+        first.content = @"edited while the first session was the caller";
+    });
+
+    // The second session resumes from the first session's cursor and sees those events
+    // without a reset, which a per-session journal could not do.
+    NSDictionary* fromSecond = context_test_query(secondEnvironment, @"get_editor_changes", @{ @"cursor": cursor });
+    OAK_ASSERT(![fromSecond[@"reset"] boolValue]);
+    OAK_ASSERT([fromSecond[@"events"] count] > 0);
+    OAK_ASSERT([[fromSecond[@"events"] valueForKey:@"type"] containsObject:@"document"]);
+    OAK_ASSERT([[fromSecond[@"events"] valueForKey:@"type"] containsObject:@"content"]);
+    OAK_ASSERT([fromSecond[@"context"][@"document"][@"documentId"] isEqual:second.identifier.UUIDString]);
+    OAK_ASSERT(fromSecond[@"events"][0][@"session"] == nil);
+    NSDictionary* fromFirst = context_test_query(firstEnvironment, @"get_editor_changes", @{ @"cursor": fromSecond[@"cursor"] });
+    OAK_ASSERT(![fromFirst[@"reset"] boolValue] && ![fromFirst[@"changed"] boolValue]);
+
+    // One 128-event history: a flood recorded once retires the same cursor for both.
+    NSString* beforeFlood = fromSecond[@"cursor"];
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        EditorContextChanges* journal = [window valueForKey:@"editorChanges"];
+        for(int i = 0; i < 400; ++i)
+            [journal record:@"selection" documentId:second.identifier.UUIDString];
+    });
+    NSDictionary* floodedFirst = context_test_query(firstEnvironment, @"get_editor_changes", @{ @"cursor": beforeFlood });
+    NSDictionary* floodedSecond = context_test_query(secondEnvironment, @"get_editor_changes", @{ @"cursor": beforeFlood });
+    OAK_ASSERT([floodedFirst[@"reset"] boolValue] && [floodedSecond[@"reset"] boolValue]);
+    OAK_ASSERT([floodedFirst[@"cursor"] isEqual:floodedSecond[@"cursor"]]);
+    OAK_ASSERT_EQ([floodedFirst[@"events"] count], (NSUInteger)0);
+
+    // The retained window is the last 128 events for both sessions: from the
+    // post-flood cursor exactly 127 further records come back, and the 128th slot
+    // still holds the cursor's own event. A per-session journal, or a smaller cap,
+    // would report a reset here instead.
+    NSString* retainedStart = floodedFirst[@"cursor"];
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        EditorContextChanges* journal = [window valueForKey:@"editorChanges"];
+        for(int i = 0; i < 127; ++i)
+            [journal record:@"content" documentId:second.identifier.UUIDString];
+    });
+    NSDictionary* retainedFirst = context_test_query(firstEnvironment, @"get_editor_changes", @{ @"cursor": retainedStart });
+    NSDictionary* retainedSecond = context_test_query(secondEnvironment, @"get_editor_changes", @{ @"cursor": retainedStart });
+    OAK_ASSERT(![retainedFirst[@"reset"] boolValue] && ![retainedSecond[@"reset"] boolValue]);
+    OAK_ASSERT_EQ([retainedFirst[@"events"] count], (NSUInteger)127);
+    OAK_ASSERT_EQ([retainedSecond[@"events"] count], (NSUInteger)127);
+
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [EditorContextService.sharedService revokeSession:firstSession];
+        [EditorContextService.sharedService revokeSession:secondSession];
+        [window setSelectedDocument:nil]; [window setDocuments:@[]];
+        [first close]; [second close]; [window close];
+        [DocumentWindowController enableSessionSave];
+    });
+    OAK_ASSERT([context_test_query(firstEnvironment)[@"code"] isEqual:@"session_unavailable"]);
+    OAK_ASSERT([context_test_query(secondEnvironment)[@"code"] isEqual:@"session_unavailable"]);
+}
