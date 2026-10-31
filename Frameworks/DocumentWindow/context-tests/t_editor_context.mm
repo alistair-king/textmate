@@ -510,8 +510,10 @@ void test_editor_context_real_terminal_transfer_and_window_close ()
         [second setDocuments:@[secondDocument]]; [second setSelectedDocument:secondDocument];
         firstPanel = [first valueForKey:@"terminalPanelController"];
         secondPanel = [second valueForKey:@"terminalPanelController"];
-        [firstPanel startTerminalInDirectory:NSTemporaryDirectory()];
-        [secondPanel startTerminalInDirectory:NSTemporaryDirectory()];
+        firstPanel.terminalDirectoryProvider = ^{ return NSTemporaryDirectory(); };
+        secondPanel.terminalDirectoryProvider = ^{ return NSTemporaryDirectory(); };
+        [firstPanel startTerminal];
+        [secondPanel startTerminal];
         movedSession = [[firstPanel valueForKey:@"terminalController"] valueForKey:@"sessionIdentifiers"][0];
         NSUUID* secondSession = [[secondPanel valueForKey:@"terminalController"] valueForKey:@"sessionIdentifiers"][0];
         firstEnvironment = firstPanel.contextEnvironmentProvider(movedSession);
