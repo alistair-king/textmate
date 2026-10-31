@@ -11,7 +11,10 @@ import unittest
 import contextlib
 import time
 import shutil
-import tomllib
+try:
+    import tomllib            # Python 3.11+; Xcode's python3 is 3.9
+except ModuleNotFoundError:
+    tomllib = None
 import queue
 
 EXECUTABLE = str(Path(sys.argv.pop(1)).resolve())
@@ -394,6 +397,7 @@ class MCPTests(unittest.TestCase):
                 self.assertEqual(process.stdout.read(), "")
                 self.assertEqual(process.wait(timeout=5), 0)
 
+    @unittest.skipUnless(tomllib, "parsing the generated Codex TOML config requires tomllib (Python 3.11+)")
     def test_launcher_preserves_arguments_directory_and_session(self):
         launcher = str(Path(EXECUTABLE).with_name("tm-codex"))
         with tempfile.TemporaryDirectory(prefix="tm-launch-", dir="/tmp") as directory:
