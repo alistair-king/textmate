@@ -24,6 +24,8 @@ struct context_buffer_t : ng::buffer_api_t {
             offset += piece.size();
         }
     }
+    // Every walk over the buffer steps one byte at a time, so a stray continuation
+    // byte always costs exactly one byte and no UTF-16 unit.
     static void consume(position_t& point, unsigned char byte) {
         ++point.byte;
         if((byte & 0xC0) == 0x80) return;
@@ -70,17 +72,18 @@ struct context_buffer_t : ng::buffer_api_t {
         position_t point = *--it;
         size_t stop = it+1 == checkpoints.end() ? finish.byte : (it+1)->byte;
         auto bytes = text(point.byte, stop);
-        size_t i = 0;
-        while(point.units < units && i < bytes.size()) {
-            unsigned char ch = bytes[i];
-            size_t width = ch < 0x80 ? 1 : ch < 0xE0 ? 2 : ch < 0xF0 ? 3 : 4;
-            size_t count = width == 4 ? 2 : 1;
-            if(point.units + count > units) return floor ? point.byte : NSNotFound;
-            point.units += count;
-            point.byte += width;
-            i += width;
+        size_t base = point.byte;
+        while(point.byte < stop) {
+            unsigned char byte = bytes[point.byte - base];
+            // Continuation bytes carry no unit of their own, so an offset is only
+            // addressable once the walk reaches a byte that starts one.
+            if(point.units == units && (byte & 0xC0) != 0x80) break;
+            size_t previous = point.byte;
+            consume(point, byte);
+            if(point.units > units) return floor ? previous : NSNotFound;
         }
-        return point.byte;
+        if(point.units == units || floor) return point.byte;
+        return NSNotFound;
     }
     size_t size() const override { return finish.byte; }
     size_t lines() const override { return finish.line; }

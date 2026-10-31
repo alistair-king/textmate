@@ -475,6 +475,47 @@ void test_editor_context_large_immutable_snapshot ()
     dispatch_sync(dispatch_get_main_queue(), ^{ [document close]; });
 }
 
+void test_editor_context_stray_continuation_byte_offsets ()
+{
+    __block OakDocument* document;
+    __block EditorContextBuffer* snapshot;
+    __block BOOL loaded = NO;
+    dispatch_semaphore_t ready = dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        document = [OakDocument documentWithString:@"AB" fileType:@"text.plain" customName:@"stray continuation byte"];
+        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+            loaded = status == OakDocumentIOResultSuccess;
+            dispatch_semaphore_signal(ready);
+        }];
+    });
+    OAK_ASSERT(dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0);
+    OAK_ASSERT(loaded);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        // The open path rejects undecodable files, so the raw buffer is edited directly.
+        document.buffer.insert(1, "\x80\x80", 2);
+        OAK_ASSERT(document.buffer.size() == 4);
+        snapshot = [EditorContextBuffer bufferForDocument:document revision:@"stray continuation byte"];
+    });
+    auto read = ^NSDictionary*(NSUInteger offset, NSUInteger length){
+        return [snapshot responseForMethod:@"read_document" arguments:@{ @"offset": @(offset), @"length": @(length) }
+            base:@{} document:@{} ranges:ng::ranges_t() caret:0 deadline:editor_context::now()+3];
+    };
+    NSUInteger total = [read(0, 4)[@"totalLength"] unsignedIntegerValue];
+    OAK_ASSERT(total == 2);
+    // Every reported offset must map back to the byte it came from.
+    for(NSUInteger offset = 0; offset <= total; ++offset)
+        OAK_ASSERT_EQ([read(offset, 0)[@"nextOffset"] unsignedIntegerValue], offset);
+    // Reading the buffer in order must reach the end instead of stalling.
+    NSUInteger offset = 0;
+    for(size_t i = 0; i < 8 && offset < total; ++i) {
+        NSUInteger next = [read(offset, 1)[@"nextOffset"] unsignedIntegerValue];
+        OAK_ASSERT(next > offset);
+        offset = next;
+    }
+    OAK_ASSERT(offset == total);
+    dispatch_sync(dispatch_get_main_queue(), ^{ [document close]; });
+}
+
 void test_editor_context_real_terminal_transfer_and_window_close ()
 {
     __block DocumentWindowController* first;
