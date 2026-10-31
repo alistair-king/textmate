@@ -131,7 +131,7 @@ int main(int argc, char const* argv[]) {
             return 0;
         }
         if(argc > 1) {
-            fprintf(stderr, "textmate-mcp: MCP stdio server; run without arguments from an embedded TextMate terminal. Use --check to test the connection, or --print-config to emit connection configuration.\n");
+            fprintf(stderr, "textmate-mcp: MCP stdio server; run without arguments from an embedded TextMate terminal. Use --check to test the connection, or --print-config to emit connection configuration that contains this terminal's token value.\n");
             return strcmp(argv[1], "--help") ? 1 : 0;
         }
         enum class lifecycle { fresh, initializing, ready };

@@ -11,6 +11,7 @@ import unittest
 import contextlib
 import time
 import shutil
+import re
 try:
     import tomllib            # Python 3.11+; Xcode's python3 is 3.9
 except ModuleNotFoundError:
@@ -18,6 +19,32 @@ except ModuleNotFoundError:
 import queue
 
 EXECUTABLE = str(Path(sys.argv.pop(1)).resolve())
+VALIDATOR = str(Path(sys.argv.pop(1)).resolve()) if len(sys.argv) > 1 else None
+
+ROOT = Path(__file__).resolve().parents[3]
+MCP_SOURCE = ROOT / "Applications/textmate-mcp/src/main.mm"
+PROTOCOL_SOURCE = ROOT / "Shared/include/EditorContextProtocol.h"
+
+# Methods the helper uses for its own transport (--check and change-token
+# polling). validate_arguments accepts them; they are not MCP tools.
+INTERNAL_METHODS = {"get_connection_status", "get_editor_change_token"}
+
+
+def compared_names(source, parameter):
+    """Names in ``@[@"a", @"b"] containsObject:parameter`` literals."""
+    pattern = re.compile(r'@\[((?:@"[a-z_]+",?\s*)+)\] containsObject:' + parameter + r'\]')
+    return {name for body in pattern.findall(source) for name in re.findall(r'@"([a-z_]+)"', body)}
+
+
+def described_names(source):
+    """Names from the entries of the description/schema table."""
+    table = re.search(r'NSArray\* descriptions = @\[(.*?)\];', source, re.S)
+    return set(re.findall(r'@\[@"([a-z_]+)", @"', table.group(1))) if table else set()
+
+
+def validate_arguments_names(source):
+    """Names compared against the method parameter inside validate_arguments."""
+    return set(re.findall(r'\[method isEqual:@"([a-z_]+)"\]', source)) | compared_names(source, "method")
 
 
 def request(identifier, method, **params):
@@ -126,6 +153,48 @@ class MCPTests(unittest.TestCase):
         replies = self.run_server([INITIALIZE, READY] + [request(i+2, "tools/call", name="propose_document_edits", arguments=args)
             for i, args in enumerate(invalid)])
         self.assertTrue(all(reply["error"]["code"] == -32602 for reply in replies[1:]))
+
+    def advertised_tools(self):
+        replies = self.run_server([INITIALIZE, READY, request(2, "tools/list")])
+        return next(reply for reply in replies if reply["id"] == 2)["result"]["tools"]
+
+    def test_allow_list_admits_every_advertised_tool(self):
+        names = sorted(tool["name"] for tool in self.advertised_tools())
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("TM_CONTEXT_")}
+        replies = self.run_server([INITIALIZE, READY] + [
+            request(2 + index, "tools/call", name=name) for index, name in enumerate(names)], environment)
+        by_id = {reply["id"]: reply for reply in replies}
+        for index, name in enumerate(names):
+            # Both the tools/call allow-list and validate_arguments reject an
+            # unhandled name with this message; any other outcome, including an
+            # ordinary argument error, proves the name reached both copies.
+            self.assertNotEqual(by_id[2 + index].get("error", {}).get("message"), "Unknown tool", name)
+
+    @unittest.skipUnless(VALIDATOR, "the textmate-mcp-tool-surface helper was not supplied")
+    def test_tool_surface_copies_stay_in_sync(self):
+        main_source = MCP_SOURCE.read_text(encoding="utf-8")
+        protocol_source = PROTOCOL_SOURCE.read_text(encoding="utf-8")
+        advertised = {tool["name"] for tool in self.advertised_tools()}
+        self.assertTrue(advertised, "the helper advertised no tools")
+        described = described_names(main_source)
+        allow_list = compared_names(main_source, "name")
+        validated = validate_arguments_names(protocol_source)
+        self.assertEqual(described, advertised,
+                         "the description/schema table in main.mm disagrees with tools/list")
+        self.assertEqual(allow_list, advertised,
+                         "the tools/call allow-list in main.mm disagrees with the advertised tools")
+        self.assertLessEqual(INTERNAL_METHODS, validated,
+                             "validate_arguments no longer accepts the helper's internal methods")
+        self.assertEqual(validated - INTERNAL_METHODS, advertised,
+                         "the validate_arguments branches disagree with the advertised tools")
+
+        candidates = sorted(advertised | allow_list | validated)
+        process = subprocess.run([VALIDATOR, *candidates], text=True, capture_output=True, timeout=10, check=True)
+        verdicts = dict(line.split("\t") for line in process.stdout.splitlines())
+        self.assertEqual(set(verdicts), set(candidates), "the helper did not report on every candidate")
+        accepted = {name for name, verdict in verdicts.items() if verdict == "accepted"}
+        self.assertEqual(accepted, advertised | INTERNAL_METHODS,
+                         "validate_arguments' compiled branches disagree with the extracted names")
 
     def test_initialization_tools_notifications_and_pipelining(self):
         replies = self.run_server([

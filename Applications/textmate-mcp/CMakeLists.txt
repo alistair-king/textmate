@@ -11,8 +11,13 @@ target_link_libraries(tm-opencode PRIVATE "-framework Foundation")
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
+    add_executable(textmate-mcp-tool-surface tests/tool_surface_check.mm)
+    target_link_libraries(textmate-mcp-tool-surface PRIVATE "-framework Foundation")
+    # The drift test compares the three hand-maintained tool lists and asks this
+    # helper which names validate_arguments actually accepts.
     add_test(NAME textmate-mcp
-      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mcp.py $<TARGET_FILE:textmate-mcp>)
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mcp.py
+        $<TARGET_FILE:textmate-mcp> $<TARGET_FILE:textmate-mcp-tool-surface>)
   endif()
 endif()
 
