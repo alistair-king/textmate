@@ -90,11 +90,19 @@ Inside a TextMate terminal, run:
 "$TM_MCP_SERVER" --print-config
 ```
 
-This prints an `mcpServers` JSON entry with the helper's absolute path and explicit `TM_CONTEXT_SOCKET`, `TM_CONTEXT_SESSION`, and `TM_CONTEXT_TOKEN` values. Register that entry using the client's configuration mechanism. These connection values belong to this terminal; generate separate configuration for separate tabs. Do not commit generated credentials to a project.
+This prints an `mcpServers` JSON entry with the helper's absolute path and explicit `TM_CONTEXT_SOCKET`, `TM_CONTEXT_SESSION`, and `TM_CONTEXT_TOKEN` **values**. The printed entry therefore contains a live session token, not a `${TM_CONTEXT_TOKEN}` reference — unlike the three launchers, which pass environment references and leave the value in the terminal's environment. Register that entry using the client's configuration mechanism and treat the printed JSON as a credential: these values belong to this terminal, they stop working when the session is revoked, and they must not be committed to a project. Generate separate configuration for separate tabs. Emitting references here instead is a known inconsistency that is deliberately deferred.
 
 Clients supporting environment forwarding can pass those three variables from the launching shell instead. Explicit forwarding matters because MCP clients may inherit only a restricted environment. `TM_MCP_SERVER` holds the helper's absolute path.
 
 The helper runs without arguments as an MCP stdio server. Standard output contains protocol messages only. No Python, Node, TCP listener, or external service is needed by the TextMate integration at runtime. The chosen agent CLI is installed separately.
+
+## What the capability token does not protect
+
+The three `TM_CONTEXT_*` variables are the connection's credentials, and any process running as your user can read them. Measured on a Release build: `ps -E -p <pid of a shell started in the embedded terminal>` printed the shell's full environment, including `TM_CONTEXT_SESSION`, `TM_CONTEXT_SOCKET`, and `TM_CONTEXT_TOKEN` (a 72-character random value). Descendants inherit all three, across `sh -c`, `python3 -c`, and a grandchild of that shell; `env -i sh -c` starts with none of them. `ps -E -p 1`, a root-owned process, printed no environment entries at all, so the exposure comes from same-user process inspection rather than from a world-readable store.
+
+Stated plainly: **“the user approved this terminal session” is equivalent to “any code running as the same user holds a live token.”** The boundary is the user account, not the token. Moving the token from the environment into a mode-0600 file would not change that, because a same-user process can read the file too.
+
+The token is an approval marker, not a secret capability. It identifies which terminal session is asking, so closing or transferring a terminal ends that grant and two terminals in one window stay separate. It does not exclude code that already runs as you: such code can also open the socket directly, read your files, or drive the editor through other means. What limits it is the application's per-request re-authorisation against the terminal registration, and revocation on terminal closure — not secrecy of the value.
 
 ## Tools
 
@@ -163,7 +171,7 @@ MCP resources are [application-driven](https://modelcontextprotocol.io/specifica
 
 ## Implementation
 
-`EditorContextService` owns one private Unix socket per application instance, in a mode-0700 temporary directory; the socket has mode 0600. Each terminal receives a separate random capability token. Every request validates credentials and resolves the terminal's current owning window. Terminal closure revokes its registration. Normal application termination removes the socket; an abrupt process kill may leave an inaccessible directory in the system temporary area.
+`EditorContextService` owns one private Unix socket per application instance, in a mode-0700 temporary directory; the socket has mode 0600. Each terminal receives a separate random capability token. Every request validates credentials and resolves the terminal's current owning window. Terminal closure revokes its registration. Normal application termination removes the socket; an abrupt process kill may leave an inaccessible directory in the system temporary area. The token identifies the session; it is not a boundary against same-user code (see [What the capability token does not protect](#what-the-capability-token-does-not-protect)).
 
 The main thread captures metadata, bounded raw selection ranges, and an immutable snapshot sharing the buffer's existing storage. Background workers build a sparse UTF-16/line index and extract only requested text. The index is reused for an unchanged buffer, and edits invalidate the cached snapshot. In-flight snapshots remain consistent even when the user edits or closes the document.
 

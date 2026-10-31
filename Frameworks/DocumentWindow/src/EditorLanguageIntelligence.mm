@@ -222,6 +222,9 @@ NSDictionary* EditorLanguageNormalize(NSString* method, id raw, NSDictionary* do
 							result[@"resultId"] = NSUUID.UUID.UUIDString;
 							EditorLanguageIntelligence* owner = weakSelf;
 							if(!owner) { finish(editor_context::failure(@"The editor window closed.", @"window_closed")); return; }
+							// Any victim will do: a caller that presents an evicted resultId is
+							// told result_expired and repeats the query, so identifying the
+							// oldest entry would buy nothing but bookkeeping.
 							if(owner->_results.count >= 8) [owner->_results removeObjectForKey:owner->_results.allKeys.firstObject];
 							owner->_results[result[@"resultId"]] = result;
 							finish(Page(result, arguments));

@@ -37,9 +37,15 @@ inline NSData* read_line(int fd, double deadline = now() + request_timeout) {
     }
     return nil;
 }
-inline bool write_json(int fd, id object, double deadline = now() + request_timeout) {
+enum class write_error { none, unencodable, too_large, send_failed };
+struct write_result_t { bool sent; size_t length; write_error error; };
+// The peer only ever sees a closed socket, so failures are reported in enough
+// detail for the server to record why a client got nothing.
+inline write_result_t write_json_result(int fd, id object, double deadline = now() + request_timeout) {
     NSData* encoded = [NSJSONSerialization dataWithJSONObject:object options:NSJSONWritingWithoutEscapingSlashes error:nil];
-    if(!encoded || encoded.length >= message_limit) return false;
+    if(!encoded) return { false, 0, write_error::unencodable };
+    size_t length = encoded.length + 1;
+    if(encoded.length >= message_limit) return { false, length, write_error::too_large };
     NSMutableData* data = [encoded mutableCopy];
     [data appendBytes:"\n" length:1];
     auto bytes = static_cast<char const*>(data.bytes);
@@ -51,11 +57,14 @@ inline bool write_json(int fd, id object, double deadline = now() + request_time
         size_t count = MIN(left, (size_t)4096);
         ssize_t n = socket ? send(fd, bytes, count, MSG_DONTWAIT) : write(fd, bytes, count);
         if(n < 0 && (errno == EINTR || errno == EAGAIN)) continue;
-        if(n <= 0) return false;
+        if(n <= 0) return { false, length, write_error::send_failed };
         bytes += n;
         left -= n;
     }
-    return left == 0;
+    return { left == 0, length, left ? write_error::send_failed : write_error::none };
+}
+inline bool write_json(int fd, id object, double deadline = now() + request_timeout) {
+    return write_json_result(fd, object, deadline).sent;
 }
 inline NSDictionary* parse(NSData* data) {
     id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;

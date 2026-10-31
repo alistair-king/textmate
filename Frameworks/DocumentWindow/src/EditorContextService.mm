@@ -109,7 +109,15 @@
                     if(dispatch_semaphore_wait(captured, dispatch_time(DISPATCH_TIME_NOW, remaining)) == 0)
                         response = [snapshot renderBefore:deadline];
                     response = response ?: editor_context::failure(@"The editor request timed out.", @"timeout");
-                    editor_context::write_json(client, response, deadline);
+                    auto written = editor_context::write_json_result(client, response, deadline);
+                    if(!written.sent) {
+                        // The client sees only an empty reply, which it reports as invalid_response or
+                        // timeout, so the distinction between an oversized payload and a stalled peer
+                        // must be recorded here or it is lost.
+                        char const* reason = written.error == editor_context::write_error::too_large ? "payload at or over message_limit" :
+                            written.error == editor_context::write_error::unencodable ? "payload is not JSON encodable" : "socket send failed or timed out";
+                        NSLog(@"EditorContextService: %@ response not sent (%s): %zu payload bytes, message_limit %zu", request[@"method"], reason, written.length, editor_context::message_limit);
+                    }
                     close(client);
                     dispatch_semaphore_signal(slots);
                 }
@@ -155,6 +163,10 @@
     NSDictionary* arguments = request[@"arguments"];
     if(![session isKindOfClass:NSString.class] || ![token isKindOfClass:NSString.class] ||
        ![method isKindOfClass:NSString.class] || ![arguments isKindOfClass:NSDictionary.class])
+        return [EditorContextSnapshot response:editor_context::failure(@"Invalid context request", @"invalid_request")];
+    // Tokens are 72 characters (two UUIDs) and sessions are 36; bounding both before
+    // the lookup keeps a 1 MB request string out of the registrations dictionary.
+    if(session.length > 256 || token.length > 256)
         return [EditorContextSnapshot response:editor_context::failure(@"Invalid context request", @"invalid_request")];
     NSDictionary* entry = _registrations[session];
     if(!entry || ![entry[@"token"] isEqual:token]) return [EditorContextSnapshot response:editor_context::failure(@"This terminal session has closed or its credentials are invalid.", @"session_unavailable")];

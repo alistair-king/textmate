@@ -3,7 +3,6 @@
 #include <xdiff.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <signal.h>
 #include <unistd.h>
 #include <chrono>
@@ -11,6 +10,7 @@
 namespace {
 constexpr NSUInteger fileLimit = 4 * 1024 * 1024;
 static double Now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+static dispatch_time_t At(double when) { return dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0, when-Now()) * NSEC_PER_SEC)); }
 static NSDictionary* Error(NSString* message) { return @{ @"error": message }; }
 
 static NSDictionary* Git(NSString* directory, NSArray<NSString*>* arguments)
@@ -31,43 +31,73 @@ static NSDictionary* Git(NSString* directory, NSArray<NSString*>* arguments)
 	task.standardError = [NSFileHandle fileHandleWithNullDevice];
 	task.standardInput = [NSFileHandle fileHandleWithNullDevice];
 	NSError* error;
+	dispatch_semaphore_t exited = dispatch_semaphore_create(0);
+	// Set before launch so an exit that beats the process monitor is still seen.
+	task.terminationHandler = ^(NSTask* task){ dispatch_semaphore_signal(exited); };
 	if(![task launchAndReturnError:&error]) return Error(@"Git could not be started. Install the macOS command line tools and try again.");
 	[pipe.fileHandleForWriting closeFile];
+	double deadline = Now()+10;
+
+	// A readability source replaces polling: it is woken by the pipe instead of
+	// sleeping in 10 ms steps while Git is quiet.
 	int fd = pipe.fileHandleForReading.fileDescriptor;
 	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
 	NSMutableData* output = [NSMutableData data];
-	double deadline = Now()+10;
-	BOOL eof = NO;
-	NSString* problem = nil;
-	while(task.running || !eof)
-	{
-		if(Now() >= deadline) { problem = @"Git took too long to respond. Try refreshing the view."; break; }
-		if(eof) { [NSThread sleepForTimeInterval:0.01]; continue; }
-		pollfd descriptor = { fd, POLLIN, 0 };
-		if(poll(&descriptor, 1, 100) < 0 && errno != EINTR) { problem = @"Git output could not be read."; break; }
+	__block NSString* problem = nil;
+	__block BOOL done = NO;
+	dispatch_semaphore_t eof = dispatch_semaphore_create(0);
+	dispatch_semaphore_t stopped = dispatch_semaphore_create(0);
+	dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, fd, 0, dispatch_queue_create("com.macromates.project-changes.git-pipe", DISPATCH_QUEUE_SERIAL));
+	dispatch_source_set_event_handler(source, ^{
+		if(done) return;
 		char bytes[16384];
 		ssize_t count = read(fd, bytes, sizeof(bytes));
-		if(count == 0) eof = YES;
-		else if(count > 0) {
-			if(output.length + count > fileLimit) { problem = @"This change is too large to preview (limit 4 MB)."; break; }
-			[output appendBytes:bytes length:count];
-		} else if(errno != EAGAIN && errno != EINTR) { problem = @"Git output could not be read."; break; }
+		if(count > 0) {
+			if(output.length + count > fileLimit) problem = @"This change is too large to preview (limit 4 MB).";
+			else { [output appendBytes:bytes length:count]; return; }
+		} else if(count < 0 && (errno == EAGAIN || errno == EINTR)) return;
+		done = YES;
+		dispatch_semaphore_signal(eof);
+	});
+	dispatch_source_set_cancel_handler(source, ^{ dispatch_semaphore_signal(stopped); });
+	dispatch_resume(source);
+	if(dispatch_semaphore_wait(eof, At(deadline))) problem = @"Git took too long to respond. Try refreshing the view.";
+	// Cancelling and waiting keeps the descriptor open until no handler can read it.
+	dispatch_source_cancel(source);
+	dispatch_semaphore_wait(stopped, DISPATCH_TIME_FOREVER);
+	if(dispatch_semaphore_wait(exited, At(deadline))) {
+		if(!problem) problem = @"Git took too long to respond. Try refreshing the view.";
+		if(task.running) kill(task.processIdentifier, SIGKILL);
 	}
-	if(problem && task.running) kill(task.processIdentifier, SIGKILL);
 	[task waitUntilExit];
 	[pipe.fileHandleForReading closeFile];
-	return problem ? Error(problem) : @{ @"data": output, @"status": @(task.terminationStatus) };
-}
-static NSString* GitString(NSDictionary* result)
-{
-	if(result[@"error"] || [result[@"status"] intValue]) return nil;
-	return [[[NSString alloc] initWithData:result[@"data"] encoding:NSUTF8StringEncoding] stringByTrimmingCharactersInSet:NSCharacterSet.newlineCharacterSet];
+	return problem ? Error(problem) : @{ @"data": [output copy], @"status": @(task.terminationStatus) };
 }
 static NSString* Status(NSString* flags, BOOL unsaved)
 {
 	NSString* status = [flags containsString:@"U"] || [@[@"AA", @"DD"] containsObject:flags] ? @"Conflict" :
 		[flags containsString:@"D"] ? @"Deleted" : [flags containsString:@"?"] || [flags containsString:@"A"] ? @"New file" : @"Modified";
 	return unsaved ? [status stringByAppendingString:@" · Unsaved"] : status;
+}
+static NSString* PathRelativeTo(NSString* path, NSString* root)
+{
+	if([root isEqual:@"/"])
+		return path.length > 1 && [path hasPrefix:@"/"] ? [path substringFromIndex:1] : nil;
+	if(![path hasPrefix:root])
+		return nil;
+	NSString* remainder = [path substringFromIndex:root.length];
+	return remainder.length > 1 && [remainder hasPrefix:@"/"] ? [remainder substringFromIndex:1] : nil;
+}
+static NSString* BranchName(NSString* header)
+{
+	if(!header.length) return nil;
+	// Both states used to come from a `symbolic-ref`/`rev-parse` that failed:
+	// a detached HEAD showed as "Detached HEAD" and an unborn branch as its name.
+	if([header isEqual:@"HEAD (no branch)"]) return @"Detached HEAD";
+	for(NSString* prefix in @[@"No commits yet on ", @"Initial commit on "])
+		if([header hasPrefix:prefix]) return [header substringFromIndex:prefix.length];
+	NSRange upstream = [header rangeOfString:@"..."];
+	return upstream.location == NSNotFound ? header : [header substringToIndex:upstream.location];
 }
 static NSData* ReadFile(NSString* path, NSString** error)
 {
@@ -119,31 +149,45 @@ static NSData* ReadFile(NSString* path, NSString** error)
 
 NSDictionary* ProjectChangesSnapshot(NSString* directory, NSDictionary<NSString*, ProjectChangesBuffer*>* buffers)
 {
-	NSDictionary* rootResult = Git(directory, @[@"rev-parse", @"--show-toplevel"]);
-	NSString* root = GitString(rootResult);
-	if(!root.length) return Error(rootResult[@"error"] ?: @"Open a folder in a Git repository to review its changes.");
-	NSDictionary* status = Git(root, @[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all", @"--no-renames"]);
+	// One `rev-parse` yields the work tree root and HEAD together. The root is
+	// still printed when HEAD is unborn, which is how a repository without
+	// commits is recognised without a second call.
+	NSDictionary* revision = Git(directory, @[@"rev-parse", @"--show-toplevel", @"--verify", @"HEAD"]);
+	NSString* root = nil;
+	NSString* head = nil;
+	if(!revision[@"error"]) {
+		NSArray<NSString*>* lines = [[[NSString alloc] initWithData:revision[@"data"] encoding:NSUTF8StringEncoding] componentsSeparatedByString:@"\n"];
+		if(lines.count > 0 && lines[0].length) root = lines[0];
+		if(lines.count > 1 && lines[1].length) head = lines[1];
+	}
+	if(!root.length) return Error(revision[@"error"] ?: @"Open a folder in a Git repository to review its changes.");
+	// `--branch` puts the branch name in the same call as the status entries,
+	// so the two can no longer disagree and cannot cost two deadlines.
+	NSDictionary* status = Git(root, @[@"status", @"--porcelain=v1", @"-z", @"--branch", @"--untracked-files=all", @"--no-renames"]);
 	if(status[@"error"] || [status[@"status"] intValue]) return Error(status[@"error"] ?: @"The repository's changed files could not be read.");
 	NSData* data = status[@"data"];
 	NSMutableDictionary<NSString*, NSString*>* paths = [NSMutableDictionary dictionary];
+	NSString* branch = nil;
 	char const* bytes = static_cast<char const*>(data.bytes);
 	NSUInteger start = 0;
 	for(NSUInteger i = 0; i < data.length; ++i) if(bytes[i] == '\0') {
-		if(i-start >= 4) {
+		if(i-start > 3 && bytes[start] == '#' && bytes[start+1] == '#') {
+			branch = BranchName([[NSString alloc] initWithBytes:bytes+start+3 length:i-start-3 encoding:NSUTF8StringEncoding]);
+		} else if(i-start >= 4) {
 			NSString* flags = [[NSString alloc] initWithBytes:bytes+start length:2 encoding:NSUTF8StringEncoding];
 			NSString* path = [[NSString alloc] initWithBytes:bytes+start+3 length:i-start-3 encoding:NSUTF8StringEncoding];
 			if(path && flags) paths[path] = flags;
 		}
 		start = i+1;
 	}
-	NSString* prefix = [root stringByAppendingString:@"/"];
 	NSMutableDictionary* bufferPaths = [NSMutableDictionary dictionary];
 	for(NSString* original in buffers) {
 		char resolved[PATH_MAX];
 		NSString* parent = [original stringByDeletingLastPathComponent];
 		NSString* absolute = [(realpath(parent.fileSystemRepresentation, resolved) ? @(resolved) : parent) stringByAppendingPathComponent:original.lastPathComponent];
-		if([absolute hasPrefix:prefix]) {
-			NSString* relative = [absolute substringFromIndex:prefix.length];
+		// Comparing component-wise, rather than with a "root/" prefix, keeps a
+		// repository checked out at "/" able to match its unsaved buffers.
+		if(NSString* relative = PathRelativeTo(absolute, root)) {
 			if(!paths[relative]) paths[relative] = @" M";
 			bufferPaths[relative] = original;
 		}
@@ -155,8 +199,6 @@ NSDictionary* ProjectChangesSnapshot(NSString* directory, NSDictionary<NSString*
 		[files addObject:@{ @"path": path, @"absolutePath": absolute, @"flags": paths[path],
 			@"status": Status(paths[path], unsaved), @"unsaved": @(unsaved), @"bufferPath": bufferPaths[path] ?: absolute }];
 	}
-	NSString* head = GitString(Git(root, @[@"rev-parse", @"--verify", @"HEAD"]));
-	NSString* branch = GitString(Git(root, @[@"symbolic-ref", @"--quiet", @"--short", @"HEAD"]));
 	return @{ @"root": root, @"files": files, @"head": head ?: @"", @"branch": branch ?: @"Detached HEAD" };
 }
 
