@@ -1241,3 +1241,98 @@ void test_document_edit_proposal_across_undo_revision_rewind ()
         [DocumentWindowController enableSessionSave];
     });
 }
+
+static NSDictionary* context_test_snapshot_read (EditorContextBuffer* snapshot, NSDictionary* arguments)
+{
+    dispatch_group_t group = dispatch_group_create();
+    __block NSDictionary* result = nil;
+    dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        result = [snapshot responseForMethod:@"read_document" arguments:arguments base:@{} document:@{}
+            ranges:ng::ranges_t() caret:0 deadline:editor_context::now()+10];
+    });
+    OAK_ASSERT(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 10*NSEC_PER_SEC)) == 0);
+    return result;
+}
+
+// context_buffer_t captures raw (data, size) pointers into the storage tree and
+// dereferences them on a worker thread, which is only safe while the tree shares
+// storage copy-on-write and later edits never write inside a captured extent. This
+// pins that a snapshot never changes under later edits.
+// Limit: without Thread Sanitizer this proves copy semantics under later mutation,
+// not the absence of a data race between the main thread's edits and a worker's read.
+void test_editor_context_snapshot_survives_later_edits ()
+{
+    NSString* original = @"head ünïcode 😀\nmid 😀é tail\nend\n";
+    __block OakDocument* document;
+    __block EditorContextBuffer* snapshot;
+    __block BOOL loaded = NO;
+    __block BOOL grammarWasLoaded = NO;
+    dispatch_semaphore_t ready = dispatch_semaphore_create(0);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        document = [OakDocument documentWithString:original fileType:@"text.html.basic" customName:@"snapshot under edits"];
+        [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+            loaded = status == OakDocumentIOResultSuccess;
+            dispatch_semaphore_signal(ready);
+        }];
+    });
+    OAK_ASSERT(dispatch_semaphore_wait(ready, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
+    OAK_ASSERT(loaded);
+
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        snapshot = [EditorContextBuffer bufferForDocument:document revision:nil];
+        grammarWasLoaded = document.buffer.grammar() != nullptr;
+    });
+    OAK_ASSERT(snapshot != nil);
+
+    NSDictionary* baseline = context_test_snapshot_read(snapshot, @{});
+    OAK_ASSERT([baseline[@"text"] isEqual:original]);
+    OAK_ASSERT_EQ([baseline[@"totalLength"] unsignedIntegerValue], original.length);
+    OAK_ASSERT(![baseline[@"truncated"] boolValue]);
+    OAK_ASSERT_EQ([baseline[@"nextOffset"] unsignedIntegerValue], original.length);
+
+    // 120 rounds: the storage tree must split and clone, not merely extend.
+    NSUInteger rounds = 120;
+    for(NSUInteger round = 0; round < rounds; ++round) {
+        __block NSDictionary* concurrent = nil;
+        dispatch_group_t group = dispatch_group_create();
+        dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            concurrent = [snapshot responseForMethod:@"read_document" arguments:@{} base:@{} document:@{}
+                ranges:ng::ranges_t() caret:0 deadline:editor_context::now()+10];
+        });
+        dispatch_sync(dispatch_get_main_queue(), ^{ @autoreleasepool {
+            switch(round % 5) {
+                case 0: document.buffer.insert(document.buffer.size(), " tail 😀\n"); break;              // append past the captured extent
+                case 1: document.buffer.insert(1, "MID "); break;                                          // split the first piece
+                case 2: document.buffer.replace(0, 4, "HEAD"); break;                                      // replace a range
+                case 3: if(document.buffer.size() > 8) document.buffer.erase(1, 3); break;                 // delete a range
+                default: document.content = [original stringByAppendingString:@"\nrewritten"]; break;      // replace the whole buffer
+            }
+            // A synchronous parse takes the grammar mutex, so it can run while the
+            // worker reads the snapshot. Only reachable when the test process has a
+            // grammar for this file type, which the final log line reports.
+            if(grammarWasLoaded)
+                document.buffer.wait_for_repair();
+        } });
+        OAK_ASSERT(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 10*NSEC_PER_SEC)) == 0);
+        OAK_ASSERT([concurrent[@"text"] isEqual:original]);
+        OAK_ASSERT_EQ([concurrent[@"totalLength"] unsignedIntegerValue], original.length);
+    }
+
+    // The live buffer really did change, so the snapshot above was not trivially stable.
+    __block std::string live;
+    dispatch_sync(dispatch_get_main_queue(), ^{ live = document.buffer.substr(0, document.buffer.size()); });
+    OAK_ASSERT(live != std::string(original.UTF8String));
+
+    // Repeat reads stay stable, including the astral character's byte/UTF-16 mapping.
+    NSUInteger astral = [original rangeOfString:@"😀"].location;
+    NSDictionary* probe = context_test_snapshot_read(snapshot, @{ @"offset": @(astral), @"length": @2 });
+    OAK_ASSERT([probe[@"text"] isEqual:@"😀"]);
+    OAK_ASSERT_EQ([probe[@"nextOffset"] unsignedIntegerValue], astral + 2);
+    NSDictionary* again = context_test_snapshot_read(snapshot, @{});
+    NSDictionary* third = context_test_snapshot_read(snapshot, @{});
+    OAK_ASSERT([again[@"text"] isEqual:original]);
+    OAK_ASSERT([third[@"text"] isEqual:again[@"text"]]);
+
+    fprintf(stderr, "snapshot under edits: %lu rounds, %s grammar\n", (unsigned long)rounds, grammarWasLoaded ? "with" : "without");
+    dispatch_sync(dispatch_get_main_queue(), ^{ [document close]; });
+}
