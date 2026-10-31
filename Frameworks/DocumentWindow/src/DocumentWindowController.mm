@@ -344,6 +344,21 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	}];
 }
 
+- (BOOL)navigationPathIsInsideProject:(NSString*)path
+{
+	NSString* root = [self.projectPath stringByResolvingSymlinksInPath];
+	if(!root)
+		return NO;
+	// A trailing slash would let the prefix test accept a sibling such as
+	// "/project2" once the remainder "/2" is joined back on, so normalise first.
+	if(root.length > 1 && [root hasSuffix:@"/"])
+		root = [root substringToIndex:root.length - 1];
+	NSString* candidate = [path stringByResolvingSymlinksInPath];
+	if(![candidate hasPrefix:root])
+		return NO;
+	return candidate.length == root.length || [[candidate substringFromIndex:root.length] hasPrefix:@"/"];
+}
+
 - (EditorContextSnapshot*)editorNavigation:(NSDictionary*)arguments
 {
     __weak DocumentWindowController* weakSelf = self;
@@ -360,6 +375,14 @@ static NSDictionary* ContextDocument(OakDocument* document)
                (path && [[candidate.path stringByStandardizingPath] isEqual:path])) { target = candidate; break; }
         }
         if(arguments[@"documentId"] && !target) { completion(editor_context::failure(@"Document is not open in this window.", @"document_unavailable")); return; }
+        // Opening a tab makes the buffer readable through the context tools, so the
+        // agent cannot widen its own reach beyond the window's project. Documents
+        // the user already opened stay navigable wherever they live.
+        if(path && !target && ![controller navigationPathIsInsideProject:path]) {
+            NSString* message = controller.projectPath ? @"The path is outside this window's project directory." : @"The path is not open in this window, which has no project directory.";
+            completion(editor_context::failure(message, @"path_outside_project"));
+            return;
+        }
         if(target.isLoaded) {
             [controller loadNavigationDocument:target arguments:arguments deadline:deadline canCommit:canCommit completion:completion];
             return;

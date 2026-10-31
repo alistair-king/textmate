@@ -270,6 +270,9 @@ void test_editor_context_navigation_files_ranges_and_focus ()
     dispatch_sync(dispatch_get_main_queue(), ^{
         [window setDocuments:@[document]]; [window setSelectedDocument:document];
         [other setDocuments:@[foreign]]; [other setSelectedDocument:foreign];
+        // navigate_editor only opens paths inside the window's project, so the
+        // file this test opens must live in that root.
+        [window setValue:directory forKey:@"projectPath"];
         terminalFocus = [[NSTextView alloc] initWithFrame:NSMakeRect(0,0,10,10)];
         [window.window.contentView addSubview:terminalFocus];
         [window.window makeFirstResponder:terminalFocus];
@@ -949,4 +952,95 @@ void test_document_edit_proposals_live_review_window_scope_and_disk ()
         [document close]; [untitled close]; [window close]; [DocumentWindowController enableSessionSave];
     });
     OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:path error:nil]);
+}
+
+void test_editor_context_navigation_project_boundary ()
+{
+    NSString* root = [@"/tmp/tm-project-root-" stringByAppendingString:NSUUID.UUID.UUIDString];
+    NSString* insideDirectory = [root stringByAppendingPathComponent:@"sub"];
+    // A sibling whose name shares the root's prefix must not count as inside it.
+    NSString* sibling = [root stringByAppendingString:@"2"];
+    OAK_ASSERT([NSFileManager.defaultManager createDirectoryAtPath:insideDirectory withIntermediateDirectories:YES attributes:nil error:nil]);
+    OAK_ASSERT([NSFileManager.defaultManager createDirectoryAtPath:sibling withIntermediateDirectories:YES attributes:nil error:nil]);
+    NSString* insidePath = [insideDirectory stringByAppendingPathComponent:@"inside.txt"];
+    NSString* siblingPath = [sibling stringByAppendingPathComponent:@"sibling.txt"];
+    // Same-prefix sibling that is not open anywhere, so the boundary test is the only thing that can refuse it.
+    NSString* siblingOtherPath = [sibling stringByAppendingPathComponent:@"other.txt"];
+    NSString* loosePath = [root stringByAppendingPathComponent:@"loose.txt"];
+    OAK_ASSERT([@"inside\n" writeToFile:insidePath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    OAK_ASSERT([@"sibling\n" writeToFile:siblingPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    OAK_ASSERT([@"other\n" writeToFile:siblingOtherPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    OAK_ASSERT([@"loose\n" writeToFile:loosePath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+    __block DocumentWindowController* window;
+    __block DocumentWindowController* looseWindow;
+    __block OakDocument* siblingDocument;
+    __block OakDocument* looseDocument;
+    __block NSDictionary* environment;
+    __block NSDictionary* looseEnvironment;
+    NSUUID* session = NSUUID.UUID;
+    NSUUID* looseSession = NSUUID.UUID;
+    dispatch_group_t loaded = dispatch_group_create();
+    __block BOOL success = YES;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApplication sharedApplication];
+        [DocumentWindowController disableSessionSave];
+        window = [[DocumentWindowController alloc] init];
+        looseWindow = [[DocumentWindowController alloc] init];
+        siblingDocument = [OakDocument documentWithPath:siblingPath];
+        siblingDocument.fileType = @"text.plain";
+        looseDocument = [OakDocument documentWithPath:loosePath];
+        looseDocument.fileType = @"text.plain";
+        for(OakDocument* document in @[siblingDocument, looseDocument]) {
+            dispatch_group_enter(loaded);
+            [document loadModalForWindow:nil completionHandler:^(OakDocumentIOResult status, NSString*, oak::uuid_t const&){
+                success = success && status == OakDocumentIOResultSuccess;
+                dispatch_group_leave(loaded);
+            }];
+        }
+    });
+    OAK_ASSERT(dispatch_group_wait(loaded, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0 && success);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        // window: the user opened a file that lives outside the project root.
+        [window setDocuments:@[siblingDocument]]; [window setSelectedDocument:siblingDocument];
+        [window setValue:root forKey:@"projectPath"];
+        // looseWindow: a document window without a project.
+        [looseWindow setDocuments:@[looseDocument]]; [looseWindow setSelectedDocument:looseDocument];
+        __weak DocumentWindowController* owner = window;
+        __weak DocumentWindowController* looseOwner = looseWindow;
+        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString* method, NSDictionary* args){ return [owner editorContextForMethod:method arguments:args]; }];
+        looseEnvironment = [EditorContextService.sharedService environmentForSession:looseSession provider:^EditorContextSnapshot*(NSString* method, NSDictionary* args){ return [looseOwner editorContextForMethod:method arguments:args]; }];
+    });
+    // Positive control: a file inside the root is opened as a tab and becomes readable.
+    NSDictionary* result = context_test_query(environment, @"navigate_editor", @{ @"path": insidePath });
+    OAK_ASSERT([result[@"status"] isEqual:@"navigated"] && [result[@"opened"] boolValue]);
+    NSString* insideId = result[@"document"][@"documentId"];
+    OAK_ASSERT([context_test_query(environment, @"read_document", @{ @"documentId": insideId })[@"text"] isEqual:@"inside\n"]);
+    dispatch_sync(dispatch_get_main_queue(), ^{ OAK_ASSERT(window.documents.count == 2); });
+    for(NSString* refused in @[@"/etc/hosts", siblingOtherPath]) {
+        result = context_test_query(environment, @"navigate_editor", @{ @"path": refused });
+        OAK_ASSERT([result[@"code"] isEqual:@"path_outside_project"]);
+        OAK_ASSERT([context_test_query(environment)[@"document"][@"documentId"] isEqual:insideId]);
+        dispatch_sync(dispatch_get_main_queue(), ^{ OAK_ASSERT(window.documents.count == 2); });
+    }
+    // A document the user already opened outside the project stays navigable.
+    result = context_test_query(environment, @"navigate_editor", @{ @"documentId": siblingDocument.identifier.UUIDString });
+    OAK_ASSERT([result[@"status"] isEqual:@"navigated"] && ![result[@"opened"] boolValue]);
+    OAK_ASSERT([context_test_query(environment)[@"document"][@"documentId"] isEqual:siblingDocument.identifier.UUIDString]);
+    // Without a project root, only documents already open in the window are reachable.
+    result = context_test_query(looseEnvironment, @"navigate_editor", @{ @"path": siblingPath });
+    OAK_ASSERT([result[@"code"] isEqual:@"path_outside_project"]);
+    dispatch_sync(dispatch_get_main_queue(), ^{ OAK_ASSERT(looseWindow.documents.count == 1); });
+    result = context_test_query(looseEnvironment, @"navigate_editor", @{ @"documentId": looseDocument.identifier.UUIDString });
+    OAK_ASSERT([result[@"status"] isEqual:@"navigated"] && ![result[@"opened"] boolValue]);
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [EditorContextService.sharedService revokeSession:session];
+        [EditorContextService.sharedService revokeSession:looseSession];
+        [window setSelectedDocument:nil]; [window setDocuments:@[]];
+        [looseWindow setSelectedDocument:nil]; [looseWindow setDocuments:@[]];
+        [siblingDocument close]; [looseDocument close];
+        [window close]; [looseWindow close];
+        [DocumentWindowController enableSessionSave];
+    });
+    OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:root error:nil]);
+    OAK_ASSERT([NSFileManager.defaultManager removeItemAtPath:sibling error:nil]);
 }
