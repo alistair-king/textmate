@@ -4,7 +4,7 @@ target_link_libraries(tm_dialog2 PRIVATE "-framework Foundation")
 
 # Plugin bundle: Dialog2.tmplugin
 add_library(Dialog2 MODULE)
-file(GLOB _cmd_src Commands/**/*.mm)
+file(GLOB_RECURSE _cmd_src CONFIGURE_DEPENDS Commands/*.mm)
 target_sources(Dialog2 PRIVATE
   CLIProxy.mm Dialog2.mm TMDCommand.mm ${_cmd_src})
 
@@ -29,3 +29,11 @@ add_custom_command(TARGET Dialog2 POST_BUILD
 textmate_codesign_file(Dialog2 "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:Dialog2>/Contents/Resources/tm_dialog2")
 textmate_codesign(Dialog2 "${CS_IDENTITY}")
+
+if(BUILD_TESTING)
+  add_executable(dialog-command-registration tests/command_registration.mm)
+  target_link_libraries(dialog-command-registration PRIVATE "-framework Foundation")
+  add_dependencies(dialog-command-registration Dialog2)
+  add_test(NAME dialog-command-registration
+    COMMAND dialog-command-registration $<TARGET_BUNDLE_DIR:Dialog2>)
+endif()

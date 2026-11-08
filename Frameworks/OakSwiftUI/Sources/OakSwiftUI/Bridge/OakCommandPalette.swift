@@ -33,6 +33,17 @@ private class KeyablePanel: NSPanel {
 		self.parentWindow = parentWindow
 
 		let vm = CommandPaletteViewModel()
+		let defaults = UserDefaults.standard
+		vm.loadProjectVisibility(
+			workspaces: Set(defaults.stringArray(forKey: "commandPaletteHiddenWorkspaces") ?? []),
+			projects: Set(defaults.stringArray(forKey: "commandPaletteHiddenProjects") ?? []),
+			projectWorkspaces: defaults.dictionary(forKey: "commandPaletteHiddenProjectWorkspaces") as? [String: [String]] ?? [:])
+		vm.onProjectVisibilityChanged = { [weak vm] in
+			guard let vm else { return }
+			defaults.set(vm.hiddenWorkspaceIdentifiers.sorted(), forKey: "commandPaletteHiddenWorkspaces")
+			defaults.set(vm.hiddenProjectIdentifiers.sorted(), forKey: "commandPaletteHiddenProjects")
+			defaults.set(vm.hiddenProjectWorkspaces, forKey: "commandPaletteHiddenProjectWorkspaces")
+		}
 
 		let commands = items.filter {
 			$0.category == .menuAction || $0.category == .bundleCommand
@@ -104,6 +115,10 @@ private class KeyablePanel: NSPanel {
 			entries[key] = FrecencyEntry(count: count, lastUsed: lastUsed)
 		}
 		viewModel?.loadFrecency(entries)
+	}
+
+	@objc public func updateProjects(_ items: [OakCommandPaletteItem]) {
+		viewModel?.updateProjects(items)
 	}
 
 	private func dismissWithoutNotify() {

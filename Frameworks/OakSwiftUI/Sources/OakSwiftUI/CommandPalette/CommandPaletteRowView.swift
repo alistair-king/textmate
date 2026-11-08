@@ -4,6 +4,7 @@ struct CommandPaletteRowView: View {
 	let item: OakCommandPaletteItem
 	let matchedIndices: [Int]
 	let isSelected: Bool
+	var isHidden: Bool = false
 	@EnvironmentObject var theme: OakThemeEnvironment
 
 	var body: some View {
@@ -30,6 +31,19 @@ struct CommandPaletteRowView: View {
 			}
 
 			Spacer(minLength: 4)
+			if isHidden {
+				Image(systemName: "eye.slash")
+					.foregroundStyle(.secondary)
+					.accessibilityLabel("Hidden workspace")
+			}
+
+			if !item.statusText.isEmpty {
+				Text(item.statusText)
+					.font(.system(size: max(theme.fontSize - 2, 9), weight: .medium))
+					.foregroundStyle(isSelected ? Color(nsColor: .alternateSelectedControlTextColor) : .secondary)
+					.lineLimit(1)
+					.accessibilityLabel(item.statusText)
+			}
 
 			if !item.keyEquivalent.isEmpty {
 				Text(item.keyEquivalent)
@@ -45,7 +59,7 @@ struct CommandPaletteRowView: View {
 		.frame(height: max(theme.fontSize * 2.4, 32))
 		.background(isSelected ? Color.accentColor : Color.clear)
 		.cornerRadius(4)
-		.opacity(item.enabled ? 1.0 : 0.4)
+		.opacity((item.enabled ? 1.0 : 0.4) * (isHidden ? 0.6 : 1.0))
 	}
 
 	private func highlightedTitle(_ title: String, matches: [Int]) -> Text {

@@ -20,6 +20,13 @@ import AppKit
 	@objc public let actionIdentifier: String
 	@objc public var icon: NSImage?
 	@objc public var enabled: Bool = true
+	@objc public var searchText: String = ""
+	@objc public var statusText: String = ""
+	@objc public var projectGroupIdentifier: String = ""
+	@objc public var projectGroupTitle: String = ""
+	@objc public var projectGroupPath: String = ""
+	@objc public var projectWorkspaceIdentifiers: [String] = []
+	@objc public var workspaceAliases: [String] = []
 	@objc public weak var sourceMenuItem: NSMenuItem?
 
 	@objc public init(title: String, subtitle: String, keyEquivalent: String,
@@ -36,7 +43,7 @@ import AppKit
 		switch category {
 		case .menuAction:     return "terminal.fill"
 		case .bundleCommand:  return "terminal.fill"
-		case .recentProject:  return "folder.fill"
+		case .recentProject:  return projectGroupIdentifier.isEmpty ? "folder.fill" : "arrow.triangle.branch"
 		case .symbol:         return "number"
 		case .bundleEditor:   return "puzzlepiece.fill"
 		case .goToLine:       return "text.cursor"

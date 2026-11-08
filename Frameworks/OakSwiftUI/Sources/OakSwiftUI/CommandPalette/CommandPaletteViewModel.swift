@@ -91,6 +91,13 @@ public class CommandPaletteViewModel: ObservableObject {
 	@Published public private(set) var activeMode: PaletteMode = .recentProjects
 	@Published public private(set) var filteredItems: [RankedItem] = []
 	@Published public var selectedIndex: Int = 0
+	@Published public var showsHiddenProjects = false {
+		didSet { refreshProjectVisibility() }
+	}
+	public private(set) var hiddenWorkspaceIdentifiers: Set<String> = []
+	public private(set) var hiddenProjectIdentifiers: Set<String> = []
+	public private(set) var hiddenProjectWorkspaces: [String: [String]] = [:]
+	public var onProjectVisibilityChanged: (() -> Void)?
 
 	public var onItemSelected: ((OakCommandPaletteItem) -> Void)?
 	public var onDismiss: (() -> Void)?
@@ -114,6 +121,100 @@ public class CommandPaletteViewModel: ObservableObject {
 		if mode == activeMode {
 			applyFilter()
 		}
+	}
+
+	public func updateProjects(_ items: [OakCommandPaletteItem]) {
+		let selection = selectedItem?.actionIdentifier
+		let previousIndex = selectedIndex
+		setItems(items, forMode: .recentProjects)
+		if activeMode == .recentProjects {
+			selectedIndex = filteredItems.firstIndex { $0.item.actionIdentifier == selection } ?? min(previousIndex, max(filteredItems.count - 1, 0))
+		}
+	}
+
+	public var hasHiddenProjects: Bool {
+		!hiddenWorkspaceIdentifiers.isEmpty || !hiddenProjectIdentifiers.isEmpty
+	}
+
+	public func loadProjectVisibility(workspaces: Set<String>, projects: Set<String>, projectWorkspaces: [String: [String]]) {
+		hiddenWorkspaceIdentifiers = workspaces
+		hiddenProjectIdentifiers = projects
+		hiddenProjectWorkspaces = projectWorkspaces
+		refreshProjectVisibility()
+	}
+
+	private func containsWorkspace(_ identifier: String, in hidden: String) -> Bool {
+		identifier == hidden || identifier.hasPrefix(hidden + "/")
+	}
+
+	private func hiddenGroups(for item: OakCommandPaletteItem) -> Set<String> {
+		let group = item.projectGroupIdentifier.isEmpty ? item.actionIdentifier : "project:" + item.projectGroupIdentifier
+		return Set(hiddenProjectIdentifiers.filter { hidden in
+			hidden == group || matchesHiddenWorkspace(item, identifier: hidden)
+				|| (hiddenProjectWorkspaces[hidden] ?? []).contains { matchesHiddenWorkspace(item, identifier: $0) }
+		})
+	}
+
+	private func matchesHiddenWorkspace(_ item: OakCommandPaletteItem, identifier: String) -> Bool {
+		item.actionIdentifier == identifier || item.workspaceAliases.contains(identifier)
+			|| (item.projectGroupIdentifier.isEmpty && containsWorkspace(item.actionIdentifier, in: identifier))
+	}
+
+	public func isProjectGroupHidden(_ item: OakCommandPaletteItem) -> Bool {
+		!hiddenGroups(for: item).isEmpty
+	}
+
+	public func isProjectHidden(_ item: OakCommandPaletteItem) -> Bool {
+		guard item.category == .recentProject else { return false }
+		return isProjectGroupHidden(item) || hiddenWorkspaceIdentifiers.contains { matchesHiddenWorkspace(item, identifier: $0) }
+	}
+
+	public func hideWorkspace(_ item: OakCommandPaletteItem) {
+		guard item.category == .recentProject else { return }
+		hiddenWorkspaceIdentifiers.insert(item.actionIdentifier)
+		projectVisibilityChanged()
+	}
+
+	public func hideProject(_ item: OakCommandPaletteItem) {
+		guard item.category == .recentProject else { return }
+		let group = item.projectGroupIdentifier.isEmpty ? item.actionIdentifier : "project:" + item.projectGroupIdentifier
+		hiddenProjectIdentifiers.insert(group)
+		let siblings = (itemsByMode[.recentProjects] ?? []).filter {
+			item.projectGroupIdentifier.isEmpty ? $0.actionIdentifier == item.actionIdentifier : $0.projectGroupIdentifier == item.projectGroupIdentifier
+		}
+		// Remember known linked paths as well, so hidden projects stay hidden
+		// before asynchronous Git discovery restores their group metadata.
+		hiddenProjectWorkspaces[group] = Array(Set(siblings.map(\.actionIdentifier) + siblings.flatMap(\.workspaceAliases) + item.projectWorkspaceIdentifiers)).sorted()
+		projectVisibilityChanged()
+	}
+
+	public func showWorkspace(_ item: OakCommandPaletteItem) {
+		hiddenWorkspaceIdentifiers = hiddenWorkspaceIdentifiers.filter { !matchesHiddenWorkspace(item, identifier: $0) }
+		projectVisibilityChanged()
+	}
+
+	public func showProject(_ item: OakCommandPaletteItem) {
+		for group in hiddenGroups(for: item) {
+			hiddenProjectIdentifiers.remove(group)
+			hiddenProjectWorkspaces.removeValue(forKey: group)
+		}
+		projectVisibilityChanged()
+	}
+
+	public func restoreAllProjects() {
+		hiddenWorkspaceIdentifiers.removeAll()
+		hiddenProjectIdentifiers.removeAll()
+		hiddenProjectWorkspaces.removeAll()
+		projectVisibilityChanged()
+	}
+
+	private func projectVisibilityChanged() {
+		refreshProjectVisibility()
+		onProjectVisibilityChanged?()
+	}
+
+	private func refreshProjectVisibility() {
+		updateProjects(itemsByMode[.recentProjects] ?? [])
 	}
 
 	public func selectNext() {
@@ -206,24 +307,57 @@ public class CommandPaletteViewModel: ObservableObject {
 			return
 		}
 
-		guard let items = itemsByMode[activeMode] else {
+		guard let storedItems = itemsByMode[activeMode] else {
 			filteredItems = []
 			return
 		}
+		let items = activeMode == .recentProjects && !showsHiddenProjects ? storedItems.filter { !isProjectHidden($0) } : storedItems
 
 		if query.isEmpty {
-			filteredItems = items.map { RankedItem(item: $0, matchedIndices: [], score: 0) }
+			filteredItems = groupProjects(items.map { RankedItem(item: $0, matchedIndices: [], score: 0) })
 			return
 		}
 
-		filteredItems = items
+		let matches = items
 			.compactMap { item -> RankedItem? in
-				guard let result = FuzzyMatcher.score(item.title, query: query) else { return nil }
+				let titleMatch = FuzzyMatcher.score(item.title, query: query)
+				let searchMatch = item.searchText.isEmpty ? nil : FuzzyMatcher.score(item.searchText, query: query)
+				guard let result = titleMatch ?? searchMatch else { return nil }
 				let frecency = frecencyBoost(for: item.actionIdentifier)
-				let combinedScore = Double(result.score) * (1.0 + frecency)
-				return RankedItem(item: item, matchedIndices: result.matchedIndices, score: combinedScore)
+				let combinedScore = Double(result.score) * (1.0 + frecency) * (titleMatch == nil ? 0.6 : 1.0)
+				return RankedItem(item: item, matchedIndices: titleMatch?.matchedIndices ?? [], score: combinedScore)
 			}
 			.sorted { $0.score > $1.score }
+		filteredItems = groupProjects(matches)
+	}
+
+	// Group after ranking: projects keep their recency/best-match order, and
+	// matching workspaces stay together. Headers are presentation only and
+	// never take up a keyboard selection index.
+	private func groupProjects(_ items: [RankedItem]) -> [RankedItem] {
+		guard activeMode == .recentProjects else { return items }
+		var keys: [String] = []
+		var groups: [String: [RankedItem]] = [:]
+		for ranked in items {
+			let group = ranked.item.projectGroupIdentifier
+			let key = group.isEmpty ? "item:\(ranked.item.actionIdentifier)" : "group:\(group)"
+			if groups[key] == nil { keys.append(key) }
+			groups[key, default: []].append(ranked)
+		}
+		return keys.flatMap { groups[$0] ?? [] }
+	}
+
+	public func startsProjectGroup(at index: Int) -> Bool {
+		guard activeMode == .recentProjects, filteredItems.indices.contains(index) else { return false }
+		let group = filteredItems[index].item.projectGroupIdentifier
+		return !group.isEmpty && (index == 0 || filteredItems[index - 1].item.projectGroupIdentifier != group)
+	}
+
+	public func projectGroupCaption(for identifier: String) -> String {
+		let total = (itemsByMode[.recentProjects] ?? []).filter { $0.projectGroupIdentifier == identifier && (showsHiddenProjects || !isProjectHidden($0)) }.count
+		let visible = filteredItems.filter { $0.item.projectGroupIdentifier == identifier }.count
+		if visible != total { return "\(visible) of \(total) workspaces" }
+		return "\(total) workspace\(total == 1 ? "" : "s")"
 	}
 
 	private func goToLineItems(query: String) -> [RankedItem] {
