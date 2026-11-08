@@ -129,6 +129,16 @@ set_source_files_properties(${_about_css} PROPERTIES
 set_source_files_properties(${_about_js} PROPERTIES
   MACOSX_PACKAGE_LOCATION "Resources/About/js")
 
+if(BUILD_TESTING)
+  find_program(TEXTMATE_TEST_GIT_EXECUTABLE git)
+  if(TEXTMATE_TEST_GIT_EXECUTABLE)
+    add_executable(command-palette-projects tests/command_palette_projects.mm src/CommandPaletteProjects.mm)
+    target_link_libraries(command-palette-projects PRIVATE "-framework Foundation")
+    add_test(NAME command-palette-projects
+      COMMAND command-palette-projects ${TEXTMATE_TEST_GIT_EXECUTABLE})
+  endif()
+endif()
+
 # Embedded CLI tools
 textmate_embed(TextMate mate "MacOS")
 textmate_embed(TextMate textmate-mcp "MacOS")

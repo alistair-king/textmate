@@ -5,6 +5,7 @@
 #import "AboutWindowController.h"
 #import "TMPlugInController.h"
 #import "RMateServer.h"
+#import "CommandPaletteProjects.h"
 #import <BundleEditor/BundleEditor.h>
 #import <BundlesManager/BundlesManager.h>
 #import <DocumentWindow/DocumentWindowController.h>
@@ -36,6 +37,7 @@
 #import <oak/debug.h>
 #import <oak/oak.h>
 #import <scm/scm.h>
+#import <scm/drivers/api.h>
 #import <text/types.h>
 #import <kvdb/kvdb.h>
 #if HAVE_OAK_SWIFTUI
@@ -94,6 +96,11 @@ BOOL HasDocumentWindow (NSArray* windows)
 @interface AppController () <OakUserDefaultsObserver>
 @property (nonatomic) BOOL didFinishLaunching;
 @property (nonatomic) BOOL keyWindowHasBackAndForwardActions;
+#if HAVE_OAK_SWIFTUI
+@property (nonatomic) NSDictionary<NSString*, NSDictionary*>* paletteWorktrees;
+@property (nonatomic) NSUInteger paletteProjectGeneration;
+@property (nonatomic) NSProgress* paletteProjectDiscovery;
+#endif
 @end
 
 @implementation AppController
@@ -934,7 +941,7 @@ static KVDB* commandPaletteFrecencyDB ()
 	return [KVDB sharedDBUsingFile:@"CommandPalette.db" inDirectory:appSupport];
 }
 
-- (NSArray<OakCommandPaletteItem*>*)recentProjectsForCommandPalette
+- (NSArray<NSString*>*)recentProjectPathsForCommandPalette
 {
 	NSMutableArray* result = [NSMutableArray array];
 	NSString* appSupport = [[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) objectAtIndex:0] stringByAppendingPathComponent:@"TextMate"];
@@ -951,13 +958,68 @@ static KVDB* commandPaletteFrecencyDB ()
 		if(!path || access(path.fileSystemRepresentation, F_OK) != 0)
 			continue;
 
+		[result addObject:CommandPaletteCanonicalPath(path)];
+	}
+	return result;
+}
+
+- (NSArray<OakCommandPaletteItem*>*)projectItemsForPaths:(NSArray<NSString*>*)paths currentPath:(NSString*)currentPath worktrees:(NSDictionary<NSString*, NSDictionary*>*)worktrees
+{
+	NSMutableSet* openPaths = [NSMutableSet set];
+	NSString* currentWorkspace = currentPath ? CommandPaletteWorkspacePaths(@[currentPath], worktrees).firstObject : nil;
+	for(NSWindow* window in NSApp.windows)
+	{
+		if(![window.delegate isKindOfClass:DocumentWindowController.class]) continue;
+		DocumentWindowController* controller = (id)window.delegate;
+		if(controller.projectPath) [openPaths addObjectsFromArray:CommandPaletteWorkspacePaths(@[controller.projectPath], worktrees)];
+	}
+	NSMutableOrderedSet* projects = [NSMutableOrderedSet orderedSetWithArray:paths];
+	if(currentPath)
+	{
+		[projects removeObject:currentPath];
+		[projects insertObject:currentPath atIndex:0];
+	}
+	[projects addObjectsFromArray:[openPaths.allObjects sortedArrayUsingSelector:@selector(localizedCompare:)]];
+	NSDictionary* currentWorktree = CommandPaletteWorktreeForPath(worktrees, currentPath);
+	[projects addObjectsFromArray:currentWorktree[@"relatedPaths"] ?: @[]];
+	NSArray* workspacePaths = CommandPaletteWorkspacePaths(projects.array, worktrees);
+	NSMutableDictionary<NSString*, NSMutableArray*>* aliases = [NSMutableDictionary dictionary];
+	for(NSString* projectPath in projects)
+	{
+		NSString* workspace = CommandPaletteWorkspacePaths(@[projectPath], worktrees).firstObject;
+		if(!aliases[workspace]) aliases[workspace] = [NSMutableArray array];
+		[aliases[workspace] addObject:[@"project:" stringByAppendingString:projectPath]];
+	}
+	NSMutableArray* result = [NSMutableArray array];
+	for(NSString* path in workspacePaths)
+	{
+		NSDictionary* metadata = CommandPaletteWorktreeForPath(worktrees, path);
+		NSString* branch = metadata[@"branchLabel"];
+		NSString* title = branch.length ? [NSString stringWithFormat:@"%@ · %@", path.lastPathComponent, branch] : path.lastPathComponent;
 		OakCommandPaletteItem* item = [[OakCommandPaletteItem alloc]
-			initWithTitle:path.lastPathComponent
+			initWithTitle:title
 			     subtitle:[path stringByAbbreviatingWithTildeInPath]
 			keyEquivalent:@""
 			     category:OakCommandPaletteCategoryRecentProject
 		     actionIdentifier:[NSString stringWithFormat:@"project:%@", path]];
 		item.icon = [NSWorkspace.sharedWorkspace iconForFile:path];
+		item.workspaceAliases = aliases[path] ?: @[];
+		NSString* repositoryPath = metadata[@"repositoryPath"];
+		if(repositoryPath)
+		{
+			item.projectGroupIdentifier = repositoryPath;
+			item.projectGroupTitle = [repositoryPath.lastPathComponent isEqual:@".git"] ? repositoryPath.stringByDeletingLastPathComponent.lastPathComponent : repositoryPath.lastPathComponent;
+			item.projectGroupPath = [repositoryPath stringByAbbreviatingWithTildeInPath];
+			NSMutableArray* workspaceIdentifiers = [NSMutableArray array];
+			for(NSString* related in metadata[@"relatedPaths"]) [workspaceIdentifiers addObject:[@"project:" stringByAppendingString:related]];
+			item.projectWorkspaceIdentifiers = workspaceIdentifiers;
+		}
+		item.searchText = [NSString stringWithFormat:@"%@ %@ %@", path, branch ?: @"", repositoryPath ?: @""];
+		NSMutableArray* flags = [NSMutableArray array];
+		if([path isEqual:currentWorkspace]) [flags addObject:@"Current"];
+		else if([openPaths containsObject:path]) [flags addObject:@"Open"];
+		if(metadata[@"locked"]) [flags addObject:@"Locked"];
+		item.statusText = [flags componentsJoinedByString:@" · "];
 		[result addObject:item];
 	}
 	return result;
@@ -983,10 +1045,13 @@ static KVDB* commandPaletteFrecencyDB ()
 	NSMutableArray<OakCommandPaletteItem*>* items = [NSMutableArray array];
 	NSMutableSet<NSString*>* bundleUUIDs = [NSMutableSet set];
 	[self collectMenuItems:NSApp.mainMenu path:@"" into:items bundleUUIDs:bundleUUIDs];
-	[items addObjectsFromArray:[self recentProjectsForCommandPalette]];
 
 	// Add "Reveal in Finder" for the current document
 	DocumentWindowController* docController = [keyWindow.delegate isKindOfClass:[DocumentWindowController class]] ? (DocumentWindowController*)keyWindow.delegate : nil;
+	NSString* currentPath = CommandPaletteCanonicalPath(docController.projectPath);
+	NSArray* projectPaths = [self recentProjectPathsForCommandPalette];
+	NSArray<OakCommandPaletteItem*>* projectItems = [self projectItemsForPaths:projectPaths currentPath:currentPath worktrees:self.paletteWorktrees ?: @{}];
+	[items addObjectsFromArray:projectItems];
 	if(NSString* path = docController.selectedDocument.path)
 	{
 		OakCommandPaletteItem* revealItem = [[OakCommandPaletteItem alloc]
@@ -1000,6 +1065,43 @@ static KVDB* commandPaletteFrecencyDB ()
 
 	NSLog(@"CommandPalette: showing with %lu menu items, parentWindow=%@", (unsigned long)items.count, keyWindow.title);
 	[sharedCommandPalette showIn:keyWindow items:items];
+
+	// Show cached entries immediately, then refresh without blocking typing.
+	// A generation prevents a late result from updating a different invocation.
+	NSUInteger generation = ++self.paletteProjectGeneration;
+	[self.paletteProjectDiscovery cancel];
+	NSProgress* progress = self.paletteProjectDiscovery = [NSProgress progressWithTotalUnitCount:1];
+	NSArray* discoveryPaths = [projectItems valueForKey:@"actionIdentifier"];
+	// Keep original subdirectory seeds: a nested repository may have appeared
+	// since the cached metadata folded that directory into its parent checkout.
+	NSMutableOrderedSet* discoveryRoots = [NSMutableOrderedSet orderedSetWithArray:projectPaths];
+	if(currentPath)
+	{
+		[discoveryRoots removeObject:currentPath];
+		[discoveryRoots insertObject:currentPath atIndex:0];
+	}
+	for(NSWindow* window in NSApp.windows)
+	{
+		if(![window.delegate isKindOfClass:DocumentWindowController.class]) continue;
+		NSString* path = [(DocumentWindowController*)window.delegate projectPath];
+		if(path) [discoveryRoots addObject:CommandPaletteCanonicalPath(path)];
+	}
+	for(NSString* identifier in discoveryPaths) [discoveryRoots addObject:[identifier substringFromIndex:8]];
+	NSArray* roots = discoveryRoots.array;
+	static dispatch_queue_t projectQueue;
+	static dispatch_once_t projectQueueOnce;
+	dispatch_once(&projectQueueOnce, ^{ projectQueue = dispatch_queue_create("com.macromates.palette-projects", DISPATCH_QUEUE_SERIAL); });
+	dispatch_async(projectQueue, ^{
+		if(progress.cancelled) return;
+		std::string executable = scm::find_executable("git", "TM_GIT");
+		NSDictionary* metadata = CommandPaletteWorktrees(roots, executable == NULL_STR ? nil : @(executable.c_str()), progress);
+		dispatch_async(dispatch_get_main_queue(), ^{
+			if(progress.cancelled || generation != self.paletteProjectGeneration) return;
+			self.paletteWorktrees = metadata;
+			if(sharedCommandPalette.isVisible && sharedCommandPalette.parentWindow == keyWindow)
+				[sharedCommandPalette updateProjects:[self projectItemsForPaths:projectPaths currentPath:currentPath worktrees:metadata]];
+		});
+	});
 
 	KVDB* frecencyDB = commandPaletteFrecencyDB();
 	NSMutableDictionary* frecencyData = [NSMutableDictionary dictionary];
@@ -1017,6 +1119,7 @@ static KVDB* commandPaletteFrecencyDB ()
 #if HAVE_OAK_SWIFTUI
 - (void)commandPaletteDidSelectItem:(OakCommandPaletteItem*)item
 {
+	[self.paletteProjectDiscovery cancel];
 	NSLog(@"CommandPalette: selected item title='%@' category=%ld actionId='%@'", item.title, (long)item.category, item.actionIdentifier);
 
 	// Handle custom actions by actionIdentifier prefix
@@ -1052,7 +1155,23 @@ static KVDB* commandPaletteFrecencyDB ()
 		case OakCommandPaletteCategoryRecentProject:
 		{
 			NSString* path = [item.actionIdentifier substringFromIndex:8]; // "project:"
-			OakOpenDocuments(@[path]);
+			BOOL focused = NO;
+			for(NSWindow* window in [NSApp.orderedWindows arrayByAddingObjectsFromArray:NSApp.windows])
+			{
+				if(![window.delegate isKindOfClass:DocumentWindowController.class]) continue;
+				DocumentWindowController* controller = (id)window.delegate;
+				if(!controller.projectPath) continue;
+				NSString* workspace = CommandPaletteWorkspacePaths(@[controller.projectPath], self.paletteWorktrees ?: @{}).firstObject;
+				if(![workspace isEqual:path]) continue;
+				[controller showWindow:nil];
+				if(window.miniaturized) [window deminiaturize:nil];
+				[window makeKeyAndOrderFront:nil];
+				focused = YES;
+				break;
+			}
+			BOOL isDirectory = NO;
+			if(!focused && [NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory] && isDirectory)
+				OakOpenDocuments(@[path]);
 			break;
 		}
 		case OakCommandPaletteCategoryGoToLine:
@@ -1119,6 +1238,7 @@ static KVDB* commandPaletteFrecencyDB ()
 
 - (void)commandPaletteDidDismiss
 {
+	[self.paletteProjectDiscovery cancel];
 }
 
 - (NSArray<OakCommandPaletteItem*>*)commandPaletteRequestItemsForMode:(NSInteger)mode
