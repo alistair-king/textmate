@@ -319,8 +319,48 @@ static NSDictionary* globs_for_path (std::string const& path)
 	[super showWindow:sender];
 }
 
+- (void)showWindowRelativeToFrame:(NSRect)parentFrame
+{
+	if(!self.window.isVisible)
+	{
+		[self.window layoutIfNeeded];
+		BOOL restored = [self.window setFrameUsingName:self.window.frameAutosaveName];
+		BOOL onScreen = NO;
+		for(NSScreen* screen in NSScreen.screens)
+			onScreen = onScreen || NSContainsRect(screen.visibleFrame, self.window.frame);
+
+		if(!restored || !onScreen)
+		{
+			// Use the editor's screen when a saved position is no longer usable,
+			// for example after disconnecting an external display.
+			NSScreen* targetScreen = self.window.screen ?: NSScreen.mainScreen;
+			CGFloat largestArea = 0;
+			for(NSScreen* screen in NSScreen.screens)
+			{
+				NSRect intersection = NSIntersectionRect(screen.visibleFrame, parentFrame);
+				CGFloat area = NSWidth(intersection) * NSHeight(intersection);
+				if(area > largestArea)
+				{
+					targetScreen = screen;
+					largestArea = area;
+				}
+			}
+
+			NSRect visible = targetScreen.visibleFrame;
+			NSRect frame = self.window.frame;
+			frame.origin.x = NSMinX(parentFrame) + round((NSWidth(parentFrame) - NSWidth(frame)) / 4);
+			frame.origin.y = NSMinY(parentFrame) + round((NSHeight(parentFrame) - NSHeight(frame)) * 3 / 4);
+			frame.origin.x = MAX(NSMinX(visible), MIN(frame.origin.x, NSMaxX(visible) - NSWidth(frame)));
+			frame.origin.y = MAX(NSMinY(visible), MIN(frame.origin.y, NSMaxY(visible) - NSHeight(frame)));
+			[self.window setFrame:frame display:NO];
+		}
+	}
+	[self showWindow:self];
+}
+
 - (void)windowWillClose:(NSNotification*)aNotification
 {
+	[self.window saveFrameUsingName:self.window.frameAutosaveName];
 	[self stopSearch];
 	_scmInfo.reset();
 	_records = nil;

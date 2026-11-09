@@ -160,6 +160,7 @@ struct CommandPaletteViewModelTests {
 		item.projectGroupIdentifier = repository
 		item.projectGroupTitle = "textmate"
 		item.projectGroupPath = repository
+		item.gitBranch = branch
 		item.searchText = "\(path) \(repository)"
 		return item
 	}
@@ -174,7 +175,8 @@ struct CommandPaletteViewModelTests {
 		#expect(vm.filteredItems.map(\.item.actionIdentifier) == ["project:/a/main", "project:/a/feature", "project:/b/main"])
 		#expect(vm.startsProjectGroup(at: 0))
 		#expect(!vm.startsProjectGroup(at: 1))
-		#expect(vm.startsProjectGroup(at: 2))
+		#expect(!vm.startsProjectGroup(at: 2))
+		#expect(vm.isCompactProject(vm.filteredItems[2].item))
 		#expect(vm.projectGroupCaption(for: "/a") == "2 workspaces")
 		vm.selectNext()
 		#expect(vm.selectedItem?.actionIdentifier == "project:/a/feature")
@@ -203,8 +205,9 @@ struct CommandPaletteViewModelTests {
 			workspace("/first/textmate", branch: "main", repository: "/first/textmate"),
 			workspace("/second/textmate", branch: "main", repository: "/second/textmate"),
 		], forMode: .recentProjects)
-		#expect(vm.startsProjectGroup(at: 0))
-		#expect(vm.startsProjectGroup(at: 1))
+		#expect(!vm.startsProjectGroup(at: 0))
+		#expect(!vm.startsProjectGroup(at: 1))
+		#expect(vm.filteredItems.allSatisfy { vm.isCompactProject($0.item) })
 		#expect(vm.projectGroupCaption(for: "/first/textmate") == "1 workspace")
 	}
 
@@ -223,6 +226,31 @@ struct CommandPaletteViewModelTests {
 		])
 		#expect(vm.selectedIndex == 1)
 		#expect(vm.selectedItem?.actionIdentifier == "project:/a/feature")
+	}
+
+	@Test func singleCheckoutIsCompactAndDoesNotHaveASeparateHeading() {
+		let vm = CommandPaletteViewModel()
+		let item = workspace("/project", branch: "main", repository: "/project")
+		item.projectWorkspaceIdentifiers = [item.actionIdentifier]
+		vm.setItems([item], forMode: .recentProjects)
+		#expect(vm.isCompactProject(item))
+		#expect(!vm.startsProjectGroup(at: 0))
+		#expect(!vm.hasMultipleProjectWorkspaces(item))
+	}
+
+	@Test func multiWorktreeLayoutRemainsExpandedWhenSearchMatchesOneCheckout() {
+		let vm = CommandPaletteViewModel()
+		let main = workspace("/project", branch: "main", repository: "/project")
+		let feature = workspace("/feature", branch: "feature", repository: "/project")
+		vm.setItems([main, feature], forMode: .recentProjects)
+		vm.filterText = "feature"
+		#expect(vm.filteredItems.count == 1)
+		#expect(vm.startsProjectGroup(at: 0))
+		#expect(!vm.isCompactProject(feature))
+		feature.projectWorkspaceIdentifiers = [main.actionIdentifier, feature.actionIdentifier]
+		vm.updateProjects([feature])
+		#expect(vm.hasMultipleProjectWorkspaces(feature))
+		#expect(!vm.isCompactProject(feature))
 	}
 
 	@Test func hideWorkspaceSurvivesRefreshAndCanBeRestored() {

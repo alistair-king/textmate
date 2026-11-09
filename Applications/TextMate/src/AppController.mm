@@ -1004,6 +1004,7 @@ static KVDB* commandPaletteFrecencyDB ()
 		     actionIdentifier:[NSString stringWithFormat:@"project:%@", path]];
 		item.icon = [NSWorkspace.sharedWorkspace iconForFile:path];
 		item.workspaceAliases = aliases[path] ?: @[];
+		item.gitBranch = branch ?: @"";
 		NSString* repositoryPath = metadata[@"repositoryPath"];
 		if(repositoryPath)
 		{

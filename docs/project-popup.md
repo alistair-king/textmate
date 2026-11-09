@@ -5,6 +5,11 @@ worktrees. Each Git project shows its folder name and current branch. Detached
 checkouts show a short commit ID. The second line shows the directory, and row
 indicators identify the **Current**, already **Open**, and **Locked** workspaces.
 
+A Git project with one checkout uses a single compact row showing its directory,
+branch (or detached commit), and status indicators, without a separate project
+heading. Projects with multiple known worktrees retain the grouped layout below.
+Searching for one branch does not collapse a multi-worktree project.
+
 Workspaces belonging to the same repository appear together under a project
 heading, with the main checkout's name and path and a workspace count. Indented
 rows, branch icons, and a shared vertical guide show their relationship. Separate

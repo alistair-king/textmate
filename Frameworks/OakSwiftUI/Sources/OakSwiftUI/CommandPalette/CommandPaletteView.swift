@@ -11,7 +11,15 @@ struct CommandPaletteView: View {
 			Divider()
 			resultsList
 		}
-		.background(Color(nsColor: theme.backgroundColor).opacity(0.85))
+		.background {
+			// Adjusting a semantic NSColor's alpha can resolve it under the
+			// wrong appearance. Keep both colours dynamic; the system layer
+			// underneath makes even translucent theme colours fully opaque.
+			ZStack {
+				Color(nsColor: .windowBackgroundColor)
+				Color(nsColor: theme.backgroundColor)
+			}
+		}
 		.clipShape(RoundedRectangle(cornerRadius: 6))
 		.onKeyPress(.downArrow) { viewModel.selectNext(); return .handled }
 		.onKeyPress(.upArrow) { viewModel.selectPrevious(); return .handled }
@@ -73,11 +81,12 @@ struct CommandPaletteView: View {
 							item: ranked.item,
 							matchedIndices: ranked.matchedIndices,
 							isSelected: index == viewModel.selectedIndex,
-							isHidden: viewModel.isProjectHidden(ranked.item)
+							isHidden: viewModel.isProjectHidden(ranked.item),
+							isCompactProject: viewModel.isCompactProject(ranked.item)
 						)
-						.padding(.leading, ranked.item.projectGroupIdentifier.isEmpty ? 0 : 12)
+						.padding(.leading, viewModel.hasMultipleProjectWorkspaces(ranked.item) ? 12 : 0)
 						.overlay(alignment: .leading) {
-							if !ranked.item.projectGroupIdentifier.isEmpty {
+							if viewModel.hasMultipleProjectWorkspaces(ranked.item) {
 								Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 1).padding(.leading, 4)
 							}
 						}

@@ -22,6 +22,7 @@ import AppKit
 	@objc public var enabled: Bool = true
 	@objc public var searchText: String = ""
 	@objc public var statusText: String = ""
+	@objc public var gitBranch: String = ""
 	@objc public var projectGroupIdentifier: String = ""
 	@objc public var projectGroupTitle: String = ""
 	@objc public var projectGroupPath: String = ""

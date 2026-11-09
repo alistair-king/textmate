@@ -349,8 +349,21 @@ public class CommandPaletteViewModel: ObservableObject {
 
 	public func startsProjectGroup(at index: Int) -> Bool {
 		guard activeMode == .recentProjects, filteredItems.indices.contains(index) else { return false }
+		guard hasMultipleProjectWorkspaces(filteredItems[index].item) else { return false }
 		let group = filteredItems[index].item.projectGroupIdentifier
 		return !group.isEmpty && (index == 0 || filteredItems[index - 1].item.projectGroupIdentifier != group)
+	}
+
+	public func hasMultipleProjectWorkspaces(_ item: OakCommandPaletteItem) -> Bool {
+		guard item.category == .recentProject, !item.projectGroupIdentifier.isEmpty else { return false }
+		// Count the known checkouts, not just the current search matches. A
+		// branch/path search must not make a multi-worktree project collapse.
+		let siblings = (itemsByMode[.recentProjects] ?? []).filter { $0.projectGroupIdentifier == item.projectGroupIdentifier }
+		return Set(siblings.map(\.actionIdentifier) + item.projectWorkspaceIdentifiers).count > 1
+	}
+
+	public func isCompactProject(_ item: OakCommandPaletteItem) -> Bool {
+		item.category == .recentProject && !item.projectGroupIdentifier.isEmpty && !hasMultipleProjectWorkspaces(item)
 	}
 
 	public func projectGroupCaption(for identifier: String) -> String {

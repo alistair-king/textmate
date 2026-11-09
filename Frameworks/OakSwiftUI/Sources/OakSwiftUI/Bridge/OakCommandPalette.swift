@@ -94,6 +94,9 @@ private class KeyablePanel: NSPanel {
 			defer: false
 		)
 		p.level = .floating
+		// Match an explicitly themed parent, or follow system appearance when
+		// its appearance is nil. Set this before attaching the hosting view.
+		p.appearance = parentWindow.appearance
 		p.isOpaque = false
 		p.backgroundColor = .clear
 		p.hasShadow = true
