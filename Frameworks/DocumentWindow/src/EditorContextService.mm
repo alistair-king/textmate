@@ -1,5 +1,6 @@
 #import "EditorContextService.h"
 #import "EditorContextBuffer.h"
+#import "TerminalA2A.h"
 #import <EditorContextProtocol.h>
 #import <Cocoa/Cocoa.h>
 #import <document/OakDocument.h>
@@ -54,6 +55,7 @@
 @property NSString* socketPath;
 @property NSString* socketDirectory;
 @property dispatch_source_t listener;
+@property TerminalA2A* a2a;
 @end
 
 @implementation EditorContextService
@@ -105,13 +107,18 @@
             if(dispatch_semaphore_wait(slots, DISPATCH_TIME_NOW)) { close(client); return; }
             double deadline = editor_context::now() + editor_context::request_timeout;
             editor_context::configure_socket(client);
+            // Each A2A tool call connects directly from the long-lived MCP
+            // helper. Enrollment watches that process after this socket closes.
+            pid_t peer = 0;
+            socklen_t peerLength = sizeof(peer);
+            if(getsockopt(client, SOL_LOCAL, LOCAL_PEERPID, &peer, &peerLength) != 0) peer = 0;
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
                 @autoreleasepool {
                     NSDictionary* request = editor_context::parse(editor_context::read_line(client, deadline));
                     __block EditorContextSnapshot* snapshot;
                     dispatch_semaphore_t captured = dispatch_semaphore_create(0);
                     dispatch_async(dispatch_get_main_queue(), ^{
-                        if(editor_context::now() < deadline) snapshot = [weakSelf snapshotForRequest:request];
+                        if(editor_context::now() < deadline) snapshot = [weakSelf snapshotForRequest:request peer:peer];
                         dispatch_semaphore_signal(captured);
                     });
                     int64_t remaining = MAX(0.0, deadline - editor_context::now()) * NSEC_PER_SEC;
@@ -149,6 +156,8 @@
     return [NSString stringWithFormat:@"%zu:%lu", [document buffer].revision(), (unsigned long)generation];
 }
 - (void)shutdown {
+    [_a2a shutdown];
+    _a2a = nil;
     [_registrations removeAllObjects];
     if(_listener) dispatch_source_cancel(_listener);
     if(_socketPath) unlink(_socketPath.fileSystemRepresentation);
@@ -166,8 +175,9 @@
 - (void)revokeSession:(NSUUID*)session {
     NSAssert(NSThread.isMainThread, @"Revoke editor context on the main thread");
     [_registrations removeObjectForKey:session.UUIDString];
+    [_a2a revokeSession:session.UUIDString];
 }
-- (EditorContextSnapshot*)snapshotForRequest:(NSDictionary*)request {
+- (EditorContextSnapshot*)snapshotForRequest:(NSDictionary*)request peer:(pid_t)peer {
     NSString* session = request[@"session"];
     NSString* token = request[@"token"];
     NSString* method = request[@"method"];
@@ -182,6 +192,12 @@
     NSDictionary* entry = _registrations[session];
     if(!entry || ![entry[@"token"] isEqual:token]) return [EditorContextSnapshot response:editor_context::failure(@"This terminal session has closed or its credentials are invalid.", @"session_unavailable")];
     EditorContextProvider provider = entry[@"provider"];
+    if(editor_context::is_a2a_tool(method)) {
+        // A2A state follows the terminal registration across window moves.
+        // Claim and opt-in read the window from the current provider.
+        if(!_a2a) _a2a = [[TerminalA2A alloc] initWithDirectory:_socketDirectory];
+        return [EditorContextSnapshot response:[_a2a perform:method arguments:arguments session:session peer:peer provider:provider]];
+    }
     EditorContextSnapshot* snapshot = provider(method, arguments);
     // A terminal transfer replaces its registration even though credentials stay
     // stable. Delayed navigation must not act in its former window after a move.

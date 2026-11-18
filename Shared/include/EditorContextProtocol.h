@@ -15,13 +15,17 @@ constexpr size_t message_limit = 1024 * 1024;
 constexpr double request_timeout = 3;
 constexpr NSUInteger identifier_limit = 256;
 constexpr NSUInteger path_limit = 4096;
+// A task can carry both review text and findings in a single JSON response.
+constexpr NSUInteger a2a_text_limit = 64 * 1024;
+static_assert(2 * a2a_text_limit * 6 < message_limit);
 
 // The one list of MCP tools, in advertised order. tools/list, the tools/call
 // allow-list, argument validation and window dispatch all derive from it.
 inline NSArray<NSString*>* tool_names() {
     static NSArray* names = @[ @"get_editor_context", @"list_open_documents", @"read_document", @"get_diagnostics",
         @"get_definition", @"find_references", @"get_document_symbols", @"search_workspace_symbols", @"get_hover",
-        @"navigate_editor", @"propose_document_edits", @"get_edit_proposal_status", @"get_editor_changes" ];
+        @"navigate_editor", @"propose_document_edits", @"get_edit_proposal_status", @"get_editor_changes",
+        @"a2a_opt_in", @"a2a_claim", @"a2a_reply", @"a2a_send_review", @"a2a_get_task", @"a2a_cancel_task" ];
     return names;
 }
 inline bool is_language_query(NSString* method) {
@@ -31,7 +35,8 @@ inline bool is_position_query(NSString* method) {
     return [@[@"get_definition", @"find_references", @"get_hover"] containsObject:method];
 }
 inline bool is_mutating_tool(NSString* method) {
-    return [@[@"navigate_editor", @"propose_document_edits"] containsObject:method];
+    return [@[@"navigate_editor", @"propose_document_edits", @"a2a_opt_in",
+        @"a2a_claim", @"a2a_reply", @"a2a_send_review", @"a2a_cancel_task"] containsObject:method];
 }
 inline double now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 inline bool wait_for(int fd, short events, double deadline) {
@@ -122,8 +127,33 @@ inline bool integer(id value, double maximum) {
 inline bool identifier(id value, NSUInteger limit = identifier_limit) {
     return [value isKindOfClass:NSString.class] && [value length] && [value length] <= limit;
 }
+inline bool is_a2a_tool(NSString* method) {
+    return [method hasPrefix:@"a2a_"] && [tool_names() containsObject:method];
+}
+inline bool a2a_text(id value) {
+    return identifier(value, a2a_text_limit) && [value canBeConvertedToEncoding:NSUTF8StringEncoding] &&
+        [value lengthOfBytesUsingEncoding:NSUTF8StringEncoding] <= a2a_text_limit &&
+        [[value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] length] != 0;
+}
 inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
     if(![arguments isKindOfClass:NSDictionary.class]) return @"Expected object arguments";
+    if(is_a2a_tool(method)) {
+        if([method isEqual:@"a2a_opt_in"] || [method isEqual:@"a2a_claim"])
+            return arguments.count ? @"This tool takes no arguments" : nil;
+        if([method isEqual:@"a2a_reply"]) {
+            id outcome = arguments[@"outcome"];
+            return arguments.count == (outcome ? 3 : 2) && identifier(arguments[@"taskId"]) && a2a_text(arguments[@"findings"]) &&
+                (!outcome || [@[@"completed", @"rejected", @"failed"] containsObject:outcome])
+                ? nil : @"Provide taskId, up to 64 KiB of findings or reason, and an optional outcome of completed, rejected, or failed";
+        }
+        if([method isEqual:@"a2a_get_task"] || [method isEqual:@"a2a_cancel_task"])
+            return arguments.count == 2 && identifier(arguments[@"cardUrl"], path_limit) && identifier(arguments[@"taskId"])
+                ? nil : @"Provide cardUrl and taskId";
+        id messageID = arguments[@"messageId"];
+        return arguments.count == (messageID ? 3 : 2) && identifier(arguments[@"cardUrl"], path_limit) &&
+            a2a_text(arguments[@"review"]) && (!messageID || identifier(messageID))
+            ? nil : @"Provide cardUrl, up to 64 KiB of review text, and an optional messageId";
+    }
     if([method isEqual:@"get_editor_context"] || [method isEqual:@"list_open_documents"] || [method isEqual:@"get_connection_status"] || [method isEqual:@"get_editor_change_token"])
         return arguments.count ? @"This tool takes no arguments" : nil;
     if([method isEqual:@"get_editor_changes"]) {

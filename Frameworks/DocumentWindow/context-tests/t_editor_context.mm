@@ -16,6 +16,7 @@
 #import <lsp/LSPManager.h>
 #import <lsp/LSPClient.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 
 #import "EditorContextTestAccess.h"
 
@@ -31,6 +32,195 @@ static NSDictionary* context_test_query(NSDictionary* environment, NSString* met
     NSDictionary* result = editor_context::parse(editor_context::read_line(fd));
     close(fd);
     return result;
+}
+
+static NSDictionary* a2a_http(NSString* url, NSString* bearer, NSDictionary* body = nil, NSString* version = @"1.0") {
+    NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+    [request setValue:version forHTTPHeaderField:@"A2A-Version"];
+    if(bearer) [request setValue:[@"Bearer " stringByAppendingString:bearer] forHTTPHeaderField:@"Authorization"];
+    if(body) {
+        request.HTTPMethod = @"POST";
+        request.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+        [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    }
+    dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+    __block NSDictionary* result;
+    [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData* data, NSURLResponse*, NSError*) {
+        result = editor_context::parse(data);
+        dispatch_semaphore_signal(finished);
+    }] resume];
+    OAK_ASSERT(dispatch_semaphore_wait(finished, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0);
+    return result;
+}
+
+void test_editor_context_native_a2a_http ()
+{
+    NSUUID* session = NSUUID.UUID;
+    __block NSDictionary* environment;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString*, NSDictionary*) {
+            return [EditorContextSnapshot response:@{ @"windowId": @"reviewer" }];
+        }];
+    });
+    NSDictionary* registration = context_test_query(environment, @"a2a_opt_in");
+    OAK_ASSERT(registration[@"cardUrl"] != nil);
+    NSString* bearer = [NSString stringWithContentsOfFile:registration[@"credentialFile"] encoding:NSASCIIStringEncoding error:nil];
+    OAK_ASSERT(bearer.length > 0);
+    NSDictionary* card = a2a_http(registration[@"cardUrl"], nil);
+    NSString* endpoint = card[@"supportedInterfaces"][0][@"url"];
+    OAK_ASSERT(endpoint != nil);
+    NSString* send = [endpoint stringByAppendingString:@"/message:send"];
+    NSDictionary* message = @{ @"configuration": @{ @"returnImmediately": @YES }, @"message": @{
+        @"role": @"ROLE_USER", @"messageId": @"example", @"parts": @[@{ @"text": @"Review total.py.",
+            @"mediaType": @"text/plain", @"filename": @"total.py", @"metadata": @{ @"key": @"value" } }],
+    } };
+    OAK_ASSERT([a2a_http(send, nil, message)[@"error"][@"code"] isEqual:@401]);
+    OAK_ASSERT([a2a_http(send, bearer, message, @"0.3")[@"error"][@"details"][0][@"reason"] isEqual:@"VERSION_NOT_SUPPORTED"]);
+    OAK_ASSERT([a2a_http(send, bearer, message, nil)[@"error"][@"details"][0][@"reason"] isEqual:@"VERSION_NOT_SUPPORTED"]);
+    NSDictionary* queued = a2a_http(send, bearer, message)[@"task"];
+    OAK_ASSERT([queued[@"status"][@"state"] isEqual:@"TASK_STATE_SUBMITTED"]);
+    OAK_ASSERT([a2a_http(send, bearer, message)[@"task"] isEqual:queued]);
+    OAK_ASSERT([queued[@"history"][0][@"parts"][0] isEqual:(@{ @"text": @"Review total.py." })]);
+    NSString* taskURL = [NSString stringWithFormat:@"%@/tasks/%@", endpoint, queued[@"id"]];
+    OAK_ASSERT([a2a_http(taskURL, nil)[@"error"][@"code"] isEqual:@401]);
+    OAK_ASSERT([a2a_http([taskURL stringByAppendingString:@"?historyLength=-1"], bearer)[@"error"][@"code"] isEqual:@400]);
+    OAK_ASSERT(a2a_http([taskURL stringByAppendingString:@"?historyLength=0"], bearer)[@"history"] == nil);
+    NSDictionary* claim = context_test_query(environment, @"a2a_claim");
+    OAK_ASSERT([claim[@"task"][@"id"] isEqual:queued[@"id"]]);
+    NSDictionary* reply = context_test_query(environment, @"a2a_reply", @{ @"taskId": queued[@"id"], @"findings": @"total.py:12 drops items." });
+    OAK_ASSERT([a2a_http(taskURL, bearer) isEqual:reply]);
+    NSMutableDictionary* another = [message mutableCopy];
+    another[@"message"] = @{ @"role": @"ROLE_USER", @"messageId": @"example", @"parts": @[@{ @"text": @"Different request." }] };
+    OAK_ASSERT([a2a_http(send, bearer, another)[@"error"][@"code"] isEqual:@409]);
+    another[@"message"] = @{ @"role": @"ROLE_USER", @"messageId": @"another", @"parts": @[@{ @"text": @"Review again." }] };
+    NSDictionary* pending = a2a_http(send, bearer, another)[@"task"];
+    OAK_ASSERT(pending[@"id"] != nil);
+    NSString* oversized = [@"" stringByPaddingToLength:editor_context::a2a_text_limit + 1 withString:@"x" startingAtIndex:0];
+    another[@"message"] = @{ @"role": @"ROLE_USER", @"messageId": @"large", @"parts": @[@{ @"text": oversized }] };
+    OAK_ASSERT([a2a_http(send, bearer, another)[@"error"][@"code"] isEqual:@413]);
+    NSDictionary* localTask = context_test_query(environment, @"a2a_send_review",
+        @{ @"cardUrl": registration[@"cardUrl"], @"review": @"An in-app review." })[@"task"];
+    NSString* localURL = [NSString stringWithFormat:@"%@/tasks/%@", endpoint, localTask[@"id"]];
+    OAK_ASSERT([a2a_http(localURL, bearer)[@"error"][@"details"][0][@"reason"] isEqual:@"TASK_NOT_FOUND"]);
+    NSString* pendingURL = [NSString stringWithFormat:@"%@/tasks/%@", endpoint, pending[@"id"]];
+    NSString* cancelURL = [pendingURL stringByAppendingString:@":cancel"];
+    NSDictionary* canceled = a2a_http(cancelURL, bearer, @{});
+    OAK_ASSERT([canceled[@"status"][@"state"] isEqual:@"TASK_STATE_CANCELED"]);
+    OAK_ASSERT([a2a_http(cancelURL, bearer, @{}) isEqual:canceled]);
+    OAK_ASSERT([a2a_http([taskURL stringByAppendingString:@":cancel"], bearer, @{})[@"error"][@"details"][0][@"reason"] isEqual:@"TASK_NOT_CANCELABLE"]);
+    NSString* listURL = [endpoint stringByAppendingString:@"/tasks"];
+    NSDictionary* page = a2a_http([listURL stringByAppendingString:@"?pageSize=1"], bearer);
+    OAK_ASSERT([page[@"totalSize"] isEqual:@2] && [page[@"tasks"] count] == 1 && [page[@"nextPageToken"] length]);
+    OAK_ASSERT(page[@"tasks"][0][@"history"] == nil && page[@"tasks"][0][@"artifacts"] == nil);
+    NSURLComponents* next = [NSURLComponents componentsWithString:listURL];
+    next.queryItems = @[[NSURLQueryItem queryItemWithName:@"pageSize" value:@"1"],
+        [NSURLQueryItem queryItemWithName:@"pageToken" value:page[@"nextPageToken"]]];
+    NSDictionary* secondPage = a2a_http(next.URL.absoluteString, bearer);
+    OAK_ASSERT([secondPage[@"tasks"] count] == 1 && [secondPage[@"nextPageToken"] isEqual:@""]);
+    OAK_ASSERT(![secondPage[@"tasks"][0][@"id"] isEqual:page[@"tasks"][0][@"id"]]);
+    NSDictionary* filtered = a2a_http([listURL stringByAppendingString:@"?status=completed&includeArtifacts=true&historyLength=1"], bearer);
+    OAK_ASSERT([filtered[@"tasks"] count] == 1 && [filtered[@"tasks"][0] isEqual:reply]);
+    another[@"message"] = @{ @"role": @"ROLE_USER", @"messageId": @"pending", @"parts": @[@{ @"text": @"Retire while pending." }] };
+    pending = a2a_http(send, bearer, another)[@"task"];
+    pendingURL = [NSString stringWithFormat:@"%@/tasks/%@", endpoint, pending[@"id"]];
+    dispatch_sync(dispatch_get_main_queue(), ^{ [EditorContextService.sharedService revokeSession:session]; });
+    OAK_ASSERT([a2a_http(registration[@"cardUrl"], nil)[@"error"][@"code"] isEqual:@410]);
+    OAK_ASSERT([a2a_http(pendingURL, bearer)[@"status"][@"state"] isEqual:@"TASK_STATE_FAILED"]);
+    OAK_ASSERT(![NSFileManager.defaultManager fileExistsAtPath:registration[@"credentialFile"]]);
+}
+
+void test_editor_context_a2a_queue_recovers_after_cancel ()
+{
+    NSUUID* session = NSUUID.UUID;
+    __block NSDictionary* environment;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString*, NSDictionary*) {
+            return [EditorContextSnapshot response:@{ @"windowId": @"reviewer" }];
+        }];
+    });
+    NSString* card = context_test_query(environment, @"a2a_opt_in")[@"cardUrl"];
+    OAK_ASSERT(card != nil);
+    NSString* large = [@"Example\n" stringByPaddingToLength:53 * 1024 withString:@"x" startingAtIndex:0];
+    NSDictionary* first = context_test_query(environment, @"a2a_send_review", @{ @"cardUrl": card, @"review": large })[@"task"];
+    OAK_ASSERT([first[@"history"][0][@"parts"][0][@"text"] isEqual:large]);
+    NSDictionary* submission = @{ @"cardUrl": card, @"review": @"A queued review." };
+    for(NSUInteger i = 1; i < 32; ++i)
+        OAK_ASSERT([context_test_query(environment, @"a2a_send_review", submission)[@"task"][@"status"][@"state"] isEqual:@"TASK_STATE_SUBMITTED"]);
+    OAK_ASSERT([context_test_query(environment, @"a2a_send_review", submission)[@"code"] isEqual:@"queue_full"]);
+    OAK_ASSERT([context_test_query(environment, @"a2a_claim")[@"task"][@"id"] isEqual:first[@"id"]]);
+    NSDictionary* lookup = @{ @"cardUrl": card, @"taskId": first[@"id"] };
+    NSDictionary* canceled = context_test_query(environment, @"a2a_cancel_task", lookup);
+    OAK_ASSERT([canceled[@"status"][@"state"] isEqual:@"TASK_STATE_CANCELED"]);
+    OAK_ASSERT([context_test_query(environment, @"a2a_cancel_task", lookup) isEqual:canceled]);
+    OAK_ASSERT([context_test_query(environment, @"a2a_send_review", submission)[@"task"][@"status"][@"state"] isEqual:@"TASK_STATE_SUBMITTED"]);
+    OAK_ASSERT([context_test_query(environment, @"a2a_get_task", lookup)[@"code"] isEqual:@"task_not_found"]);
+    OAK_ASSERT([context_test_query(environment, @"a2a_claim")[@"task"][@"status"][@"state"] isEqual:@"TASK_STATE_WORKING"]);
+    dispatch_sync(dispatch_get_main_queue(), ^{ [EditorContextService.sharedService revokeSession:session]; });
+}
+
+void test_editor_context_a2a_reviewer_process_exit ()
+{
+    NSUUID* session = NSUUID.UUID;
+    __block NSDictionary* environment;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        environment = [EditorContextService.sharedService environmentForSession:session provider:^EditorContextSnapshot*(NSString*, NSDictionary*) {
+            return [EditorContextSnapshot response:@{ @"windowId": @"reviewer" }];
+        }];
+    });
+    sockaddr_un address = {};
+    address.sun_family = AF_UNIX;
+    strlcpy(address.sun_path, [environment[@"TM_CONTEXT_SOCKET"] fileSystemRepresentation], sizeof(address.sun_path));
+    NSMutableData* request = [[NSJSONSerialization dataWithJSONObject:@{
+        @"session": environment[@"TM_CONTEXT_SESSION"], @"token": environment[@"TM_CONTEXT_TOKEN"],
+        @"method": @"a2a_opt_in", @"arguments": @{},
+    } options:0 error:nil] mutableCopy];
+    [request appendBytes:"\n" length:1];
+    auto bytes = static_cast<char const*>(request.bytes);
+    size_t length = request.length;
+    int relay[2];
+    OAK_ASSERT(socketpair(AF_UNIX, SOCK_STREAM, 0, relay) == 0);
+    pid_t child = fork();
+    if(child == 0) {
+        // Use only POSIX calls in the forked child. Keep the peer alive after
+        // the request socket closes, until the parent closes the relay.
+        close(relay[0]);
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if(fd < 0 || connect(fd, (sockaddr*)&address, sizeof(address)) != 0 || write(fd, bytes, length) != (ssize_t)length)
+            _exit(1);
+        char buffer[1024];
+        ssize_t count;
+        while((count = read(fd, buffer, sizeof(buffer))) > 0)
+            if(write(relay[1], buffer, count) != count) _exit(2);
+        close(fd);
+        read(relay[1], buffer, 1);
+        _exit(0);
+    }
+    close(relay[1]);
+    OAK_ASSERT(child > 0);
+    NSDictionary* registration = editor_context::parse(editor_context::read_line(relay[0]));
+    NSString* card = registration[@"cardUrl"];
+    NSDictionary* competing = card ? context_test_query(environment, @"a2a_opt_in") : nil;
+    NSDictionary* queued = card ? context_test_query(environment, @"a2a_send_review",
+        @{ @"cardUrl": card, @"review": @"Check the real peer exit." }) : nil;
+    close(relay[0]);
+    int status;
+    OAK_ASSERT(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    OAK_ASSERT(card != nil);
+    OAK_ASSERT([competing[@"code"] isEqual:@"reviewer_unavailable"]);
+    OAK_ASSERT([queued[@"task"][@"status"][@"state"] isEqual:@"TASK_STATE_SUBMITTED"]);
+    NSDictionary* lookup = @{ @"cardUrl": card, @"taskId": queued[@"task"][@"id"] };
+    NSDictionary* task;
+    double deadline = editor_context::now() + 2;
+    do {
+        task = context_test_query(environment, @"a2a_get_task", lookup);
+        if([task[@"status"][@"state"] isEqual:@"TASK_STATE_FAILED"]) break;
+        usleep(10000);
+    } while(editor_context::now() < deadline);
+    OAK_ASSERT([task[@"status"][@"state"] isEqual:@"TASK_STATE_FAILED"]);
+    OAK_ASSERT([a2a_http(card, nil)[@"error"][@"code"] isEqual:@410]);
+    NSDictionary* replacement = context_test_query(environment, @"a2a_opt_in");
+    OAK_ASSERT(replacement[@"cardUrl"] != nil && ![replacement[@"cardUrl"] isEqual:card]);
+    dispatch_sync(dispatch_get_main_queue(), ^{ [EditorContextService.sharedService revokeSession:session]; });
 }
 
 void test_editor_context_session_routing_and_revocation ()
@@ -577,6 +767,17 @@ void test_editor_context_real_terminal_transfer_and_window_close ()
     OAK_ASSERT(dispatch_group_wait(queries, dispatch_time(DISPATCH_TIME_NOW, 5*NSEC_PER_SEC)) == 0);
     OAK_ASSERT([firstResult[@"document"][@"documentId"] isEqual:firstDocument.identifier.UUIDString]);
     OAK_ASSERT([secondResult[@"document"][@"documentId"] isEqual:secondDocument.identifier.UUIDString]);
+    NSDictionary* reviewer = context_test_query(firstEnvironment, @"a2a_opt_in");
+    OAK_ASSERT(reviewer[@"cardUrl"] != nil);
+    NSString* card = reviewer[@"cardUrl"];
+    NSDictionary* submission = @{ @"cardUrl": card, @"review": @"Review the fixed diff for total.py.",
+                                    @"messageId": NSUUID.UUID.UUIDString };
+    NSDictionary* queued = context_test_query(secondEnvironment, @"a2a_send_review", submission);
+    OAK_ASSERT([queued[@"task"][@"status"][@"state"] isEqual:@"TASK_STATE_SUBMITTED"]);
+    OAK_ASSERT([context_test_query(secondEnvironment, @"a2a_send_review", submission) isEqual:queued]);
+    NSDictionary* lookup = @{ @"cardUrl": card, @"taskId": queued[@"task"][@"id"] };
+    OAK_ASSERT([context_test_query(firstEnvironment, @"a2a_get_task", lookup)[@"code"] isEqual:@"task_not_found"]);
+    OAK_ASSERT([context_test_query(firstEnvironment, @"a2a_cancel_task", lookup)[@"code"] isEqual:@"task_not_found"]);
     dispatch_sync(dispatch_get_main_queue(), ^{
         [secondPanel takeTerminalSession:movedSession fromPanel:firstPanel];
         [first close];
@@ -585,6 +786,27 @@ void test_editor_context_real_terminal_transfer_and_window_close ()
     NSDictionary* transferredChanges = context_test_query(firstEnvironment, @"get_editor_changes", @{ @"cursor": firstResult[@"changeCursor"] });
     OAK_ASSERT([transferredChanges[@"reset"] boolValue]);
     OAK_ASSERT([transferredChanges[@"context"][@"document"][@"documentId"] isEqual:secondDocument.identifier.UUIDString]);
+    NSDictionary* claimed = context_test_query(firstEnvironment, @"a2a_claim");
+    OAK_ASSERT([claimed[@"task"][@"id"] isEqual:queued[@"task"][@"id"]]);
+    OAK_ASSERT([claimed[@"task"][@"status"][@"state"] isEqual:@"TASK_STATE_WORKING"]);
+    OAK_ASSERT([claimed[@"windowId"] isEqual:context_test_query(secondEnvironment, @"get_connection_status")[@"windowId"]]);
+    OAK_ASSERT(![claimed[@"windowId"] isEqual:reviewer[@"windowId"]]);
+    NSDictionary* reply = @{ @"taskId": queued[@"task"][@"id"], @"findings": @"total.py:12 ignores later items." };
+    NSDictionary* completed = context_test_query(firstEnvironment, @"a2a_reply", reply);
+    OAK_ASSERT([completed[@"status"][@"state"] isEqual:@"TASK_STATE_COMPLETED"]);
+    OAK_ASSERT([context_test_query(firstEnvironment, @"a2a_reply", reply) isEqual:completed]);
+    OAK_ASSERT([context_test_query(secondEnvironment, @"a2a_get_task", lookup) isEqual:completed]);
+    OAK_ASSERT([context_test_query(secondEnvironment, @"a2a_cancel_task", lookup)[@"code"] isEqual:@"task_not_cancelable"]);
+    NSDictionary* nextTask = context_test_query(secondEnvironment, @"a2a_send_review",
+        @{ @"cardUrl": card, @"review": @"A new review." })[@"task"];
+    NSDictionary* rejection = @{ @"taskId": nextTask[@"id"], @"outcome": @"rejected", @"findings": @"The base revision is missing." };
+    OAK_ASSERT([context_test_query(firstEnvironment, @"a2a_reply", rejection)[@"code"] isEqual:@"invalid_task_state"]);
+    OAK_ASSERT([context_test_query(firstEnvironment, @"a2a_claim")[@"task"][@"id"] isEqual:nextTask[@"id"]]);
+    NSDictionary* rejected = context_test_query(firstEnvironment, @"a2a_reply", rejection);
+    OAK_ASSERT([rejected[@"status"][@"state"] isEqual:@"TASK_STATE_REJECTED"]);
+    OAK_ASSERT([rejected[@"status"][@"message"][@"parts"][0][@"text"] isEqual:rejection[@"findings"]]);
+    OAK_ASSERT([context_test_query(firstEnvironment, @"a2a_reply", rejection) isEqual:rejected]);
+    OAK_ASSERT(context_test_query(firstEnvironment, @"a2a_claim")[@"task"] == NSNull.null);
     dispatch_sync(dispatch_get_main_queue(), ^{
         [second close];
         [firstDocument close]; [secondDocument close];
