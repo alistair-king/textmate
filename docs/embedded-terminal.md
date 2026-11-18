@@ -38,6 +38,8 @@ Relative paths use the session's shell working directory (queried from macOS, wi
 
 The bundled MCP server lets an agent query the current file, selected text, open documents, and unsaved buffer contents in its terminal's window. In a new terminal tab, run `tm-codex`, `tm-claude`, `tm-opencode`, or `tm-pi` to start the corresponding agent with editor context. Each launcher accepts `--check` to test the connection. Other MCP clients can obtain configuration with `"$TM_MCP_SERVER" --print-config`. See [Editor context MCP](editor-context-mcp.md) for setup and tool details.
 
+See [A2A reviews between terminal tabs](terminal-a2a.md) to send a diff review from one Codex tab to another.
+
 ## Diagnostics for terminal agents
 
 With an agent running through `tm-codex`, `tm-claude`, `tm-opencode`, or `tm-pi`, ask it to **“Read TextMate's diagnostics and explain the errors and warnings in this file.”** The `get_diagnostics` tool reads the language-server reports behind the editor's inline diagnostics, including messages, severity, source, codes, and source ranges. Ask for file locations in the response, then Command-click a location to jump to that line.

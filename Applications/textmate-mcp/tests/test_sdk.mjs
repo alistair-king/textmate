@@ -40,8 +40,18 @@ const transport = new StdioClientTransport({command: resolve(process.argv[3]),
 try {
   await client.connect(transport);
   const list = await client.listTools();
-  assert.deepEqual(list.tools.map(tool => tool.name), ['get_editor_context','list_open_documents','read_document','get_diagnostics','get_definition','find_references','get_document_symbols','search_workspace_symbols','get_hover','navigate_editor','propose_document_edits','get_edit_proposal_status','get_editor_changes']);
-  assert.equal(list.tools.find(tool => tool.name === 'navigate_editor').annotations.readOnlyHint, false);
+  assert.deepEqual(list.tools.map(tool => tool.name), [
+    'get_editor_context', 'list_open_documents', 'read_document', 'get_diagnostics',
+    'get_definition', 'find_references', 'get_document_symbols', 'search_workspace_symbols',
+    'get_hover', 'navigate_editor', 'propose_document_edits', 'get_edit_proposal_status',
+    'get_editor_changes', 'a2a_opt_in', 'a2a_claim', 'a2a_reply', 'a2a_send_review', 'a2a_get_task', 'a2a_cancel_task',
+  ]);
+  assert.deepEqual(list.tools.filter(tool => !tool.annotations.readOnlyHint).map(tool => tool.name), [
+    'navigate_editor', 'propose_document_edits', 'a2a_opt_in', 'a2a_claim', 'a2a_reply', 'a2a_send_review', 'a2a_cancel_task',
+  ]);
+  assert.deepEqual(list.tools.filter(tool => tool.annotations.openWorldHint).map(tool => tool.name), [
+    'a2a_claim', 'a2a_reply', 'a2a_send_review', 'a2a_get_task',
+  ]);
   const result = await client.callTool({name: 'get_editor_context', arguments: {}});
   assert.equal(result.isError, false);
   assert.equal(JSON.parse(result.content[0].text).selections[0].text, 'live 😀');

@@ -211,9 +211,15 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-11-25")
         tools = replies[1]["result"]["tools"]
         self.assertEqual([t["name"] for t in tools],
-                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics", "get_definition", "find_references", "get_document_symbols", "search_workspace_symbols", "get_hover", "navigate_editor", "propose_document_edits", "get_edit_proposal_status", "get_editor_changes"])
-        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools if t["name"] not in ("navigate_editor", "propose_document_edits")))
-        self.assertFalse(next(t for t in tools if t["name"] == "navigate_editor")["annotations"]["readOnlyHint"])
+                         ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics",
+                          "get_definition", "find_references", "get_document_symbols", "search_workspace_symbols",
+                          "get_hover", "navigate_editor", "propose_document_edits", "get_edit_proposal_status",
+                          "get_editor_changes", "a2a_opt_in", "a2a_claim", "a2a_reply", "a2a_send_review", "a2a_get_task", "a2a_cancel_task"])
+        self.assertEqual({t["name"] for t in tools if not t["annotations"]["readOnlyHint"]},
+                         {"navigate_editor", "propose_document_edits", "a2a_opt_in", "a2a_claim", "a2a_reply", "a2a_send_review", "a2a_cancel_task"})
+        self.assertEqual({t["name"] for t in tools if t["annotations"]["openWorldHint"]},
+                         {"a2a_claim", "a2a_reply", "a2a_send_review", "a2a_get_task"})
+        self.assertEqual({t["name"] for t in tools if t["annotations"]["destructiveHint"]}, {"a2a_cancel_task"})
         self.assertEqual(replies[2]["result"], {})
         self.assertEqual(replies[3]["error"]["code"], -32601)
         self.assertEqual(replies[4]["error"]["code"], -32602)
