@@ -149,6 +149,9 @@ set_property(TARGET TextMate APPEND PROPERTY LINK_DEPENDS
 textmate_embed(TextMate textmate-mcp "MacOS")
 textmate_embed(TextMate tm-codex "MacOS")
 textmate_embed(TextMate tm-claude "MacOS")
+textmate_embed(TextMate tm-copilot "MacOS")
+# The copy above runs after TextMate links, so relink when only the launcher changes.
+set_property(TARGET TextMate APPEND PROPERTY LINK_DEPENDS "$<TARGET_FILE:tm-copilot>")
 textmate_embed(TextMate tm-opencode "MacOS")
 textmate_embed(TextMate tm-pi "MacOS")
 textmate_embed(TextMate tm_query "MacOS")
@@ -170,6 +173,8 @@ textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-opencode")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-claude")
+textmate_codesign_file(TextMate "${CS_IDENTITY}"
+  "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-copilot")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-codex")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"

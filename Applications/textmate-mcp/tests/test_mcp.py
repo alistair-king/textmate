@@ -26,6 +26,17 @@ VALIDATOR = str(Path(sys.argv.pop(1)).resolve()) if len(sys.argv) > 1 else None
 INTERNAL_METHODS = {"get_connection_status", "get_editor_change_token"}
 
 
+def github_copilot_cli():
+    """The GitHub Copilot CLI on PATH, or None. AWS Copilot also installs a `copilot` command."""
+    path = shutil.which("copilot")
+    if not path: return None
+    try:
+        result = subprocess.run([path, "--version"], env=dict(os.environ, COPILOT_AUTO_UPDATE="false"),
+                                stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return path if result.returncode == 0 and result.stdout.startswith("GitHub Copilot CLI") else None
+
 def request(identifier, method, **params):
     return {"jsonrpc": "2.0", "id": identifier, "method": method, "params": params}
 
@@ -630,6 +641,77 @@ class MCPTests(unittest.TestCase):
             self.assertNotEqual(process.returncode, 0)
             self.assertIn("Claude Code CLI was not found", process.stderr)
             self.assertIn("TM_CLAUDE_COMMAND", process.stderr)
+
+    def test_copilot_launcher_arguments_connection_and_credentials(self):
+        launcher = str(Path(EXECUTABLE).with_name("tm-copilot"))
+        with tempfile.TemporaryDirectory(prefix="tm-copilot-", dir="/tmp") as directory:
+            app = Path(directory) / 'app "quoted" 😀'
+            app.mkdir()
+            shutil.copy2(EXECUTABLE, app / "textmate-mcp")
+            shutil.copy2(launcher, app / "tm-copilot")
+            stub = Path(directory) / "copilot-stub"
+            stub.write_text("#!" + sys.executable + "\n" +
+                "import json, os, subprocess, sys\n" +
+                "arguments = sys.argv[1:]\n" +
+                "config = json.loads(arguments[arguments.index('--additional-mcp-config')+1])['mcpServers']['textmate']\n" +
+                "environment = dict(os.environ)\n" +
+                "for key, value in config['env'].items(): environment[key] = os.path.expandvars(value)\n" +
+                "probe = subprocess.run([config['command'], '--check'], env=environment, text=True, capture_output=True)\n" +
+                "print(json.dumps({'args': arguments, 'cwd': os.getcwd(), 'probe': probe.returncode}))\n" +
+                "sys.exit(23)\n")
+            stub.chmod(0o700)
+            for user_arguments in [["-p", "Explain the selection"], ["--model", "gpt-5", "--resume", "session-id", "--", "prompt with spaces"], ["mcp", "list"]]:
+                with self.subTest(arguments=user_arguments):
+                    received = []
+                    def context(message, _):
+                        received.append(message)
+                        return {"windowId": "copilot-window", "documentName": "selected.txt"}
+                    with context_server(context) as environment:
+                        environment["TM_COPILOT_COMMAND"] = str(stub)
+                        process = subprocess.run([str(app / "tm-copilot"), *user_arguments], cwd=directory,
+                                                 env=environment, text=True, capture_output=True, timeout=5)
+                        self.assertEqual(process.returncode, 23, process.stderr)
+                        actual = json.loads(process.stdout)
+                        self.assertEqual(actual["cwd"], os.path.realpath(directory))
+                        self.assertEqual(actual["probe"], 0)
+                        arguments = actual["args"]
+                        self.assertEqual(arguments[0], "--additional-mcp-config")
+                        self.assertEqual(arguments[2:], user_arguments)
+                        config = json.loads(arguments[1])["mcpServers"]["textmate"]
+                        self.assertEqual(config["command"], str((app / "textmate-mcp").resolve()))
+                        self.assertEqual(config["type"], "stdio")
+                        self.assertEqual(config["tools"], ["*"])
+                        self.assertEqual(config["env"], {key: "${%s}" % key for key in ("TM_CONTEXT_SOCKET", "TM_CONTEXT_SESSION", "TM_CONTEXT_TOKEN")})
+                        self.assertNotIn(environment["TM_CONTEXT_TOKEN"], " ".join(arguments))
+                        self.assertEqual(len(received), 2)
+                        self.assertTrue(all(m["token"] == environment["TM_CONTEXT_TOKEN"] for m in received))
+
+    def test_copilot_launcher_help_check_and_missing_installation(self):
+        launcher = str(Path(EXECUTABLE).with_name("tm-copilot"))
+        help_result = subprocess.run([launcher, "--help"], text=True, capture_output=True, check=True)
+        self.assertIn("TM_COPILOT_COMMAND", help_result.stdout)
+        with context_server(lambda message, _: {"windowId": "copilot-window", "documentName": "test.txt"}) as environment:
+            environment["TM_COPILOT_COMMAND"] = "/tmp/nonexistent-copilot-installation"
+            process = subprocess.run([launcher, "--check"], env=environment, text=True, capture_output=True, check=True)
+            self.assertIn("copilot-window", process.stdout)
+            process = subprocess.run([launcher], env=environment, text=True, capture_output=True)
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("GitHub Copilot CLI was not found", process.stderr)
+            self.assertIn("TM_COPILOT_COMMAND", process.stderr)
+
+    def test_copilot_launcher_configuration_with_installed_copilot(self):
+        copilot = github_copilot_cli()
+        if not copilot: self.skipTest("GitHub Copilot CLI is not installed")
+        launcher = str(Path(EXECUTABLE).with_name("tm-copilot"))
+        with tempfile.TemporaryDirectory(prefix="tm-copilot-home-", dir="/tmp") as home:
+            with context_server(lambda message, _: {"windowId": "w", "documentName": "test"}) as environment:
+                environment.update(TM_COPILOT_COMMAND=copilot, COPILOT_HOME=home, COPILOT_AUTO_UPDATE="false")
+                process = subprocess.run([launcher, "mcp", "get", "textmate"], env=environment,
+                                         text=True, capture_output=True, timeout=30)
+                self.assertEqual(process.returncode, 0, process.stderr)
+                self.assertIn("textmate", process.stdout)
+                self.assertIn(EXECUTABLE, process.stdout)
+                self.assertNotIn(environment["TM_CONTEXT_TOKEN"], process.stdout)
 
 
     def test_opencode_launcher_preserves_inline_configuration_and_arguments(self):
