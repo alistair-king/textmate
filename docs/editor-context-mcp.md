@@ -1,6 +1,6 @@
 # Querying TextMate from a terminal agent
 
-TextMate bundles an editor MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`), Claude Code (`tm-claude`), OpenCode (`tm-opencode`), and pi (`tm-pi`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
+TextMate bundles an editor MCP server, `textmate-mcp`, and launchers for Codex (`tm-codex`), Claude Code (`tm-claude`), GitHub Copilot CLI (`tm-copilot`), OpenCode (`tm-opencode`), and pi (`tm-pi`). Agents can query live editor buffers, including unsaved changes and untitled documents. Queries stay within the window owning the terminal session, even while the terminal has keyboard focus. Moving a terminal to another window updates its context without restarting the agent.
 
 ## Start Codex
 
@@ -44,6 +44,26 @@ The launcher searches PATH, `~/.local/bin/claude`, the older `~/.claude/local/cl
 
 ```sh
 "${TM_MCP_SERVER%/*}/tm-claude"
+```
+
+## Start GitHub Copilot CLI
+
+Install and sign in to [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli), then open a new TextMate terminal and run:
+
+```sh
+tm-copilot
+# Or run a prompt without the terminal UI:
+tm-copilot -p "Explain the selected text in TextMate"
+```
+
+The launcher checks the editor connection and adds a temporary `textmate` server with Copilot's `--additional-mcp-config` option, which augments `~/.copilot/mcp-config.json` for this session only. Copilot expands `${VARIABLE}` references in the server's `env` values, so connection credentials stay in environment variables rather than arguments or configuration files.
+
+Your other configured MCP servers, permissions, and arguments are preserved. Copilot gives `--additional-mcp-config` the [highest loading priority](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#mcp-server-loading-priority), so a server you have configured under the name `textmate` is replaced for the session, including its command and tool list. Session options such as `--model`, `--resume`, `--continue`, and `-p`, and subcommands such as `mcp list`, are forwarded unchanged; `tm-copilot mcp get textmate` shows the temporary entry.
+
+The launcher searches PATH, `~/.local/bin/copilot`, and common Homebrew locations. Set `TM_COPILOT_COMMAND` to an explicit executable path for another installation. To launch by full path when shell startup files replace PATH:
+
+```sh
+"${TM_MCP_SERVER%/*}/tm-copilot"
 ```
 
 ## Start OpenCode
@@ -95,6 +115,7 @@ Use `tm-pi --check` to test the editor connection without starting pi.
 ```sh
 tm-codex --check
 tm-claude --check
+tm-copilot --check
 tm-opencode --check
 tm-pi --check
 # or:
@@ -113,7 +134,7 @@ Inside a TextMate terminal, run:
 "$TM_MCP_SERVER" --print-config
 ```
 
-This prints an `mcpServers` JSON entry with the helper's absolute path and explicit `TM_CONTEXT_SOCKET`, `TM_CONTEXT_SESSION`, and `TM_CONTEXT_TOKEN` **values**. The printed entry therefore contains a live session token, not a `${TM_CONTEXT_TOKEN}` reference — unlike the three launchers, which pass environment references and leave the value in the terminal's environment. Register that entry using the client's configuration mechanism and treat the printed JSON as a credential: these values belong to this terminal, they stop working when the session is revoked, and they must not be committed to a project. Generate separate configuration for separate tabs. Emitting references here instead is a known inconsistency that is deliberately deferred.
+This prints an `mcpServers` JSON entry with the helper's absolute path and explicit `TM_CONTEXT_SOCKET`, `TM_CONTEXT_SESSION`, and `TM_CONTEXT_TOKEN` **values**. The printed entry therefore contains a live session token, not a `${TM_CONTEXT_TOKEN}` reference — unlike the launchers, which pass environment references and leave the value in the terminal's environment. Register that entry using the client's configuration mechanism and treat the printed JSON as a credential: these values belong to this terminal, they stop working when the session is revoked, and they must not be committed to a project. Generate separate configuration for separate tabs. Emitting references here instead is a known inconsistency that is deliberately deferred.
 
 Clients supporting environment forwarding can pass those three variables from the launching shell instead. Explicit forwarding matters because MCP clients may inherit only a restricted environment. `TM_MCP_SERVER` holds the helper's absolute path.
 
@@ -204,7 +225,7 @@ The native helper implements MCP's stdio tools capability for protocol revisions
 
 ## Verification
 
-Build with `make debug` or `make release`. The MCP helper and all three launchers are embedded and signed inside the application bundle. Run the native and executable regression tests with:
+Build with `make debug` or `make release`. The MCP helper and all launchers are embedded and signed inside the application bundle. Run the native and executable regression tests with:
 
 ```sh
 ctest --test-dir build-debug -R '^(EditorContext|DocumentWindow|selection|textmate-mcp)$' --output-on-failure
