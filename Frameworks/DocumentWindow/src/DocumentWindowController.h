@@ -1,5 +1,9 @@
 #import <bundles/item.h>
 
+// Posted (object = controller) when the selected document, its file type, or the
+// window’s scope attributes (SCM, project type) may have changed.
+extern NSNotificationName const DocumentWindowControllerScopeContextDidChangeNotification;
+
 @class OakDocument;
 @class OakTextView;
 
@@ -14,6 +18,8 @@
 @property (nonatomic, readonly) NSArray<OakDocument*>*           documents;
 @property (nonatomic, readonly) OakDocument*                     selectedDocument;
 @property (nonatomic, readonly) OakTextView*                      textView;
+@property (nonatomic, readonly) NSString*                        projectScopeAttributes; // Project-level subset of scopeAttributes: attr.scm.git, attr.project.cargo, project settings, …
+@property (nonatomic, readonly) BOOL                             scopeAttributesPending; // YES while project attributes (attr.project.*) are being rescanned
 @property (nonatomic) NSUInteger                                 selectedTabIndex;
 
 @property (nonatomic) BOOL                                       fileBrowserVisible;

@@ -24,6 +24,7 @@
 #import <MenuBuilder/MenuBuilder.h>
 #import <MenuBuilder/MBMenuDelegate.h>
 #import <Preferences/Keys.h>
+#import "ContextualBundleMenus.h"
 #import <Preferences/Preferences.h>
 #import <Preferences/TerminalPreferences.h>
 #import <document/OakDocument.h>
@@ -94,6 +95,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 }
 
 @interface AppController () <OakUserDefaultsObserver>
+@property (nonatomic) ContextualBundleMenus* contextualBundleMenus;
 @property (nonatomic) BOOL didFinishLaunching;
 @property (nonatomic) BOOL keyWindowHasBackAndForwardActions;
 #if HAVE_OAK_SWIFTUI
@@ -636,6 +638,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 	}
 
 	[self userDefaultsDidChange:nil]; // setup mate/rmate server
+	self.contextualBundleMenus = [[ContextualBundleMenus alloc] initWithBundlesMenu:bundlesMenu];
 	OakObserveUserDefaults(self);
 
 	NSMenu* selectMenu = [[[[[NSApp mainMenu] itemWithTitle:@"Edit"] submenu] itemWithTitle:@"Select"] submenu];

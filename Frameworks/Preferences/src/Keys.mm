@@ -26,6 +26,7 @@ static NSDictionary* default_settings ()
 		kUserDefaultsShowFileExtensionsKey:      @NO,
 		kUserDefaultsEnvironmentVariablesKey:    default_environment(),
 		kUserDefaultsDisableBundleUpdatesKey:    @NO,
+		kUserDefaultsShowContextualBundleMenusKey: @YES,
 		kUserDefaultsDisableRMateServerKey:      @NO,
 		kUserDefaultsRMateServerListenKey:       kRMateServerListenLocalhost,
 		kUserDefaultsRMateServerPortKey:         @"52698",
@@ -85,6 +86,8 @@ NSString* const kUserDefaultsAllowExpandingPackagesKey         = @"allowExpandin
 // ===========
 // = Bundles =
 // ===========
+
+NSString* const kUserDefaultsShowContextualBundleMenusKey = @"showContextualBundleMenus";
 
 // =============
 // = Variables =

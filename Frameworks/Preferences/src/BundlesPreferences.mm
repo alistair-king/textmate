@@ -1,4 +1,5 @@
 #import "BundlesPreferences.h"
+#import "Keys.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <BundlesManager/BundlesManager.h>
 #import <OakFoundation/OakFoundation.h>
@@ -253,6 +254,7 @@ static NSUserInterfaceItemIdentifier const kTableColumnIdentifierDescription = @
 	scrollView.documentView          = _bundlesTableView;
 
 	NSButton* updateBundlesCheckbox = [NSButton checkboxWithTitle:@"Check for and install updates automatically" target:nil action:nil];
+	NSButton* contextualMenusCheckbox = [NSButton checkboxWithTitle:@"Show menus for bundles relevant to the current project and file" target:nil action:nil];
 
 	NSTextField* statusTextField = [NSTextField labelWithString:@""];
 	statusTextField.textColor = NSColor.secondaryLabelColor;
@@ -283,6 +285,7 @@ static NSUserInterfaceItemIdentifier const kTableColumnIdentifierDescription = @
 		@"search":        _searchField,
 		@"scrollView":    scrollView,
 		@"updateBundles": updateBundlesCheckbox,
+		@"contextMenus":  contextualMenusCheckbox,
 		@"footer":        footerView,
 	};
 
@@ -292,8 +295,9 @@ static NSUserInterfaceItemIdentifier const kTableColumnIdentifierDescription = @
 	[view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-8-[scopeBar]-(>=8)-[search(>=50,<=100,==100@250)]-8-|"        options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
 	[view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-[scrollView(>=50)]-|"                                         options:0 metrics:nil views:views]];
 	[view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-[updateBundles]-(>=8)-|"                                      options:0 metrics:nil views:views]];
+	[view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-[contextMenus]-(>=8)-|"                                       options:0 metrics:nil views:views]];
 	[view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[footer]|"                                                     options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
-	[view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-8-[search]-8-[scrollView(>=50)]-[updateBundles]-20-[footer]|" options:0 metrics:nil views:views]];
+	[view addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-8-[search]-8-[scrollView(>=50)]-[updateBundles]-[contextMenus]-20-[footer]|" options:0 metrics:nil views:views]];
 
 	// ============
 	// = Bindings =
@@ -311,6 +315,7 @@ static NSUserInterfaceItemIdentifier const kTableColumnIdentifierDescription = @
 	[descriptionTableColumn bind:NSValueBinding toObject:_arrayController withKeyPath:@"arrangedObjects.textSummary" options:nil];
 
 	[updateBundlesCheckbox bind:NSValueBinding toObject:NSUserDefaultsController.sharedUserDefaultsController withKeyPath:@"values.disableBundleUpdates" options:@{ NSValueTransformerNameBindingOption: NSNegateBooleanTransformerName }];
+	[contextualMenusCheckbox bind:NSValueBinding toObject:NSUserDefaultsController.sharedUserDefaultsController withKeyPath:[@"values." stringByAppendingString:kUserDefaultsShowContextualBundleMenusKey] options:nil];
 
 	[progressIndicator bind:NSAnimateBinding toObject:BundleInstallHelper.sharedInstance withKeyPath:@"busy" options:nil];
 	[statusTextField   bind:NSValueBinding   toObject:BundleInstallHelper.sharedInstance withKeyPath:@"activityText" options:nil];

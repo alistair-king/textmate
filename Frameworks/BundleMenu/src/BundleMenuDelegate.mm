@@ -9,29 +9,15 @@
 - (scope::context_t)scopeContext;
 @end
 
-@implementation BundleMenuDelegate
-+ (instancetype)sharedInstance
-{
-	static BundleMenuDelegate* sharedInstance = [self new];
-	return sharedInstance;
-}
-
-- (BOOL)menuHasKeyEquivalent:(NSMenu*)aMenu forEvent:(NSEvent*)theEvent target:(id*)aTarget action:(SEL*)anAction
-{
-	return NO;
-}
-
-- (void)menuNeedsUpdate:(NSMenu*)aMenu
+void OakPopulateMenuWithBundleMenuItem (NSMenu* aMenu, bundles::item_ptr umbrellaItem)
 {
 	[aMenu removeAllItems];
+	if(!umbrellaItem)
+		return;
 
 	scope::context_t scope = "";
 	if(id textView = [NSApp targetForAction:@selector(scopeContext)])
 		scope = [textView scopeContext];
-
-	bundles::item_ptr umbrellaItem = bundles::lookup(to_s(aMenu.title));
-	if(!umbrellaItem)
-		return;
 
 	for(auto const& item : umbrellaItem->menu())
 	{
@@ -74,5 +60,22 @@
 			break;
 		}
 	}
+}
+
+@implementation BundleMenuDelegate
++ (instancetype)sharedInstance
+{
+	static BundleMenuDelegate* sharedInstance = [self new];
+	return sharedInstance;
+}
+
+- (BOOL)menuHasKeyEquivalent:(NSMenu*)aMenu forEvent:(NSEvent*)theEvent target:(id*)aTarget action:(SEL*)anAction
+{
+	return NO;
+}
+
+- (void)menuNeedsUpdate:(NSMenu*)aMenu
+{
+	OakPopulateMenuWithBundleMenuItem(aMenu, bundles::lookup(to_s(aMenu.title)));
 }
 @end

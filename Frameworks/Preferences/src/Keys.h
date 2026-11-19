@@ -37,6 +37,8 @@ extern NSString* const kUserDefaultsDisableTabBarCollapsingKey;
 // = Bundles =
 // ===========
 
+extern NSString* const kUserDefaultsShowContextualBundleMenusKey; // Promote bundles matching the current project/file to the main menu bar
+
 // =============
 // = Variables =
 // =============

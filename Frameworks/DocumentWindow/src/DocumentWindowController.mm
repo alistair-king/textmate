@@ -97,6 +97,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 	std::map<std::string, std::string>     _projectSCMVariables;
 	std::vector<std::string>               _projectScopeAttributes;  // kSettingsScopeAttributesKey
 	std::vector<std::string>               _externalScopeAttributes; // attr.scm.git, attr.project.ninja
+	NSUInteger                             _externalScopeAttributesGeneration;
 
 	scm::info_ptr                          _documentSCMInfo;
 	std::map<std::string, std::string>     _documentSCMVariables;
@@ -197,6 +198,8 @@ namespace
 }
 
 static NSArray* const kObservedKeyPaths = @[ @"textView.selectionString", @"textView.font", @"textView.fontScaleFactor", @"textView.themeUUID", @"selectedDocument.fileType", @"selectedDocument", @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
+
+NSNotificationName const DocumentWindowControllerScopeContextDidChangeNotification = @"DocumentWindowControllerScopeContextDidChangeNotification";
 
 @implementation DocumentWindowController
 
@@ -1187,6 +1190,8 @@ static NSDictionary* ContextDocument(OakDocument* document)
 		[self.editorChanges record:@"document" documentId:self.selectedDocument.identifier.UUIDString];
 	else if([keyPath hasPrefix:@"selectedDocument."] || [keyPath hasPrefix:@"arrayController.arrangedObjects."])
 		[self.editorChanges record:@"metadata" documentId:nil];
+	if([keyPath hasPrefix:@"selectedDocument"])
+		[self postScopeContextDidChange];
 	if(self.terminalPanelController.hasTerminal && ([keyPath isEqualToString:@"textView.font"] || [keyPath isEqualToString:@"textView.fontScaleFactor"] || [keyPath isEqualToString:@"textView.themeUUID"] || [keyPath isEqualToString:@"selectedDocument.fileType"] || [keyPath isEqualToString:@"selectedDocument"]))
 	{
 		// Theme notifications can arrive while OakTextView is replacing its document view.
@@ -1784,8 +1789,11 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	};
 
 	_externalScopeAttributes.clear();
+	NSUInteger const generation = ++_externalScopeAttributesGeneration;
+	_scopeAttributesPending = NO;
 	if(!self.selectedDocument && !_projectPath)
 		return;
+	_scopeAttributesPending = YES;
 
 	std::string const projectDir   = to_s(_projectPath ?: NSHomeDirectory());
 	std::string const documentPath = self.selectedDocument.path ? to_s(self.selectedDocument.path) : path::join(projectDir, "dummy");
@@ -1824,8 +1832,13 @@ static NSDictionary* ContextDocument(OakDocument* document)
 		dispatch_async(dispatch_get_main_queue(), ^{
 			std::string const currentProjectDir   = to_s(_projectPath ?: NSHomeDirectory());
 			std::string const currentDocumentPath = self.selectedDocument.path ? to_s(self.selectedDocument.path) : path::join(projectDir, "dummy");
+			if(generation != _externalScopeAttributesGeneration)
+				return; // Superseded by a newer scan, which owns the result and the pending state
+
 			if(projectDir == currentProjectDir && documentPath == currentDocumentPath)
 				_externalScopeAttributes = res;
+			_scopeAttributesPending = NO;
+			[self postScopeContextDidChange];
 		});
 
 	});
@@ -1892,12 +1905,18 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	}
 }
 
+- (void)postScopeContextDidChange
+{
+	[NSNotificationCenter.defaultCenter postNotificationName:DocumentWindowControllerScopeContextDidChangeNotification object:self];
+}
+
 - (void)setProjectSCMVariables:(std::map<std::string, std::string> const&)newVariables
 {
 	if(_projectSCMVariables != newVariables)
 	{
 		_projectSCMVariables = newVariables;
 		[self updateWindowTitle];
+		[self postScopeContextDidChange];
 	}
 }
 
@@ -1907,6 +1926,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	{
 		_documentSCMVariables = newVariables;
 		[self updateWindowTitle];
+		[self postScopeContextDidChange];
 	}
 }
 
@@ -1929,6 +1949,28 @@ static NSDictionary* ContextDocument(OakDocument* document)
 // ========================
 // = OakTextView Delegate =
 // ========================
+
+// Only the project-level sources of -scopeAttributes: SCM name/branch, the
+// project’s scopeAttributes setting, and attributes from project markers. Omits
+// per-document (path, untitled, SCM status, document settings) and focus-
+// dependent (attr.filebrowser) attributes.
+- (NSString*)projectScopeAttributes
+{
+	std::set<std::string> attributes;
+
+	auto const& vars = _documentSCMVariables.empty() ? _projectSCMVariables : _documentSCMVariables;
+	auto scmName = vars.find("TM_SCM_NAME");
+	if(scmName != vars.end())
+		attributes.insert("attr.scm." + scmName->second);
+	auto branch = vars.find("TM_SCM_BRANCH");
+	if(branch != vars.end())
+		attributes.insert("attr.scm.branch." + branch->second);
+
+	attributes.insert(_projectScopeAttributes.begin(), _projectScopeAttributes.end());
+	attributes.insert(_externalScopeAttributes.begin(), _externalScopeAttributes.end());
+
+	return [NSString stringWithCxxString:text::join(attributes, " ")];
+}
 
 - (NSString*)scopeAttributes
 {
