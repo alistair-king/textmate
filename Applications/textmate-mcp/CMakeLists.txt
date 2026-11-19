@@ -16,6 +16,12 @@ add_custom_command(TARGET tm-pi POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/resources/textmate-pi-extension.js" "$<TARGET_FILE_DIR:tm-pi>/textmate-pi-extension.js")
 
 if(BUILD_TESTING)
+  add_executable(textmate-review-automation tests/review_automation.mm)
+  target_link_libraries(textmate-review-automation PRIVATE "-framework Foundation")
+  foreach(scenario success failure cancel shutdown unavailable redeliver session-gone)
+    add_test(NAME textmate-review-${scenario} COMMAND textmate-review-automation ${scenario})
+    set_tests_properties(textmate-review-${scenario} PROPERTIES TIMEOUT 20)
+  endforeach()
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_executable(textmate-mcp-tool-surface tests/tool_surface_check.mm)

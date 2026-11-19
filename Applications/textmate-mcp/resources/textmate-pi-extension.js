@@ -11,6 +11,9 @@ export default function (pi) {
 			TM_CONTEXT_SOCKET: "${TM_CONTEXT_SOCKET}",
 			TM_CONTEXT_SESSION: "${TM_CONTEXT_SESSION}",
 			TM_CONTEXT_TOKEN: "${TM_CONTEXT_TOKEN}",
+			TM_A2A_PROJECT: "${TM_A2A_PROJECT}",
+			TM_A2A_AUTOMATIC: "${TM_A2A_AUTOMATIC}",
+			TM_CODEX_COMMAND: "${TM_CODEX_COMMAND}",
 		},
 		// Declared to the model like built-in tools. The default, codemode, hides them behind scripts.
 		exposure: "direct",

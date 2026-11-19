@@ -80,6 +80,9 @@ NSString* taskCursor(NSDictionary* task) {
 @property NSDictionary* senderMessage;
 @property NSString* sender;
 @property NSMutableDictionary* value;
+// Automatic reviews are claimed only by the helper's background worker and
+// manual (explicit card or HTTP) reviews only by the terminal's agent.
+@property BOOL background;
 @end
 @implementation TerminalA2ATask
 @end
@@ -90,6 +93,9 @@ NSString* taskCursor(NSDictionary* task) {
 @property NSString* bearer;
 @property NSString* credentialFile;
 @property pid_t peer;
+@property NSString* projectPath;
+@property NSString* projectId;
+@property BOOL automatic;
 @property dispatch_source_t watch;
 @property NSMutableArray<TerminalA2ATask*>* tasks;
 @end
@@ -223,7 +229,7 @@ NSString* taskCursor(NSDictionary* task) {
     };
 }
 
-- (NSDictionary*)submit:(NSDictionary*)request route:(TerminalA2ARoute*)route sender:(NSString*)sender {
+- (NSDictionary*)submit:(NSDictionary*)request route:(TerminalA2ARoute*)route sender:(NSString*)sender background:(BOOL)background {
     NSDictionary* config = request[@"configuration"];
     id immediate = [config isKindOfClass:NSDictionary.class] ? config[@"returnImmediately"] : nil;
     if(immediate != (__bridge id)kCFBooleanTrue)
@@ -255,8 +261,8 @@ NSString* taskCursor(NSDictionary* task) {
     message = @{ @"messageId": message[@"messageId"], @"role": @"ROLE_USER", @"parts": [textParts copy] };
     for(TerminalA2ATask* task in route.tasks) {
         if(![task.sender isEqual:sender] || ![task.senderMessage[@"messageId"] isEqual:message[@"messageId"]]) continue;
-        if(![task.senderMessage isEqual:message])
-            return TerminalA2AProblem(409, @"message_id_conflict", @"messageId already refers to a different message.");
+        if(![task.senderMessage isEqual:message] || task.background != background)
+            return TerminalA2AProblem(409, @"message_id_conflict", @"messageId already refers to a different message or delivery mode.");
         return @{ @"task": [task.value copy] };
     }
     if(!route.watch) return TerminalA2AProblem(410, @"reviewer_unavailable", @"The reviewer is unavailable.");
@@ -271,6 +277,7 @@ NSString* taskCursor(NSDictionary* task) {
     TerminalA2ATask* task = [[TerminalA2ATask alloc] init];
     task.sender = sender;
     task.senderMessage = message;
+    task.background = background;
     NSMutableDictionary* history = [message mutableCopy];
     history[@"taskId"] = taskID;
     history[@"contextId"] = context;
@@ -381,7 +388,7 @@ NSString* taskCursor(NSDictionary* task) {
     if(!validBearer(headers[@"authorization"], route.bearer))
         return TerminalA2AProblem(401, @"unauthenticated", @"A reviewer bearer credential is required.");
     if([method isEqual:@"POST"] && [suffix isEqual:@"message:send"])
-        return body ? [self submit:body route:route sender:httpSender] : TerminalA2AProblem(400, @"invalid_request", @"Expected a JSON object.");
+        return body ? [self submit:body route:route sender:httpSender background:NO] : TerminalA2AProblem(400, @"invalid_request", @"Expected a JSON object.");
     if([method isEqual:@"GET"] && [suffix isEqual:@"tasks"])
         return [self listTasks:route query:query];
     if(segments.count == 5 && [segments[3] isEqual:@"tasks"]) {
@@ -407,6 +414,52 @@ NSString* taskCursor(NSDictionary* task) {
         return editor_context::failure(invalid, @"invalid_arguments");
     BOOL send = [method isEqual:@"a2a_send_review"];
     BOOL cancel = [method isEqual:@"a2a_cancel_task"];
+    TerminalA2ARoute* sender = _reviewers[session];
+    if([method isEqual:@"a2a_list_reviewers"]) {
+        NSMutableArray* reviewers = [NSMutableArray array];
+        for(TerminalA2ARoute* route in _routes) {
+            if(!route.watch || !sender.projectId || ![route.projectId isEqual:sender.projectId]) continue;
+            [reviewers addObject:@{ @"cardUrl": [self cardURL:route], @"projectPath": route.projectPath,
+                @"automatic": @(route.automatic), @"ownSession": @([route.terminal isEqual:session]) }];
+        }
+        return @{ @"reviewers": reviewers };
+    }
+    BOOL discover = send && !arguments[@"cardUrl"];
+    // A sender's messageId names one submission across every route, so both delivery
+    // paths resolve it before choosing a route and the verdict cannot depend on order.
+    TerminalA2ARoute* priorRoute = nil;
+    TerminalA2ATask* prior = nil;
+    if(send && arguments[@"messageId"]) {
+        for(TerminalA2ARoute* candidate in _routes) {
+            for(TerminalA2ATask* task in candidate.tasks)
+                if([task.sender isEqual:session] && [task.senderMessage[@"messageId"] isEqual:arguments[@"messageId"]]) { prior = task; break; }
+            if(prior) { priorRoute = candidate; break; }
+        }
+        if(prior && (prior.background != discover || (!discover && ![[self cardURL:priorRoute] isEqual:arguments[@"cardUrl"]])))
+            return editor_context::failure(@"messageId already refers to a different message, reviewer, or delivery mode.", @"message_id_conflict");
+    }
+    if(discover) {
+        if(!sender.projectId || sender.peer != peer)
+            return editor_context::failure(@"Register this session with its project before requesting automatic review.", @"reviewer_unavailable");
+        // Retries stay on the original route, even if another worker is now available
+        // or the original one has since retired: its retained task is the answer.
+        TerminalA2ARoute* selected = priorRoute;
+        if(!selected) {
+            NSUInteger bestLoad = NSUIntegerMax;
+            for(TerminalA2ARoute* candidate in _routes) {
+                if(!candidate.watch || !candidate.automatic || ![candidate.projectId isEqual:sender.projectId]) continue;
+                NSUInteger pending = 0;
+                for(TerminalA2ATask* task in candidate.tasks) if(active(task.value)) ++pending;
+                if(pending >= taskLimit) continue;
+                NSUInteger load = pending * 2 + ([candidate.terminal isEqual:session] ? 1 : 0);
+                if(load < bestLoad) { selected = candidate; bestLoad = load; }
+            }
+        }
+        if(!selected) return editor_context::failure(@"No automatic reviewer is connected for this project. Install Codex CLI and reconnect a TextMate agent.", @"reviewer_unavailable");
+        NSMutableDictionary* resolved = [arguments mutableCopy];
+        resolved[@"cardUrl"] = [self cardURL:selected];
+        arguments = resolved;
+    }
     if(send || cancel || [method isEqual:@"a2a_get_task"]) {
         for(TerminalA2ARoute* route in _routes) {
             if(![[self cardURL:route] isEqual:arguments[@"cardUrl"]]) continue;
@@ -415,20 +468,29 @@ NSString* taskCursor(NSDictionary* task) {
             else result = [self submit:@{
                 @"configuration": @{ @"returnImmediately": @YES },
                 @"message": @{ @"messageId": arguments[@"messageId"] ?: uuid(), @"role": @"ROLE_USER", @"parts": @[@{ @"text": arguments[@"review"] }] },
-            } route:route sender:session];
+            } route:route sender:session background:discover];
             if([result[@"status"] isKindOfClass:NSNumber.class]) return editor_context::failure(result[@"detail"], result[@"code"]);
+            if(discover && result[@"task"]) {
+                TerminalA2ATask* submittedTask = nil;
+                for(TerminalA2ATask* task in route.tasks)
+                    if([task.value[@"id"] isEqual:result[@"task"][@"id"]]) submittedTask = task;
+                if(submittedTask && !submittedTask.value[@"metadata"])
+                    submittedTask.value[@"metadata"] = @{ @"textmate": @{ @"sourceDirectory": sender.projectPath } };
+                return @{ @"cardUrl": [self cardURL:route], @"task": [submittedTask.value copy] ?: result[@"task"] };
+            }
             return result;
         }
         return editor_context::failure(@"Use an Agent Card URL from this TextMate instance.", @"reviewer_unavailable");
     }
 
     TerminalA2ARoute* route = _reviewers[session];
-    if([method isEqual:@"a2a_reply"]) {
+    BOOL background = [method isEqual:editor_context::a2a_background_claim] || [method isEqual:editor_context::a2a_background_reply];
+    if([method isEqual:@"a2a_reply"] || [method isEqual:editor_context::a2a_background_reply]) {
         if(!route || route.peer != peer) return editor_context::failure(@"Opt in from this MCP session first.", @"reviewer_unavailable");
         NSString* outcome = arguments[@"outcome"];
         NSString* nextState = [outcome isEqual:@"rejected"] ? rejected : [outcome isEqual:@"failed"] ? failed : completed;
         for(TerminalA2ATask* task in route.tasks) {
-            if(![task.value[@"id"] isEqual:arguments[@"taskId"]]) continue;
+            if(task.background != background || ![task.value[@"id"] isEqual:arguments[@"taskId"]]) continue;
             NSString* findings = arguments[@"findings"];
             NSString* state = task.value[@"status"][@"state"];
             if([state isEqual:nextState]) {
@@ -450,12 +512,23 @@ NSString* taskCursor(NSDictionary* task) {
     if([method isEqual:@"a2a_opt_in"]) {
         if(![self startListener] || !(route = [self enroll:session peer:peer]))
             return editor_context::failure(@"Could not register a local reviewer.", @"reviewer_unavailable");
+        if(arguments[@"projectPath"]) {
+            route.projectPath = arguments[@"projectPath"];
+            route.projectId = arguments[@"projectId"];
+            route.automatic = [arguments[@"automatic"] boolValue];
+        }
         return @{ @"cardUrl": [self cardURL:route], @"windowId": window[@"windowId"], @"credentialFile": route.credentialFile };
     }
     if(!route || route.peer != peer) return editor_context::failure(@"Opt in from this MCP session first.", @"reviewer_unavailable");
+    if(arguments[@"taskId"]) {
+        for(TerminalA2ATask* task in route.tasks)
+            if(task.background == background && [task.value[@"id"] isEqual:arguments[@"taskId"]])
+                return @{ @"task": [task.value copy], @"windowId": window[@"windowId"] };
+        return editor_context::failure(@"Task not found for this reviewer.", @"task_not_found");
+    }
     for(NSString* state in @[working, submitted]) {
         for(TerminalA2ATask* task in route.tasks) {
-            if(![task.value[@"status"][@"state"] isEqual:state]) continue;
+            if(task.background != background || ![task.value[@"status"][@"state"] isEqual:state]) continue;
             if([state isEqual:submitted]) updateStatus(task.value, working);
             return @{ @"task": [task.value copy], @"windowId": window[@"windowId"] };
         }

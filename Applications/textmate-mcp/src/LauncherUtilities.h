@@ -3,6 +3,14 @@
 #include <libproc.h>
 
 namespace launcher {
+inline void prepareReviewEnvironment() {
+    // Capture the agent's workspace before its MCP host chooses a helper cwd.
+    NSString* directory = NSFileManager.defaultManager.currentDirectoryPath;
+    setenv("TM_A2A_PROJECT", directory.fileSystemRepresentation, 1);
+    if(!getenv("TM_A2A_AUTOMATIC")) setenv("TM_A2A_AUTOMATIC", "1", 1);
+    // Define optional values so hosts that expand ${VAR} can always resolve them.
+    if(!getenv("TM_CODEX_COMMAND")) setenv("TM_CODEX_COMMAND", "", 1);
+}
 inline NSString* executable(NSString* path) {
     BOOL directory = NO;
     return [NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory] && !directory &&

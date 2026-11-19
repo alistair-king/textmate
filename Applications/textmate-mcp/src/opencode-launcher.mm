@@ -69,6 +69,7 @@ int main(int argc, char const* argv[]) {
             fprintf(stderr, "tm-opencode: OpenCode CLI was not found. Install OpenCode, add it to PATH, or set TM_OPENCODE_COMMAND to its executable. See https://opencode.ai/docs/\n");
             return 1;
         }
+        launcher::prepareReviewEnvironment();
         NSString* helper = launcher::helper();
         if(!helper) { fprintf(stderr, "tm-opencode: The bundled textmate-mcp helper is missing. Rebuild or reinstall TextMate.\n"); return 1; }
         NSString* existing = NSProcessInfo.processInfo.environment[@"OPENCODE_CONFIG_CONTENT"];
@@ -82,7 +83,10 @@ int main(int argc, char const* argv[]) {
         servers[@"textmate"] = @{ @"type": @"local", @"command": @[helper], @"enabled": @YES,
             @"environment": @{ @"TM_CONTEXT_SOCKET": @"{env:TM_CONTEXT_SOCKET}",
                                @"TM_CONTEXT_SESSION": @"{env:TM_CONTEXT_SESSION}",
-                               @"TM_CONTEXT_TOKEN": @"{env:TM_CONTEXT_TOKEN}" } };
+                               @"TM_CONTEXT_TOKEN": @"{env:TM_CONTEXT_TOKEN}",
+                               @"TM_A2A_PROJECT": @"{env:TM_A2A_PROJECT}",
+                               @"TM_A2A_AUTOMATIC": @"{env:TM_A2A_AUTOMATIC}",
+                               @"TM_CODEX_COMMAND": @"{env:TM_CODEX_COMMAND}" } };
         configuration[@"mcp"] = servers;
         NSData* data = [NSJSONSerialization dataWithJSONObject:configuration options:NSJSONWritingWithoutEscapingSlashes error:nil];
         NSString* encoded = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];

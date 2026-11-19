@@ -38,7 +38,7 @@ Relative paths use the session's shell working directory (queried from macOS, wi
 
 The bundled MCP server lets an agent query the current file, selected text, open documents, and unsaved buffer contents in its terminal's window. In a new terminal tab, run `tm-codex`, `tm-claude`, `tm-copilot`, `tm-opencode`, or `tm-pi` to start the corresponding agent with editor context. Each launcher accepts `--check` to test the connection. Other MCP clients can obtain configuration with `"$TM_MCP_SERVER" --print-config`. See [Editor context MCP](editor-context-mcp.md) for setup and tool details.
 
-See [A2A reviews between terminal tabs](terminal-a2a.md) to send a diff review from one Codex tab to another.
+Agents launched through TextMate register automatically for project-scoped reviews. They receive instructions to request review before reporting code changes complete. Independent Codex workers handle incoming diffs in the background, including when only one terminal agent is open. See [A2A reviews between terminal tabs](terminal-a2a.md) for setup, usage limits, and manual mode.
 
 ## Diagnostics for terminal agents
 

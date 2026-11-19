@@ -11,6 +11,9 @@ target_link_libraries(DocumentWindow PUBLIC
 textmate_add_tests(DocumentWindow)
 
 if(BUILD_TESTING)
+  add_executable(TerminalA2ARouting_tests context-tests/a2a_routing.mm)
+  target_link_libraries(TerminalA2ARouting_tests PRIVATE DocumentWindow ${TEXTMATE_DEBUG_LIBS})
+  add_test(NAME TerminalA2ARouting COMMAND TerminalA2ARouting_tests)
   set(_context_test_source "${CMAKE_CURRENT_SOURCE_DIR}/context-tests/t_editor_context.mm")
   set(_context_test_runner "${CMAKE_CURRENT_BINARY_DIR}/editor_context_test_runner.mm")
   add_custom_command(OUTPUT "${_context_test_runner}"

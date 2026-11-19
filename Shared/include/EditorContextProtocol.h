@@ -25,7 +25,7 @@ inline NSArray<NSString*>* tool_names() {
     static NSArray* names = @[ @"get_editor_context", @"list_open_documents", @"read_document", @"get_diagnostics",
         @"get_definition", @"find_references", @"get_document_symbols", @"search_workspace_symbols", @"get_hover",
         @"navigate_editor", @"propose_document_edits", @"get_edit_proposal_status", @"get_editor_changes",
-        @"a2a_opt_in", @"a2a_claim", @"a2a_reply", @"a2a_send_review", @"a2a_get_task", @"a2a_cancel_task" ];
+        @"a2a_opt_in", @"a2a_claim", @"a2a_reply", @"a2a_send_review", @"a2a_get_task", @"a2a_cancel_task", @"a2a_list_reviewers" ];
     return names;
 }
 inline bool is_language_query(NSString* method) {
@@ -127,8 +127,13 @@ inline bool integer(id value, double maximum) {
 inline bool identifier(id value, NSUInteger limit = identifier_limit) {
     return [value isKindOfClass:NSString.class] && [value length] && [value length] <= limit;
 }
+// The helper's background reviewer claims and replies through internal methods
+// that are not MCP tools, so a model can neither take nor answer automatic reviews.
+static NSString* const a2a_background_claim = @"a2a_claim_background";
+static NSString* const a2a_background_reply = @"a2a_reply_background";
 inline bool is_a2a_tool(NSString* method) {
-    return [method hasPrefix:@"a2a_"] && [tool_names() containsObject:method];
+    return [method hasPrefix:@"a2a_"] && ([tool_names() containsObject:method] ||
+        [method isEqual:a2a_background_claim] || [method isEqual:a2a_background_reply]);
 }
 inline bool a2a_text(id value) {
     return identifier(value, a2a_text_limit) && [value canBeConvertedToEncoding:NSUTF8StringEncoding] &&
@@ -138,9 +143,19 @@ inline bool a2a_text(id value) {
 inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
     if(![arguments isKindOfClass:NSDictionary.class]) return @"Expected object arguments";
     if(is_a2a_tool(method)) {
-        if([method isEqual:@"a2a_opt_in"] || [method isEqual:@"a2a_claim"])
+        if([method isEqual:@"a2a_opt_in"]) {
+            if(!arguments.count) return nil;
+            return arguments.count == 3 && identifier(arguments[@"projectPath"], path_limit) &&
+                [arguments[@"projectPath"] isAbsolutePath] && identifier(arguments[@"projectId"], path_limit) &&
+                [arguments[@"automatic"] isKindOfClass:NSNumber.class] &&
+                CFGetTypeID((__bridge CFTypeRef)arguments[@"automatic"]) == CFBooleanGetTypeID()
+                ? nil : @"Provide projectPath, projectId, and automatic together";
+        }
+        if([method isEqual:@"a2a_claim"] || [method isEqual:a2a_background_claim])
+            return !arguments.count || (arguments.count == 1 && identifier(arguments[@"taskId"])) ? nil : @"Provide an optional taskId to check a claimed task";
+        if([method isEqual:@"a2a_list_reviewers"])
             return arguments.count ? @"This tool takes no arguments" : nil;
-        if([method isEqual:@"a2a_reply"]) {
+        if([method isEqual:@"a2a_reply"] || [method isEqual:a2a_background_reply]) {
             id outcome = arguments[@"outcome"];
             return arguments.count == (outcome ? 3 : 2) && identifier(arguments[@"taskId"]) && a2a_text(arguments[@"findings"]) &&
                 (!outcome || [@[@"completed", @"rejected", @"failed"] containsObject:outcome])
@@ -150,9 +165,10 @@ inline NSString* validate_arguments(NSString* method, NSDictionary* arguments) {
             return arguments.count == 2 && identifier(arguments[@"cardUrl"], path_limit) && identifier(arguments[@"taskId"])
                 ? nil : @"Provide cardUrl and taskId";
         id messageID = arguments[@"messageId"];
-        return arguments.count == (messageID ? 3 : 2) && identifier(arguments[@"cardUrl"], path_limit) &&
+        id card = arguments[@"cardUrl"];
+        return arguments.count == 1 + (messageID ? 1 : 0) + (card ? 1 : 0) && (!card || identifier(card, path_limit)) &&
             a2a_text(arguments[@"review"]) && (!messageID || identifier(messageID))
-            ? nil : @"Provide cardUrl, up to 64 KiB of review text, and an optional messageId";
+            ? nil : @"Provide up to 64 KiB of review text, an optional cardUrl, and an optional messageId";
     }
     if([method isEqual:@"get_editor_context"] || [method isEqual:@"list_open_documents"] || [method isEqual:@"get_connection_status"] || [method isEqual:@"get_editor_change_token"])
         return arguments.count ? @"This tool takes no arguments" : nil;

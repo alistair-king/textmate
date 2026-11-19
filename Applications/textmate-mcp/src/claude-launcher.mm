@@ -23,6 +23,7 @@ int main(int argc, char const* argv[]) {
             fprintf(stderr, "tm-claude: Claude Code CLI was not found. Install Claude Code, add it to PATH, or set TM_CLAUDE_COMMAND to its executable. See https://code.claude.com/docs/en/setup\n");
             return 1;
         }
+        launcher::prepareReviewEnvironment();
         NSString* helper = launcher::helper();
         if(!helper) { fprintf(stderr, "tm-claude: The bundled textmate-mcp helper is missing. Rebuild or reinstall TextMate.\n"); return 1; }
         // References are expanded by Claude, so credentials never appear in argv or a config file.
@@ -30,7 +31,10 @@ int main(int argc, char const* argv[]) {
             @"type": @"stdio", @"command": helper, @"args": @[], @"env": @{
                 @"TM_CONTEXT_SOCKET": @"${TM_CONTEXT_SOCKET}",
                 @"TM_CONTEXT_SESSION": @"${TM_CONTEXT_SESSION}",
-                @"TM_CONTEXT_TOKEN": @"${TM_CONTEXT_TOKEN}" } } } };
+                @"TM_CONTEXT_TOKEN": @"${TM_CONTEXT_TOKEN}",
+                @"TM_A2A_PROJECT": @"${TM_A2A_PROJECT}",
+                @"TM_A2A_AUTOMATIC": @"${TM_A2A_AUTOMATIC}",
+                @"TM_CODEX_COMMAND": @"${TM_CODEX_COMMAND}" } } } };
         NSData* data = [NSJSONSerialization dataWithJSONObject:configuration options:NSJSONWritingWithoutEscapingSlashes error:nil];
         NSString* encoded = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
         NSMutableArray<NSString*>* arguments = [NSMutableArray array];

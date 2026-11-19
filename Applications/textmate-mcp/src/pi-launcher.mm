@@ -22,6 +22,7 @@ int main(int argc, char const* argv[]) {
             fprintf(stderr, "tm-pi: pi was not found. Install pi, add it to PATH, or set TM_PI_COMMAND to its executable. See https://pi.dev\n");
             return 1;
         }
+        launcher::prepareReviewEnvironment();
         NSString* helper = launcher::helper();
         NSString* extension = launcher::resource(@"textmate-pi-extension.js");
         if(!helper || !extension) { fprintf(stderr, "tm-pi: The bundled textmate-mcp helper or pi extension is missing. Rebuild or reinstall TextMate.\n"); return 1; }

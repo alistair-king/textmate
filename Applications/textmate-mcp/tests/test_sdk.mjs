@@ -44,7 +44,7 @@ try {
     'get_editor_context', 'list_open_documents', 'read_document', 'get_diagnostics',
     'get_definition', 'find_references', 'get_document_symbols', 'search_workspace_symbols',
     'get_hover', 'navigate_editor', 'propose_document_edits', 'get_edit_proposal_status',
-    'get_editor_changes', 'a2a_opt_in', 'a2a_claim', 'a2a_reply', 'a2a_send_review', 'a2a_get_task', 'a2a_cancel_task',
+    'get_editor_changes', 'a2a_opt_in', 'a2a_claim', 'a2a_reply', 'a2a_send_review', 'a2a_get_task', 'a2a_cancel_task', 'a2a_list_reviewers',
   ]);
   assert.deepEqual(list.tools.filter(tool => !tool.annotations.readOnlyHint).map(tool => tool.name), [
     'navigate_editor', 'propose_document_edits', 'a2a_opt_in', 'a2a_claim', 'a2a_reply', 'a2a_send_review', 'a2a_cancel_task',

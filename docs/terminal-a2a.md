@@ -1,14 +1,59 @@
 # A2A reviews between TextMate terminal tabs
 
-TextMate can route a small diff review between two agent conversations.
-The receiving agent handles the task in its own conversation, with its
-existing tool permissions. Use embedded terminal tabs running agent launchers
-such as `tm-codex` or `tm-claude`.
+TextMate routes fixed diff reviews between agents. Automatic reviews run in
+independent background workers. Manual reviews run in the receiving terminal
+conversation with its existing tool permissions. Use embedded terminal tabs
+running agent launchers such as `tm-codex` or `tm-claude`.
+
+## Automatic reviews
+
+Start an agent normally with `tm-codex`, `tm-claude`, `tm-copilot`,
+`tm-opencode`, or `tm-pi`. Its MCP connection registers automatically for
+that launch directory. No Agent Card URLs need to be copied. Sessions
+launched in related Git worktrees discover each other using their common
+Git directory. Unrelated projects have separate reviewer lists. Moving a
+terminal to another window preserves its registration. Launch a new agent
+from the new project directory when switching projects.
+
+The MCP server supplies standing instructions to request independent review
+before reporting a coding task complete, address actionable findings, and
+re-review relevant fixes. The agent sends
+a fixed diff, source worktree, and base revision to `a2a_send_review`, omitting
+`cardUrl`. Supply a stable `messageId` for retries of the exact same diff.
+The tool selects a reviewer automatically and waits for findings. It prefers
+a different live session in the same repository. With only one session,
+that session's independent background reviewer handles the request.
+`a2a_list_reviewers` shows the connected reviewers and their launch directories.
+
+Automatic pickup uses a fresh background **Codex CLI** conversation for each
+review, even when the requesting terminal runs another agent. It uses the
+existing Codex installation and sign-in, a read-only sandbox, and a ten-minute
+execution limit. It receives the fixed review request and reads source from
+the sender's registered worktree. Editor credentials are removed from its
+environment. It publishes findings through the owning MCP helper without
+interrupting the terminal conversation. These reviews consume the configured
+Codex model's usage. Install/sign in to Codex first, or set `TM_CODEX_COMMAND`
+to its executable before launching the terminal agent. The bundled ChatGPT
+CLI is also detected. Other providers can submit requests without a Codex
+installation if another registered session has a working Codex reviewer.
+
+Agent hosts decide how to apply MCP instructions and existing tool permissions.
+Automatic review requests depend on the agent following those instructions.
+Failed or unavailable reviews are returned explicitly and must be reported as
+such. A sender can cancel a queued or running review with `a2a_cancel_task`;
+the worker stops the process after observing cancellation. Closing the MCP
+connection stops its worker. Old registrations retire when their processes or
+terminals close; reconnecting registers again with fresh addresses.
+
+Set `TM_A2A_AUTOMATIC=0` when launching an agent to disable automatic
+registration, background pickup, and the standing review instructions for that
+session. For example, `TM_A2A_AUTOMATIC=0 tm-codex` retains the manual workflow
+below. Explicit card URLs continue to use asynchronous submission.
 
 ## Try the round-trip
 
 1. Launch the updated TextMate build. Open two embedded terminal tabs and
-   start an agent in each.
+   start an agent in each with `TM_A2A_AUTOMATIC=0` for this manual walkthrough.
 2. In the reviewer tab, ask **“Use `a2a_opt_in` and show me the Agent Card URL
    and window ID.”**
 3. In the sender tab, paste the Agent Card URL and ask **“Use
@@ -27,7 +72,7 @@ such as `tm-codex` or `tm-claude`.
    task ID and show me the findings.”** Expect `TASK_STATE_COMPLETED` with
    a findings artifact.
 
-Pickup is manual. `a2a_claim` returns the in-progress task before claiming
+Pickup in this manual mode is explicit. `a2a_claim` returns the in-progress task before claiming
 the next queued task. A reviewer can close a claimed review with
 `a2a_reply` using `outcome: "rejected"` or `outcome: "failed"` and put the
 reason in `findings`. The sender can use `a2a_cancel_task` with the card URL

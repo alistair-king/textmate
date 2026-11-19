@@ -20,10 +20,16 @@ import queue
 EXECUTABLE = str(Path(sys.argv.pop(1)).resolve())
 VALIDATOR = str(Path(sys.argv.pop(1)).resolve()) if len(sys.argv) > 1 else None
 
+# Run from a TextMate agent terminal, the helper under test would inherit that
+# session's automatic-review settings and register a background worker. Tests
+# that exercise automatic review set these explicitly.
+for variable in ("TM_A2A_AUTOMATIC", "TM_A2A_PROJECT", "TM_CODEX_COMMAND"):
+    os.environ.pop(variable, None)
+
 
 # Methods the helper uses for its own transport (--check and change-token
 # polling). validate_arguments accepts them; they are not MCP tools.
-INTERNAL_METHODS = {"get_connection_status", "get_editor_change_token"}
+INTERNAL_METHODS = {"get_connection_status", "get_editor_change_token", "a2a_claim_background", "a2a_reply_background"}
 
 
 def github_copilot_cli():
@@ -88,6 +94,146 @@ def context_server(handler):
 
 
 class MCPTests(unittest.TestCase):
+    def test_helper_exits_after_input_ends_with_blocked_output(self):
+        # Worker threads fill stdout with large tool results while the main thread
+        # keeps reading; input then ends with an unterminated frame whose reply blocks.
+        with context_server(lambda message, _: {"documentId": "doc", "text": "x" * 50000}) as environment:
+            process = subprocess.Popen([EXECUTABLE], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, env=environment)
+            try:
+                frames = [INITIALIZE, READY] + [request(i, "tools/call", name="read_document",
+                          arguments={"documentId": "doc", "offset": 3}) for i in range(2, 8)]
+                process.stdin.write("".join(json.dumps(f) + "\n" for f in frames).encode())
+                process.stdin.flush()
+                time.sleep(1)
+                process.stdin.write(json.dumps(request(9, "tools/call", name="not_a_tool", arguments={})).encode())
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=20), 1)
+            finally:
+                if process.poll() is None:
+                    process.kill(); process.wait()
+                process.stdout.close(); process.stderr.close()
+
+    def test_helper_shutdown_signal_with_blocked_output(self):
+        import signal
+        process = subprocess.Popen([EXECUTABLE], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        try:
+            process.stdin.write((json.dumps(INITIALIZE) + "\n").encode())
+            process.stdin.flush()
+            self.assertEqual(json.loads(process.stdout.readline())["id"], 1)
+            # Never read stdout again: error replies fill the pipe until a write blocks.
+            unknown = (json.dumps(request(2, "tools/call", name="not_a_tool", arguments={})) + "\n").encode()
+            os.set_blocking(process.stdin.fileno(), False)
+            deadline = time.monotonic() + 10
+            sent = 0
+            while time.monotonic() < deadline and sent < 200000:
+                try: sent += os.write(process.stdin.fileno(), unknown)
+                except BlockingIOError: break
+            time.sleep(0.5)
+            process.send_signal(signal.SIGTERM)
+            self.assertEqual(process.wait(timeout=20), 1)
+        finally:
+            if process.poll() is None:
+                process.kill(); process.wait()
+            process.stdin.close(); process.stdout.close(); process.stderr.close()
+
+    def test_helper_shutdown_signal_with_open_input(self):
+        import signal
+        process = subprocess.Popen([EXECUTABLE], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        try:
+            process.stdin.write(json.dumps(INITIALIZE) + "\n")
+            process.stdin.flush()
+            self.assertEqual(json.loads(process.stdout.readline())["id"], 1)
+            process.send_signal(signal.SIGTERM)
+            self.assertEqual(process.wait(timeout=3), 1)
+        finally:
+            if process.poll() is None:
+                process.kill(); process.wait()
+            process.stdin.close(); process.stdout.close(); process.stderr.close()
+
+    def test_automatic_review_registers_runs_and_returns_findings(self):
+        with tempfile.TemporaryDirectory(prefix="tm-auto-review-", dir="/tmp") as directory:
+            stub = Path(directory) / "codex"
+            proof = Path(directory) / "worker.json"
+            stub.write_text("#!" + sys.executable + "\n" +
+                "import json, os, pathlib, sys\n" +
+                "args = sys.argv[1:]\n" +
+                "prompt = sys.stdin.read()\n" +
+                "pathlib.Path(" + repr(str(proof)) + ").write_text(json.dumps({" +
+                "'args': args, 'prompt': prompt, 'cwd': os.getcwd(), " +
+                "'credentials': [k for k in os.environ if k.startswith('TM_CONTEXT_')]}))\n" +
+                "pathlib.Path(args[args.index('--output-last-message')+1]).write_text('src/example.cc:12 has a regression.')\n")
+            stub.chmod(0o700)
+            registrations = []
+            review = {"id": "review-1", "status": {"state": "TASK_STATE_SUBMITTED"},
+                      "history": [{"parts": [{"text": "FIXED DIFF CONTENT"}]}],
+                      "metadata": {"textmate": {"sourceDirectory": directory}}}
+            queued = threading.Event()
+            def serve(message, _):
+                method = message["method"]
+                if method == "a2a_opt_in":
+                    registrations.append(message["arguments"])
+                    return {"cardUrl": "local-card", "windowId": "review-window"}
+                if method == "a2a_send_review":
+                    queued.set()
+                    return {"cardUrl": "local-card", "task": review}
+                if method == "a2a_claim":
+                    raise AssertionError("the background worker used the agent's claim")
+                if method == "a2a_claim_background":
+                    if not queued.is_set(): return {"task": None}
+                    if review["status"]["state"] == "TASK_STATE_COMPLETED" and not message["arguments"].get("taskId"):
+                        return {"task": None}
+                    if review["status"]["state"] == "TASK_STATE_SUBMITTED":
+                        review["status"]["state"] = "TASK_STATE_WORKING"
+                    return {"task": review}
+                if method == "a2a_reply":
+                    raise AssertionError("the background worker used the agent's reply")
+                if method == "a2a_reply_background":
+                    args = message["arguments"]
+                    review["status"]["state"] = "TASK_STATE_COMPLETED"
+                    review["artifacts"] = [{"parts": [{"text": args["findings"]}]}]
+                    return review
+                if method == "a2a_get_task": return review
+                raise AssertionError(method)
+            with context_server(serve) as environment:
+                environment.update(TM_A2A_PROJECT=directory, TM_A2A_AUTOMATIC="1", TM_CODEX_COMMAND=str(stub))
+                process = subprocess.Popen([EXECUTABLE], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE, text=True, env=environment)
+                try:
+                    for message in [INITIALIZE, READY, request(2, "tools/call", name="a2a_send_review",
+                                                             arguments={"review": "FIXED DIFF CONTENT", "messageId": "stable-diff"})]:
+                        process.stdin.write(json.dumps(message) + "\n")
+                    process.stdin.flush()
+                    replies = queue.Queue()
+                    reader = threading.Thread(target=lambda: [replies.put(json.loads(line)) for line in process.stdout])
+                    reader.start()
+                    initialized = replies.get(timeout=5)
+                    self.assertIn("Before reporting a coding task complete", initialized["result"]["instructions"])
+                    result = replies.get(timeout=10)["result"]
+                    self.assertFalse(result["isError"])
+                    task = json.loads(result["content"][0]["text"])["task"]
+                    self.assertEqual(task["status"]["state"], "TASK_STATE_COMPLETED")
+                    self.assertIn("src/example.cc:12", task["artifacts"][0]["parts"][0]["text"])
+                    # NSString symlink resolution drops macOS's /private prefix; compare real paths.
+                    self.assertEqual(os.path.realpath(registrations[0]["projectPath"]), os.path.realpath(directory))
+                    self.assertTrue(registrations[0]["automatic"])
+                    worker = json.loads(proof.read_text())
+                    self.assertEqual(worker["credentials"], [])
+                    self.assertIn("FIXED DIFF CONTENT", worker["prompt"])
+                    self.assertEqual(worker["args"][worker["args"].index("--sandbox")+1], "read-only")
+                    self.assertIn("--ignore-user-config", worker["args"][worker["args"].index("exec"):])
+                    self.assertEqual(worker["cwd"], os.path.realpath(directory))
+                finally:
+                    process.stdin.close()
+                    try: process.wait(timeout=6)
+                    except subprocess.TimeoutExpired:
+                        process.kill(); process.wait()
+                    reader.join(timeout=5)
+                    process.stdout.close(); process.stderr.close()
+                self.assertEqual(process.returncode, 0)
+
     def run_server(self, messages, environment=None):
         process = subprocess.run([EXECUTABLE], input="".join(json.dumps(m) + "\n" for m in messages),
                                  text=True, capture_output=True, env=environment, timeout=10, check=True)
@@ -225,7 +371,7 @@ class MCPTests(unittest.TestCase):
                          ["get_editor_context", "list_open_documents", "read_document", "get_diagnostics",
                           "get_definition", "find_references", "get_document_symbols", "search_workspace_symbols",
                           "get_hover", "navigate_editor", "propose_document_edits", "get_edit_proposal_status",
-                          "get_editor_changes", "a2a_opt_in", "a2a_claim", "a2a_reply", "a2a_send_review", "a2a_get_task", "a2a_cancel_task"])
+                          "get_editor_changes", "a2a_opt_in", "a2a_claim", "a2a_reply", "a2a_send_review", "a2a_get_task", "a2a_cancel_task", "a2a_list_reviewers"])
         self.assertEqual({t["name"] for t in tools if not t["annotations"]["readOnlyHint"]},
                          {"navigate_editor", "propose_document_edits", "a2a_opt_in", "a2a_claim", "a2a_reply", "a2a_send_review", "a2a_cancel_task"})
         self.assertEqual({t["name"] for t in tools if t["annotations"]["openWorldHint"]},
@@ -511,7 +657,9 @@ class MCPTests(unittest.TestCase):
                 config = tomllib.loads(actual["args"][actual["args"].index("-c")+1])["mcp_servers"]["textmate"]
                 self.assertEqual(config["command"], str((app / "textmate-mcp").resolve()))
                 self.assertEqual(config["env"], {})
-                self.assertEqual(config["env_vars"], ["TM_CONTEXT_SOCKET", "TM_CONTEXT_SESSION", "TM_CONTEXT_TOKEN"])
+                self.assertEqual(config["env_vars"], ["TM_CONTEXT_SOCKET", "TM_CONTEXT_SESSION", "TM_CONTEXT_TOKEN",
+                                                      "TM_A2A_PROJECT", "TM_A2A_AUTOMATIC", "TM_CODEX_COMMAND"])
+                self.assertEqual(config["tool_timeout_sec"], 720)
                 self.assertNotIn(environment["TM_CONTEXT_TOKEN"], " ".join(actual["args"]))
 
 
@@ -585,7 +733,7 @@ class MCPTests(unittest.TestCase):
         self.assertEqual([entry["name"] for entry in registered], ["textmate"])
         config = registered[0]["config"]
         self.assertEqual(config["command"], "/app/textmate-mcp")
-        self.assertEqual(config["env"], {key: "${%s}" % key for key in ("TM_CONTEXT_SOCKET", "TM_CONTEXT_SESSION", "TM_CONTEXT_TOKEN")})
+        self.assertEqual(config["env"], {key: "${%s}" % key for key in ("TM_CONTEXT_SOCKET", "TM_CONTEXT_SESSION", "TM_CONTEXT_TOKEN", "TM_A2A_PROJECT", "TM_A2A_AUTOMATIC", "TM_CODEX_COMMAND")})
         self.assertEqual(config["exposure"], "direct")
         self.assertEqual(evaluate(None), [], "without a helper path nothing may be registered")
 
@@ -687,7 +835,7 @@ class MCPTests(unittest.TestCase):
                         self.assertEqual(config["command"], str((app / "textmate-mcp").resolve()))
                         self.assertEqual(config["type"], "stdio")
                         self.assertEqual(config["tools"], ["*"])
-                        self.assertEqual(config["env"], {key: "${%s}" % key for key in ("TM_CONTEXT_SOCKET", "TM_CONTEXT_SESSION", "TM_CONTEXT_TOKEN")})
+                        self.assertEqual(config["env"], {key: "${%s}" % key for key in ("TM_CONTEXT_SOCKET", "TM_CONTEXT_SESSION", "TM_CONTEXT_TOKEN", "TM_A2A_PROJECT", "TM_A2A_AUTOMATIC", "TM_CODEX_COMMAND")})
                         self.assertNotIn(environment["TM_CONTEXT_TOKEN"], " ".join(arguments))
                         self.assertEqual(len(received), 2)
                         self.assertTrue(all(m["token"] == environment["TM_CONTEXT_TOKEN"] for m in received))

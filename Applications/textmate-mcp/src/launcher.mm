@@ -27,9 +27,10 @@ int main(int argc, char const* argv[]) {
             fprintf(stderr, "tm-codex: Codex CLI was not found. Install Codex CLI, add it to PATH, or set TM_CODEX_COMMAND to its executable. See https://learn.chatgpt.com/docs/cli\n");
             return 1;
         }
+        launcher::prepareReviewEnvironment();
         NSString* helper = launcher::helper();
         if(!helper) { fprintf(stderr, "tm-codex: The bundled textmate-mcp helper is missing. Rebuild or reinstall TextMate.\n"); return 1; }
-        NSString* configuration = [NSString stringWithFormat:@"mcp_servers.textmate={command=%@,args=[],env={},env_vars=[\"TM_CONTEXT_SOCKET\",\"TM_CONTEXT_SESSION\",\"TM_CONTEXT_TOKEN\"],enabled=true,required=true}", toml_string(helper)];
+        NSString* configuration = [NSString stringWithFormat:@"mcp_servers.textmate={command=%@,args=[],env={},env_vars=[\"TM_CONTEXT_SOCKET\",\"TM_CONTEXT_SESSION\",\"TM_CONTEXT_TOKEN\",\"TM_A2A_PROJECT\",\"TM_A2A_AUTOMATIC\",\"TM_CODEX_COMMAND\"],enabled=true,required=true,tool_timeout_sec=720}", toml_string(helper)];
         // Global options must precede subcommands such as exec and resume.
         NSMutableArray<NSString*>* arguments = [NSMutableArray arrayWithObjects:@"--no-daemon", @"-c", configuration, nil];
         for(int i = 1; i < argc; ++i) [arguments addObject:@(argv[i])];
