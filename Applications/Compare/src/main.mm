@@ -1,6 +1,14 @@
 #import <Cocoa/Cocoa.h>
 #import "CompareWindowController.h"
 #import "compare_url.h"
+#import <mach-o/dyld.h>
+#import <OakSystem/application.h>
+#import <Preferences/Keys.h>
+#import <scm/drivers/api.h>
+#import <settings/settings.h>
+#import <io/path.h>
+#import <ns/ns.h>
+#import <oak/oak.h>
 
 static BOOL IsDirectory (NSString* path)
 {
@@ -109,6 +117,8 @@ static BOOL IsDirectory (NSString* path)
 
 	NSMenuItem* file = [NSMenuItem new];
 	file.submenu = [[NSMenu alloc] initWithTitle:@"File"];
+	[file.submenu addItemWithTitle:@"Compare Again" action:@selector(refresh:) keyEquivalent:@"r"];
+	[file.submenu addItem:NSMenuItem.separatorItem];
 	[file.submenu addItemWithTitle:@"Close" action:@selector(performClose:) keyEquivalent:@"w"];
 	[menu addItem:file];
 
@@ -133,6 +143,33 @@ int main (int argc, char const* argv[])
 {
 	@autoreleasepool
 	{
+		// Share TextMate’s support folder, settings and preferences, as
+		// ThemeEditor does, so Git is found the same way TextMate finds it.
+		oak::application_t application(argc, argv);
+		oak::application_t::set_name("TextMate");
+		uint32_t length = 0;
+		_NSGetExecutablePath(nullptr, &length);
+		std::vector<char> executablePath(length);
+		_NSGetExecutablePath(executablePath.data(), &length);
+		NSString* executable = to_ns(path::resolve(executablePath.data()));
+		NSBundle* bundle = [NSBundle bundleWithPath:executable.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent];
+		NSBundle* containingBundle = [NSBundle bundleWithPath:bundle.bundlePath.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent];
+		if([containingBundle.bundleIdentifier hasPrefix:@"com.macromates.TextMate"])
+			bundle = containingBundle;
+		if(bundle.bundleIdentifier)
+			oak::application_t::set_path(to_s(bundle.bundlePath));
+		else
+			bundle = NSBundle.mainBundle;
+		if(bundle.bundleIdentifier && ![bundle.bundleIdentifier isEqualToString:NSBundle.mainBundle.bundleIdentifier])
+			[NSUserDefaults.standardUserDefaults addSuiteNamed:bundle.bundleIdentifier];
+		RegisterDefaults();
+		settings_t::set_global_settings_path(oak::application_t::support("Global.tmProperties"));
+		if(NSString* defaults = [bundle pathForResource:@"Default" ofType:@"tmProperties"])
+			settings_t::set_default_settings_path(to_s(defaults));
+
+		std::string git = scm::find_executable("git", "TM_GIT");
+		CompareWindowController.gitExecutable = git == NULL_STR ? nil : to_ns(git);
+
 		[NSApplication sharedApplication];
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 		CompareAppController* controller = [CompareAppController new];

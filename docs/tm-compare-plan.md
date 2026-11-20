@@ -1,6 +1,6 @@
 # tm-compare — Development Plan
 
-Status: Phase 0 done (2026-11-20); Phase 1 next. This file is the working plan; it will be
+Status: Phases 0 and 1 done (2026-11-20); Phase 2 next. This file is the working plan; it will be
 replaced by `docs/compare.md` (user documentation) once the feature ships.
 
 ## Goal
@@ -114,12 +114,15 @@ be tested without a GUI.
 | Class | Use in Compare.app |
 |---|---|
 | `FileBrowserView` | Layout reference: header view, outline view and actions bar stacked vertically. Each side of the window gets the same arrangement. |
-| `OFBHeaderView` | Header above each tree, showing the worktree name and branch. |
 | `FileBrowserOutlineView` | Both trees. It already provides the will/did expand and collapse delegate hooks (`FileBrowserOutlineViewDelegate`) needed to mirror expansion between the two sides, plus its keyboard and context-menu handling. |
 | `FileItemTableCellView` | Row cells: file icon (via `TMFileReference`), name with middle truncation, Finder tags. Its open and close buttons stay hidden because Compare.app has no tabs. |
 | `FileItem` | Per-side item for icons, display names and file properties. Its existing `missing` flag marks the placeholder row on the side where a file doesn't exist. |
 
 ### What is not reused
+
+`OFBHeaderView` is not used: it is the file browser's folder pop-up with back
+and forward buttons. Each side has its own header with the folder name, branch
+(hidden when it equals the folder name) and path.
 
 `FileBrowserViewController` is not embedded. It is built around a single tree
 and TextMate's session: navigation history, favourites, SCM data sources,
@@ -208,7 +211,22 @@ Each phase ends with a green ctest suite (see CLAUDE.md → Testing).
 | Phase | Delivers | Tests |
 |---|---|---|
 | **0. Skeleton** ✅ | Compare.app and tm-compare built, embedded and signed. URL handling works. The window shows the two paths. Worktree discovery is reused and the Text → Compare To menu is live. | `command-palette-projects` still green; launcher `--help` |
-| **1. Tree comparison (read-only)** | File enumeration and classification. Two synchronised `FileBrowserOutlineView` trees with `FileItemTableCellView` cells, row background colours, filters and opening on `focus`. | `compare` suite: temp repo + `git worktree add` fixtures covering modified, one-side-only, ignored, binary, symlink and Unicode-normalised names; folder aggregation |
+| **1. Tree comparison (read-only)** ✅ | File enumeration and classification. Two synchronised `FileBrowserOutlineView` trees with `FileItemTableCellView` cells, row background colours, filters and opening on `focus`. | `compare-tree` (model, Git fixture with a linked worktree) and `compare-window` (real window: alignment, tints, sync, filters, focus; `COMPARE_SNAPSHOT_DIR` writes light/dark PNGs) |
 | **2. File diff view** | xdiff hunks, side-by-side view with line background colours, synchronised scroll, next/previous change | Hunk-model unit tests (empty files, missing trailing newline, CRLF) |
 | **3. Transfers** | File and folder copy in both directions, delete to Trash, then per-hunk apply in both directions. Staleness check, undo, re-classify after each change. | Apply/undo round-trips; refusal when the target changed on disk; a GUI test bundle like `theme-editor-selection` |
 | **4. Polish** | Live refresh via file-system events, "include ignored files" option, remembered expansion state, `docs/compare.md`, README | — |
+
+## Phase 1 notes
+
+- Model: `Applications/Compare/src/compare_tree.{h,mm}`. Window:
+  `CompareWindowController.mm`. Palette: `compare_colors.h`.
+- Compare.app sets up TextMate's support folder, settings and preferences
+  like ThemeEditor's `main`, and finds Git with `scm::find_executable`.
+- Placeholder rows have no icon (there is no file to take one from); their
+  names use `tertiaryLabelColor`.
+- Measured: 1,262 files per side compare in about 0.4 s (release-mode model,
+  this repository against another of its worktrees).
+- Deferred: the name search field (Phase 4), the centre-strip copy buttons
+  (Phase 3), comparing file modes (an executable-bit change alone currently
+  counts as identical), and submodule contents (a submodule shows as
+  identical when present on both sides).
