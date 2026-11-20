@@ -17,6 +17,9 @@
 @property (nonatomic, copy) NSString* focus;
 
 - (IBAction)refresh:(id)sender;
+@property (nonatomic, readonly) NSUInteger comparisonCount; // finished comparisons, for tests
+// Remembers expanded folders for this pair of folders (also done on close).
+- (void)saveState;
 
 // The tree tab copies the selected entries; a file tab copies its current change.
 - (IBAction)copyToRight:(id)sender;

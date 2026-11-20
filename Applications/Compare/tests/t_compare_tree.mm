@@ -154,3 +154,11 @@ void test_branch_labels ()
 	OAK_ASSERT(CompareBranchLabel(NSTemporaryDirectory(), @COMPARE_TEST_GIT) == nil);
 	OAK_ASSERT(CompareBranchLabel(Fixture().left, nil) == nil);
 }
+
+void test_ignored_paths ()
+{
+	NSSet* ignored = CompareIgnoredPaths(Fixture().left, @[ @"build/out.o", @"build/new.o", @"same.txt", @"newfile.txt" ], @COMPARE_TEST_GIT);
+	OAK_ASSERT([ignored isEqualToSet:([NSSet setWithObjects:@"build/out.o", @"build/new.o", nil])]);
+	OAK_ASSERT(CompareIgnoredPaths(Fixture().left, @[ @"same.txt" ], @COMPARE_TEST_GIT).count == 0);
+	OAK_ASSERT(CompareIgnoredPaths(Fixture().left, @[ @"build/out.o" ], nil).count == 0);
+}

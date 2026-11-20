@@ -23,6 +23,8 @@
 - (void)closeTab:(id)sender;
 - (NSString*)tabBarView:(id)tabBar titleForIndex:(NSUInteger)index;
 - (void)trashClickedEntries:(NSMenuItem*)sender;
+- (void)searchChanged:(NSSearchField*)sender;
+- (void)toggleIgnoredFiles:(NSButton*)sender;
 @end
 
 static int Failures = 0;
@@ -487,6 +489,90 @@ static void TestTransfers (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+static void Spin (NSTimeInterval seconds)
+{
+	NSDate* until = [NSDate dateWithTimeIntervalSinceNow:seconds];
+	while(until.timeIntervalSinceNow > 0)
+		[NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+}
+
+static void Search (CompareWindowController* controller, NSString* text)
+{
+	NSSearchField* field = [controller valueForKey:@"_searchField"];
+	field.stringValue = text;
+	[controller searchChanged:field];
+	[controller.window layoutIfNeeded];
+}
+
+static void TestLiveRefreshAndSearch (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	[controller.window setFrame:NSMakeRect(100, 100, 1000, 700) display:NO];
+	NSOutlineView* left = [controller outlineViewForLeftSide:YES];
+
+	// An edit to a compared file compares again.
+	NSUInteger count = controller.comparisonCount;
+	[@"now different\n" writeToFile:[fixture.right stringByAppendingPathComponent:@"same.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	CHECK(RowFor(left, @"same.txt") != -1);
+
+	// Ignored build output does not.
+	count = controller.comparisonCount;
+	[@"object\n" writeToFile:[fixture.left stringByAppendingPathComponent:@"build/new.o"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	Spin(2.5);
+	CHECK(controller.comparisonCount == count);
+
+	// A new file that is not ignored appears.
+	[@"hello\n" writeToFile:[fixture.right stringByAppendingPathComponent:@"brand-new.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	CHECK(WaitUntil(^{ return (BOOL)(RowFor(left, @"brand-new.txt") != -1); }));
+
+	// An open tab keeps its place when its file changes elsewhere.
+	CompareDiffView* diff = Show(controller, @"multi.txt");
+	[NSApp sendAction:@selector(nextChange:) to:controller from:nil];
+	CHECK(diff.currentChange == 1);
+	count = controller.comparisonCount;
+	NSString* multi = [fixture.right stringByAppendingPathComponent:@"multi.txt"];
+	[[[NSString stringWithContentsOfFile:multi encoding:NSUTF8StringEncoding error:nil] stringByAppendingString:@"extra\n"] writeToFile:multi atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && !diff.loading && diff.changeCount == 3); }));
+	CHECK(diff.currentChange == 1);
+	[controller selectTabAtIndex:0];
+
+	// Ignored files, when asked for.
+	NSButton* ignored = [controller valueForKey:@"_ignoredButton"];
+	ignored.state = NSControlStateValueOn;
+	count = controller.comparisonCount;
+	[controller toggleIgnoredFiles:ignored];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	CHECK(RowFor(left, @"build") != -1);
+	ignored.state = NSControlStateValueOff;
+	count = controller.comparisonCount;
+	[controller toggleIgnoredFiles:ignored];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	CHECK(RowFor(left, @"build") == -1);
+
+	// Searching by name expands to the matches; clearing restores the expansion.
+	[left collapseItem:nil collapseChildren:YES];
+	[left expandItem:[left itemAtRow:RowFor(left, @"newdir")]];
+	Search(controller, @"B.TXT");
+	CHECK([TopLevelNames(left) isEqual:(@[ @"deep" ])]);
+	CHECK(RowFor(left, @"deep/a/b.txt") != -1);
+	CHECK(Aligned(controller));
+	Search(controller, @"deep"); // a matching folder shows what is inside it
+	CHECK(RowFor(left, @"deep/a/b.txt") != -1);
+	CHECK(RowFor(left, @"grown.txt") == -1);
+	Search(controller, @"");
+	CHECK(RowFor(left, @"grown.txt") != -1);
+	CHECK(RowFor(left, @"deep/a") == -1); // collapsed again
+	CHECK(RowFor(left, @"newdir/x.txt") != -1);
+
+	// Expanded folders are remembered for this pair.
+	[controller close];
+	CompareWindowController* reopened = Open(fixture, nil);
+	CHECK(RowFor([reopened outlineViewForLeftSide:YES], @"newdir/x.txt") != -1);
+	CHECK(RowFor([reopened outlineViewForLeftSide:YES], @"deep/a") == -1);
+	[reopened close];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -510,7 +596,7 @@ int main (int argc, char const* argv[])
 		[NSApplication sharedApplication];
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 		RegisterDefaults(); // tab widths, as Compare.app's main does
-		[NSUserDefaults.standardUserDefaults setVolatileDomain:@{ @"compareFilter": @0, kUserDefaultsFoldersOnTopKey: @YES } forName:NSArgumentDomain];
+		[NSUserDefaults.standardUserDefaults setVolatileDomain:@{ @"compareFilter": @0, @"compareIncludeIgnored": @NO, kUserDefaultsFoldersOnTopKey: @YES } forName:NSArgumentDomain];
 		CompareWindowController.gitExecutable = @COMPARE_TEST_GIT;
 		CompareWindowController.confirmsChanges = NO;
 
@@ -526,6 +612,11 @@ int main (int argc, char const* argv[])
 			CHECK(writable.error == nil);
 			if(!writable.error)
 				TestTransfers(writable);
+
+			compare_fixture_t live = compare_fixture::create(@COMPARE_TEST_GIT);
+			CHECK(live.error == nil);
+			if(!live.error)
+				TestLiveRefreshAndSearch(live);
 			TestFocus(fixture);
 		}
 

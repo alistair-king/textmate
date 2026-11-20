@@ -96,6 +96,10 @@ void CompareRestat (CompareNode* node, compare_options_t const& options);
 // nodes are created, and a folder's contents are listed again.
 void CompareRestatPaths (CompareNode* root, NSArray<NSString*>* relativePaths, compare_options_t const& options);
 
+// Which of `relativePaths` (below `root`) Git ignores (`git check-ignore`);
+// empty without Git. Paths are returned precomposed.
+NSSet<NSString*>* CompareIgnoredPaths (NSString* root, NSArray<NSString*>* relativePaths, NSString* git);
+
 // The branch checked out at `root` (“detached 1a2b3c4” without one), or nil
 // when `root` is not in a Git work tree.
 NSString* CompareBranchLabel (NSString* root, NSString* git);

@@ -37,6 +37,11 @@ static BOOL IsDirectory (NSString* path)
 	[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowWillClose:) name:NSWindowWillCloseNotification object:nil];
 }
 
+- (void)applicationWillTerminate:(NSNotification*)notification
+{
+	[_controllers makeObjectsPerformSelector:@selector(saveState)];
+}
+
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender
 {
 	return YES;

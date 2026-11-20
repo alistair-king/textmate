@@ -1,6 +1,7 @@
 #import "WorktreeCompareMenu.h"
 #import "CommandPaletteProjects.h"
 #import "../../Compare/src/compare_url.h"
+#import "../../Compare/src/compare_watch.h"
 #import <DocumentWindow/DocumentWindowController.h>
 #import <scm/drivers/api.h>
 #import <oak/oak.h>
@@ -9,6 +10,7 @@
 //   root:   canonical root of the worktree containing the project
 //   focus:  project path relative to root, or nil when they are equal
 //   others: [{ path, branch }] for the repository's other worktrees
+//   repository: the main checkout (or bare repository), whose Git folder lists the worktrees
 static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString*, NSDictionary*>* worktrees)
 {
 	NSDictionary* current = CommandPaletteWorktreeForPath(worktrees, projectPath);
@@ -25,7 +27,10 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 
 	NSString* canonical = CommandPaletteCanonicalPath(projectPath);
 	NSString* focus = canonical.length > root.length ? [canonical substringFromIndex:[root isEqualToString:@"/"] ? 1 : root.length + 1] : nil;
-	return focus ? @{ @"root": root, @"focus": focus, @"others": others } : @{ @"root": root, @"others": others };
+	NSMutableDictionary* entry = [@{ @"root": root, @"others": others } mutableCopy];
+	entry[@"focus"]      = focus;
+	entry[@"repository"] = current[@"repositoryPath"];
+	return entry;
 }
 
 @implementation WorktreeCompareMenu
@@ -34,6 +39,8 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 	NSMutableSet<NSString*>* _pending;
 	NSString* _projectPath;
 	dispatch_queue_t _queue;
+	compare::folder_watch_t _watch;
+	NSString* _watchedFolder;
 }
 
 + (WorktreeCompareMenu*)sharedInstance
@@ -75,6 +82,7 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 		_projectPath = projectPath;
 		if(projectPath && !_entries[projectPath])
 			[self refreshProjectPath:projectPath];
+		[self watchRepository:_entries[projectPath][@"repository"]];
 	}
 	BOOL hidden = !projectPath || [_entries[projectPath][@"others"] count] == 0;
 	if(_menuItem.hidden != hidden)
@@ -101,8 +109,44 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 		dispatch_async(dispatch_get_main_queue(), ^{
 			[_pending removeObject:projectPath];
 			_entries[projectPath] = entry;
+			if([projectPath isEqualToString:self.mainProjectPath])
+				[self watchRepository:entry[@"repository"]];
 			[self updateMenuItemVisibility];
 		});
+	});
+}
+
+// Worktrees are added and removed in the repository's Git folder (often from
+// TextMate's own terminal, so no activation happens): watch it while the main
+// window's project belongs to that repository.
+- (void)watchRepository:(NSString*)repository
+{
+	NSString* folder = nil;
+	if(repository)
+	{
+		NSString* gitFolder = [repository stringByAppendingPathComponent:@".git"];
+		BOOL isDirectory = NO;
+		folder = [NSFileManager.defaultManager fileExistsAtPath:gitFolder isDirectory:&isDirectory] && isDirectory ? gitFolder : repository; // bare repository
+	}
+	if(folder == _watchedFolder || [folder isEqualToString:_watchedFolder])
+		return;
+	_watchedFolder = folder;
+	if(!folder)
+	{
+		_watch.stop();
+		return;
+	}
+	__weak WorktreeCompareMenu* weakSelf = self;
+	_watch.start(@[ folder ], nil, 1.0, ^(NSArray<NSString*>* paths){
+		for(NSString* path in paths)
+		{
+			if([path containsString:@"/worktrees"])
+			{
+				if(NSString* projectPath = weakSelf.mainProjectPath)
+					[weakSelf refreshProjectPath:projectPath];
+				break;
+			}
+		}
 	});
 }
 

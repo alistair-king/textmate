@@ -3,6 +3,8 @@
 #import "compare_colors.h"
 #import "CompareDiffView.h"
 #import "compare_transfer.h"
+#import "compare_watch.h"
+#include <stdlib.h>
 #import <FileBrowser/FileItem.h>
 #import <FileBrowser/FileBrowserOutlineView.h>
 #import <FileBrowser/FileItemTableCellView.h>
@@ -16,7 +18,17 @@ typedef NS_ENUM(NSInteger, CompareFilter) {
 	CompareFilterAll,
 };
 
-static NSString* const kCompareFilterDefaultsKey = @"compareFilter";
+static NSString* const kCompareFilterDefaultsKey         = @"compareFilter";
+static NSString* const kCompareIncludeIgnoredDefaultsKey = @"compareIncludeIgnored";
+static NSString* const kCompareExpandedDefaultsKey       = @"compareExpandedFolders"; // { pair: { paths, date } }
+static NSUInteger const kCompareRememberedPairs          = 30;
+
+// The real path (with /private for /var, /tmp, /etc), as FSEvents reports it.
+static NSString* RealPath (NSString* path)
+{
+	char buffer[PATH_MAX];
+	return realpath(path.fileSystemRepresentation, buffer) ? @(buffer) : path;
+}
 
 static CompareStatus MaskForFilter (CompareFilter filter)
 {
@@ -120,6 +132,16 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	BOOL _synchronizing;
 	BOOL _revealFocusAfterLoad;
 
+	NSSearchField* _searchField;
+	NSString* _search;                       // nil or empty: no name filter
+	NSArray<NSString*>* _expandedBeforeSearch;
+	NSButton* _ignoredButton;
+	BOOL _includeIgnored;
+
+	compare::folder_watch_t _watch;
+	BOOL _comparing;
+	BOOL _refreshPending;
+
 	OakTabBarView* _tabBar;
 	NSView* _tabContent;
 	NSMutableArray<CompareTab*>* _tabs;
@@ -145,6 +167,7 @@ static BOOL ConfirmsChanges = YES;
 		_filter    = (CompareFilter)MIN(MAX([NSUserDefaults.standardUserDefaults integerForKey:kCompareFilterDefaultsKey], 0), CompareFilterAll);
 		_visibleChildren = [NSMapTable strongToStrongObjectsMapTable];
 		_revealFocusAfterLoad = YES;
+		_includeIgnored = [NSUserDefaults.standardUserDefaults boolForKey:kCompareIncludeIgnoredDefaultsKey];
 
 		window.title              = [NSString stringWithFormat:@"%@ ⇄ %@", left.lastPathComponent, right.lastPathComponent];
 		window.minSize            = NSMakeSize(560, 420);
@@ -218,6 +241,7 @@ static BOOL ConfirmsChanges = YES;
 		}
 
 		[self refresh:self];
+		[self startWatching];
 	}
 	return self;
 }
@@ -230,7 +254,213 @@ static BOOL ConfirmsChanges = YES;
 
 - (void)windowWillClose:(NSNotification*)notification
 {
+	[self saveState];
 	[_loading cancel];
+	_watch.stop();
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(liveRefresh) object:nil];
+}
+
+// ==================
+// = Remembered state =
+// ==================
+
+- (NSString*)pairKey
+{
+	return [NSString stringWithFormat:@"%@\n%@", _leftPath, _rightPath];
+}
+
+- (NSArray<NSString*>*)savedExpandedPaths
+{
+	NSDictionary* saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:kCompareExpandedDefaultsKey][self.pairKey];
+	NSArray* paths = saved[@"paths"];
+	return [paths isKindOfClass:NSArray.class] ? paths : @[ ];
+}
+
+- (void)saveState
+{
+	if(!_root)
+		return;
+	NSArray<NSString*>* paths = _search.length ? _expandedBeforeSearch : [self expandedRelativePaths];
+	NSMutableDictionary* all = [[NSUserDefaults.standardUserDefaults dictionaryForKey:kCompareExpandedDefaultsKey] mutableCopy] ?: [NSMutableDictionary dictionary];
+	all[self.pairKey] = @{ @"paths": paths ?: @[ ], @"date": NSDate.date };
+	while(all.count > kCompareRememberedPairs)
+	{
+		NSString* oldest = [all keysSortedByValueUsingComparator:^NSComparisonResult(NSDictionary* lhs, NSDictionary* rhs){
+			return [lhs[@"date"] compare:rhs[@"date"]];
+		}].firstObject;
+		[all removeObjectForKey:oldest];
+	}
+	[NSUserDefaults.standardUserDefaults setObject:all forKey:kCompareExpandedDefaultsKey];
+}
+
+// ================
+// = Live refresh =
+// ================
+
+- (void)startWatching
+{
+	NSMutableArray* excluded = [NSMutableArray array];
+	for(NSString* root in @[ RealPath(_leftPath), RealPath(_rightPath) ])
+		[excluded addObject:[root stringByAppendingPathComponent:@".git"]];
+	__weak CompareWindowController* weakSelf = self;
+	_watch.start(@[ _leftPath, _rightPath ], excluded, 0.5, ^(NSArray<NSString*>* paths){
+		[weakSelf filesDidChange:paths];
+	});
+}
+
+// The path relative to whichever root contains it, or nil.
+- (NSString*)relativePathForEventPath:(NSString*)path left:(BOOL*)left
+{
+	for(BOOL isLeft : { YES, NO })
+	{
+		NSString* root = isLeft ? _leftPath : _rightPath;
+		for(NSString* base in @[ root, RealPath(root) ])
+		{
+			if([path isEqualToString:base])
+			{
+				*left = isLeft;
+				return @"";
+			}
+			NSString* prefix = [base stringByAppendingString:@"/"];
+			if([path hasPrefix:prefix])
+			{
+				*left = isLeft;
+				return [path substringFromIndex:prefix.length].precomposedStringWithCanonicalMapping;
+			}
+		}
+	}
+	return nil;
+}
+
+// Compare again after changes to anything compared, or to files that are not
+// ignored; build output and Git's own files do not count.
+- (void)filesDidChange:(NSArray<NSString*>*)paths
+{
+	if(!_root)
+		return;
+	NSMutableArray<NSString*>* unknown[2] = { [NSMutableArray array], [NSMutableArray array] };
+	for(NSString* path in paths)
+	{
+		BOOL left = NO;
+		NSString* relativePath = [self relativePathForEventPath:path left:&left];
+		if(!relativePath.length)
+			continue;
+		NSArray* components = relativePath.pathComponents;
+		if([components containsObject:@".git"] || ([relativePath.lastPathComponent hasPrefix:@"."] && [relativePath.lastPathComponent containsString:@".tm-compare-"]))
+			continue;
+		if(_includeIgnored || [_root nodeAtRelativePath:relativePath])
+		{
+			[self scheduleLiveRefresh];
+			return;
+		}
+		[unknown[left ? 0 : 1] addObject:relativePath];
+	}
+	if(!unknown[0].count && !unknown[1].count)
+		return;
+
+	NSString* git = CompareWindowController.gitExecutable;
+	if(!git)
+	{
+		[self scheduleLiveRefresh];
+		return;
+	}
+	NSArray* roots = @[ _leftPath, _rightPath ];
+	NSArray* candidates[2] = { [unknown[0] copy], [unknown[1] copy] };
+	NSArray* leftCandidates = candidates[0];
+	NSArray* rightCandidates = candidates[1];
+	__weak CompareWindowController* weakSelf = self;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+		BOOL relevant = NO;
+		NSArray* lists[2] = { leftCandidates, rightCandidates };
+		for(size_t i = 0; i < 2 && !relevant; ++i)
+		{
+			NSSet* ignored = CompareIgnoredPaths(roots[i], lists[i], git);
+			for(NSString* candidate in lists[i])
+				relevant |= ![ignored containsObject:candidate];
+		}
+		if(relevant)
+		{
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[weakSelf scheduleLiveRefresh];
+			});
+		}
+	});
+}
+
+- (void)scheduleLiveRefresh
+{
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(liveRefresh) object:nil];
+	[self performSelector:@selector(liveRefresh) withObject:nil afterDelay:0.3];
+}
+
+- (void)liveRefresh
+{
+	if(_comparing)
+		_refreshPending = YES; // runs when the current comparison finishes
+	else
+		[self refresh:self];
+}
+
+// =========================
+// = Name search and ignored files =
+// =========================
+
+- (void)searchChanged:(NSSearchField*)sender
+{
+	NSString* search = [sender.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+	if([search isEqualToString:_search ?: @""])
+		return;
+	if(!_search.length && search.length)
+		_expandedBeforeSearch = [self expandedRelativePaths];
+	BOOL clearing = _search.length && !search.length;
+	_search = [search copy];
+	[self reloadOutlines];
+	if(_search.length)
+		[_sides[0].outlineView expandItem:nil expandChildren:YES];
+	else if(clearing)
+	{
+		// Outline views keep items expanded across reloads: collapse what the
+		// search opened, then restore what was open before.
+		[_sides[0].outlineView collapseItem:nil collapseChildren:YES];
+		[self expandRelativePaths:_expandedBeforeSearch ?: @[ ]];
+	}
+}
+
+- (BOOL)nameMatches:(CompareNode*)node
+{
+	return [node.name rangeOfString:_search options:NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch].location != NSNotFound;
+}
+
+// The node or a folder above it matches the search by name.
+- (BOOL)nameMatchesWithin:(CompareNode*)node
+{
+	for(CompareNode* current = node; current && current != _root; current = current.parent)
+	{
+		if([self nameMatches:current])
+			return YES;
+	}
+	return NO;
+}
+
+// Shown by the search: it matches, it is inside a match, or something below it matches.
+- (BOOL)searchShows:(CompareNode*)node
+{
+	if(!_search.length || [self nameMatchesWithin:node])
+		return YES;
+	CompareStatus mask = MaskForFilter(_filter);
+	for(CompareNode* child in node.children)
+	{
+		if((child.mask & mask) && [self searchShows:child])
+			return YES;
+	}
+	return NO;
+}
+
+- (void)toggleIgnoredFiles:(NSButton*)sender
+{
+	_includeIgnored = sender.state == NSControlStateValueOn;
+	[NSUserDefaults.standardUserDefaults setBool:_includeIgnored forKey:kCompareIncludeIgnoredDefaultsKey];
+	[self refresh:self];
 }
 
 // ==========
@@ -252,6 +482,21 @@ static BOOL ConfirmsChanges = YES;
 	_spinner.controlSize = NSControlSizeSmall;
 	_spinner.displayedWhenStopped = NO;
 
+	_ignoredButton = [NSButton checkboxWithTitle:@"Ignored Files" target:self action:@selector(toggleIgnoredFiles:)];
+	_ignoredButton.controlSize = NSControlSizeSmall;
+	_ignoredButton.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+	_ignoredButton.state = _includeIgnored ? NSControlStateValueOn : NSControlStateValueOff;
+	_ignoredButton.toolTip = @"Also compare files that .gitignore excludes";
+
+	_searchField = [NSSearchField new];
+	_searchField.placeholderString = @"Filter by name";
+	_searchField.controlSize = NSControlSizeSmall;
+	_searchField.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+	_searchField.sendsSearchStringImmediately = NO;
+	_searchField.target = self;
+	_searchField.action = @selector(searchChanged:);
+	[_searchField.widthAnchor constraintEqualToConstant:180].active = YES;
+
 	NSButton* refresh = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"arrow.clockwise" accessibilityDescription:@"Refresh"] target:self action:@selector(refresh:)];
 	refresh.bezelStyle = NSBezelStyleAccessoryBarAction;
 	refresh.toolTip = @"Compare again (⌘R)";
@@ -259,7 +504,7 @@ static BOOL ConfirmsChanges = YES;
 	// The summary label takes the spare width.
 	[_summaryLabel setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-	NSStackView* bar = [NSStackView stackViewWithViews:@[ _filterControl, _summaryLabel, _spinner, refresh ]];
+	NSStackView* bar = [NSStackView stackViewWithViews:@[ _filterControl, _ignoredButton, _summaryLabel, _searchField, _spinner, refresh ]];
 	[bar setHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
 	bar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
 	bar.spacing     = 8;
@@ -364,6 +609,9 @@ static BOOL ConfirmsChanges = YES;
 
 	[_spinner startAnimation:self];
 	_summaryLabel.stringValue = @"Comparing…";
+	_comparing = YES;
+	_refreshPending = NO;
+	BOOL includeIgnored = _includeIgnored;
 
 	NSString* left  = _leftPath;
 	NSString* right = _rightPath;
@@ -372,8 +620,9 @@ static BOOL ConfirmsChanges = YES;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		compare_options_t options;
 		options.git           = git;
-		options.folders_first = foldersFirst;
-		options.cancelled     = ^BOOL{ return loading.isCancelled; };
+		options.folders_first   = foldersFirst;
+		options.include_ignored = includeIgnored;
+		options.cancelled       = ^BOOL{ return loading.isCancelled; };
 		CompareNode* root     = CompareBuildTree(left, right, options);
 		NSString* leftBranch  = root ? CompareBranchLabel(left, git) : nil;
 		NSString* rightBranch = root ? CompareBranchLabel(right, git) : nil;
@@ -381,19 +630,21 @@ static BOOL ConfirmsChanges = YES;
 			if(generation != _generation || loading.isCancelled)
 				return;
 			[_spinner stopAnimation:self];
+			_comparing = NO;
+			++_comparisonCount;
 			if(!root)
-			{
 				_summaryLabel.stringValue = @"Comparison failed.";
-				return;
-			}
-			[self showTree:root leftBranch:leftBranch rightBranch:rightBranch];
+			else
+				[self showTree:root leftBranch:leftBranch rightBranch:rightBranch];
+			if(_refreshPending)
+				[self refresh:self];
 		});
 	});
 }
 
 - (void)showTree:(CompareNode*)root leftBranch:(NSString*)leftBranch rightBranch:(NSString*)rightBranch
 {
-	NSArray<NSString*>* expanded = _root ? [self expandedRelativePaths] : @[ ];
+	NSArray<NSString*>* expanded = _root ? [self expandedRelativePaths] : self.savedExpandedPaths;
 	NSString* selected = [self selectedRelativePath];
 
 	_root = root;
@@ -472,7 +723,7 @@ static BOOL ConfirmsChanges = YES;
 
 - (BOOL)isVisible:(CompareNode*)node
 {
-	return node == _root || (node.mask & MaskForFilter(_filter));
+	return node == _root || ((node.mask & MaskForFilter(_filter)) && [self searchShows:node]);
 }
 
 - (void)expandRelativePaths:(NSArray<NSString*>*)paths
@@ -549,8 +800,9 @@ static BOOL ConfirmsChanges = YES;
 	if(!children)
 	{
 		CompareStatus mask = MaskForFilter(_filter);
+		BOOL searching = _search.length && ![self nameMatchesWithin:node];
 		children = [node.children filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(CompareNode* child, NSDictionary*){
-			return (child.mask & mask) != 0;
+			return (child.mask & mask) != 0 && (!searching || [self searchShows:child]);
 		}]] ?: @[ ];
 		[_visibleChildren setObject:children forKey:node];
 	}
@@ -723,9 +975,13 @@ static BOOL ConfirmsChanges = YES;
 	for(NSUInteger i = 1; i < _tabs.count; ++i)
 	{
 		CompareTab* tab = _tabs[i];
+		CompareNode* previous = tab.node;
 		tab.node = [_root nodeAtRelativePath:tab.relativePath];
+		// A live refresh compares again often: reload only files that changed.
+		if(previous && tab.node && previous.leftStamp == tab.node.leftStamp && previous.rightStamp == tab.node.rightStamp && tab.diffView.node)
+			continue;
 		if(tab.node)
-				[tab.diffView showNode:tab.node];
+				[tab.diffView showNode:tab.node keepingChange:YES];
 		else	[tab.diffView showMessage:@"This file is no longer in either folder."];
 	}
 	[_tabBar reloadData];
@@ -800,7 +1056,8 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 - (compare_options_t)restatOptions
 {
 	compare_options_t options;
-	options.git           = CompareWindowController.gitExecutable;
+	options.git             = CompareWindowController.gitExecutable;
+	options.include_ignored = _includeIgnored;
 	options.folders_first = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsFoldersOnTopKey];
 	return options;
 }

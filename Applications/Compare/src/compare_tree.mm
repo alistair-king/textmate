@@ -66,7 +66,7 @@
 // ==========
 
 // Runs git with file-backed output, so large listings cannot deadlock a pipe.
-static NSData* GitOutput (NSString* git, NSString* directory, NSArray<NSString*>* arguments, BOOL (^cancelled)())
+static NSData* GitOutput (NSString* git, NSString* directory, NSArray<NSString*>* arguments, BOOL (^cancelled)(), NSData* input = nil, int acceptedStatus = 0)
 {
 	FILE* output = tmpfile();
 	if(!output)
@@ -85,12 +85,24 @@ static NSData* GitOutput (NSString* git, NSString* directory, NSArray<NSString*>
 	task.environment    = environment;
 	task.standardOutput = handle;
 	task.standardError  = task.standardInput = NSFileHandle.fileHandleWithNullDevice;
+	NSPipe* inputPipe = input ? [NSPipe pipe] : nil;
+	if(inputPipe)
+		task.standardInput = inputPipe;
 
 	dispatch_semaphore_t exited = dispatch_semaphore_create(0);
 	task.terminationHandler = ^(NSTask*){ dispatch_semaphore_signal(exited); };
 	NSData* result = nil;
 	if([task launchAndReturnError:nil])
 	{
+		if(inputPipe)
+		{
+			// Written from another queue so a full pipe cannot block the wait below.
+			NSFileHandle* writer = inputPipe.fileHandleForWriting;
+			dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+				@try { [writer writeData:input]; } @catch(NSException*) { }
+				[writer closeFile];
+			});
+		}
 		BOOL stopped = NO;
 		for(int waited = 0; dispatch_semaphore_wait(exited, dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC)) != 0; ++waited)
 		{
@@ -102,7 +114,7 @@ static NSData* GitOutput (NSString* git, NSString* directory, NSArray<NSString*>
 			}
 		}
 		[task waitUntilExit];
-		if(!stopped && task.terminationStatus == 0)
+		if(!stopped && (task.terminationStatus == 0 || task.terminationStatus == acceptedStatus))
 		{
 			[handle seekToFileOffset:0];
 			result = [handle readDataToEndOfFile];
@@ -371,6 +383,27 @@ CompareNode* CompareBuildTree (NSString* left, NSString* right, compare_options_
 
 	// Leaves keep an empty dictionary only while building; `children` stays nil.
 	return Classify(root, options) ? root : nil;
+}
+
+NSSet<NSString*>* CompareIgnoredPaths (NSString* root, NSArray<NSString*>* relativePaths, NSString* git)
+{
+	NSMutableSet<NSString*>* ignored = [NSMutableSet set];
+	if(!git || !relativePaths.count)
+		return ignored;
+	NSMutableData* input = [NSMutableData data];
+	for(NSString* path in relativePaths)
+	{
+		[input appendBytes:path.fileSystemRepresentation length:strlen(path.fileSystemRepresentation)];
+		[input appendBytes:"" length:1];
+	}
+	// Exit status 1 means “none of these are ignored”.
+	NSData* data = GitOutput(git, root, @[ @"check-ignore", @"-z", @"--stdin" ], nil, input, 1);
+	for(NSString* path in [[[NSString alloc] initWithData:data ?: [NSData data] encoding:NSUTF8StringEncoding] componentsSeparatedByString:@"\0"])
+	{
+		if(path.length)
+			[ignored addObject:path.precomposedStringWithCanonicalMapping];
+	}
+	return ignored;
 }
 
 NSString* CompareBranchLabel (NSString* root, NSString* git)
