@@ -330,3 +330,97 @@ void test_undone_trash_of_folder_lists_it_again ()
 	OAK_ASSERT_EQ((int)StatusOf(root, @"only/left/b.txt"), (int)CompareStatusLeftOnly);
 	OAK_ASSERT([root nodeAtRelativePath:@"only"].isFolder);
 }
+
+// =======================
+// = Review regressions =
+// =======================
+
+void test_file_in_place_of_a_parent_folder_counts_as_type_replacement ()
+{
+	// Copying config/settings.json to the right moves the right's file “config” to the Trash.
+	pair_t pair = { Folder(), Folder() };
+	Write(pair.left,  @"config/settings.json", @"{}\n");
+	Write(pair.right, @"config",               @"a file\n");
+	CompareNode* root = CompareBuildTree(pair.left, pair.right, Options());
+	CompareNode* settings = [root nodeAtRelativePath:@"config/settings.json"];
+	OAK_ASSERT(settings != nil);
+	OAK_ASSERT(CompareCopyReplacesType(settings, YES));
+	OAK_ASSERT(!CompareCopyReplacesType(settings, NO)); // the left has a folder there
+	CompareChangeSet* changes = [CompareChangeSet new];
+	NSString* error = nil;
+	OAK_ASSERT(CompareCopyNode(settings, YES, changes, &error));
+	OAK_ASSERT([Read(pair.right, @"config/settings.json") isEqualToString:@"{}\n"]);
+	OAK_ASSERT([changes undo:&error]);
+	OAK_ASSERT([Read(pair.right, @"config") isEqualToString:@"a file\n"]);
+}
+
+void test_second_undo_after_two_writes_to_one_file ()
+{
+	NSString* root = Folder();
+	Write(root, @"file.txt", @"original\n");
+	NSString* path = [root stringByAppendingPathComponent:@"file.txt"];
+	CompareChangeSet* first  = [CompareChangeSet new];
+	CompareChangeSet* second = [CompareChangeSet new];
+	NSString* error = nil;
+	OAK_ASSERT([first writeData:Data(@"first\n") toPath:path mode:0644 error:&error]);
+	OAK_ASSERT([second writeData:Data(@"second\n") toPath:path mode:0644 error:&error]);
+	OAK_ASSERT([second undo:&error]); // restores “first” as a new file (another inode)
+	OAK_ASSERT([Read(root, @"file.txt") isEqualToString:@"first\n"]);
+	OAK_ASSERT([first undo:&error]);
+	OAK_ASSERT(error == nil);
+	OAK_ASSERT([Read(root, @"file.txt") isEqualToString:@"original\n"]);
+}
+
+void test_undo_still_refuses_different_contents_of_the_same_size ()
+{
+	NSString* root = Folder();
+	Write(root, @"file.txt", @"aaaa\n");
+	NSString* path = [root stringByAppendingPathComponent:@"file.txt"];
+	CompareChangeSet* changes = [CompareChangeSet new];
+	NSString* error = nil;
+	OAK_ASSERT([changes writeData:Data(@"bbbb\n") toPath:path mode:0644 error:&error]);
+	[NSFileManager.defaultManager removeItemAtPath:path error:nil];
+	Write(root, @"file.txt", @"cccc\n"); // same size, other contents
+	OAK_ASSERT(![changes undo:&error]);
+	OAK_ASSERT([Read(root, @"file.txt") isEqualToString:@"cccc\n"]);
+}
+
+void test_empty_folders_are_listed_and_copied ()
+{
+	pair_t pair = { Folder(), Folder() };
+	Write(pair.left, @"kept.txt", @"same\n");
+	Write(pair.right, @"kept.txt", @"same\n");
+	[NSFileManager.defaultManager createDirectoryAtPath:[pair.left stringByAppendingPathComponent:@"empty"] withIntermediateDirectories:YES attributes:nil error:nil];
+	CompareNode* root = CompareBuildTree(pair.left, pair.right, Options());
+	CompareNode* empty = [root nodeAtRelativePath:@"empty"];
+	OAK_ASSERT(empty != nil);
+	OAK_ASSERT(empty.isFolder);
+	OAK_ASSERT_EQ((int)empty.status, (int)CompareStatusLeftOnly);
+	OAK_ASSERT_EQ(CompareCountCopies(empty, YES), 1);
+
+	CompareChangeSet* changes = [CompareChangeSet new];
+	NSString* error = nil;
+	OAK_ASSERT(CompareCopyNode(empty, YES, changes, &error));
+	OAK_ASSERT(S_ISDIR(CompareStampAtPath([pair.right stringByAppendingPathComponent:@"empty"]).mode));
+	CompareRestat(empty, Options());
+	OAK_ASSERT_EQ((int)StatusOf(root, @"empty"), (int)CompareStatusIdentical);
+	OAK_ASSERT([changes undo:&error]);
+	OAK_ASSERT(!Exists(pair.right, @"empty"));
+}
+
+void test_empty_folder_versus_file_is_a_type_change ()
+{
+	pair_t pair = { Folder(), Folder() };
+	[NSFileManager.defaultManager createDirectoryAtPath:[pair.left stringByAppendingPathComponent:@"x"] withIntermediateDirectories:YES attributes:nil error:nil];
+	Write(pair.right, @"x", @"a file\n");
+	CompareNode* root = CompareBuildTree(pair.left, pair.right, Options());
+	CompareNode* x = [root nodeAtRelativePath:@"x"];
+	OAK_ASSERT_EQ((int)x.status, (int)CompareStatusTypeChanged);
+	OAK_ASSERT(CompareCopyReplacesType(x, YES));
+	CompareChangeSet* changes = [CompareChangeSet new];
+	NSString* error = nil;
+	OAK_ASSERT(CompareCopyNode(x, YES, changes, &error));
+	OAK_ASSERT(S_ISDIR(CompareStampAtPath([pair.right stringByAppendingPathComponent:@"x"]).mode));
+	OAK_ASSERT([changes undo:&error]);
+	OAK_ASSERT([Read(pair.right, @"x") isEqualToString:@"a file\n"]);
+}

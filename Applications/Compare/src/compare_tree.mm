@@ -168,6 +168,8 @@ static NSArray<NSString*>* WalkEntries (NSString* root, BOOL (^cancelled)())
 		}
 		if(![enumerator.fileAttributes.fileType isEqualToString:NSFileTypeDirectory])
 			[entries addObject:path];
+		else if([NSFileManager.defaultManager contentsOfDirectoryAtPath:[root stringByAppendingPathComponent:path] error:nil].count == 0)
+			[entries addObject:path]; // an empty folder is an entry too
 	}
 	return entries;
 }
@@ -189,7 +191,9 @@ compare_stamp_t CompareStampAtPath (NSString* path)
 	return stamp;
 }
 
-static CompareKind KindForStamp (compare_stamp_t const& stamp, BOOL folderNode)
+// A folder listed as an entry is a submodule or nested repository when it has
+// its own .git; otherwise (an empty folder) it is a folder like any other.
+static CompareKind KindForStamp (compare_stamp_t const& stamp, BOOL folderNode, NSString* path = nil)
 {
 	if(!stamp.exists)
 		return CompareKindNone;
@@ -198,7 +202,11 @@ static CompareKind KindForStamp (compare_stamp_t const& stamp, BOOL folderNode)
 	if(S_ISLNK(stamp.mode))
 		return CompareKindSymlink;
 	if(S_ISDIR(stamp.mode))
-		return folderNode ? CompareKindDirectory : CompareKindOther;
+	{
+		if(folderNode)
+			return CompareKindDirectory;
+		return path && CompareStampAtPath([path stringByAppendingPathComponent:@".git"]).exists ? CompareKindOther : CompareKindDirectory;
+	}
 	return CompareKindOther;
 }
 
@@ -372,7 +380,7 @@ CompareNode* CompareBuildTree (NSString* left, NSString* right, compare_options_
 				if(isLeft ? !child.leftPath : !child.rightPath)
 				{
 					compare_stamp_t stamp = CompareStampAtPath(onDisk);
-					CompareKind kind = leaf ? KindForStamp(stamp, NO) : CompareKindDirectory;
+					CompareKind kind = leaf ? KindForStamp(stamp, NO, onDisk) : CompareKindDirectory;
 					if(isLeft) { child.leftPath  = onDisk; child.leftKind  = kind; child.leftStamp  = stamp; }
 					else       { child.rightPath = onDisk; child.rightKind = kind; child.rightStamp = stamp; }
 				}
@@ -445,7 +453,7 @@ static BOOL Reread (CompareNode* node)
 	{
 		NSString* path = [node pathOnLeft:left];
 		compare_stamp_t stamp = CompareStampAtPath(path);
-		CompareKind kind = KindForStamp(stamp, HasFolderShape(node) || (left ? node.leftKind : node.rightKind) == CompareKindDirectory);
+		CompareKind kind = KindForStamp(stamp, HasFolderShape(node) || (left ? node.leftKind : node.rightKind) == CompareKindDirectory, path);
 		if(left) { node.leftPath  = stamp.exists ? path : nil; node.leftKind  = kind; node.leftStamp  = stamp; }
 		else     { node.rightPath = stamp.exists ? path : nil; node.rightKind = kind; node.rightStamp = stamp; }
 	}

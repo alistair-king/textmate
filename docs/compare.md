@@ -32,7 +32,7 @@ Above the trees:
 
 Comparisons stay current: when a compared file changes on disk, or a new file appears that is not ignored, Compare compares again. Changes inside `.git` and to ignored files do not trigger a comparison. Expanded folders are remembered for each pair of folders.
 
-Files are compared byte for byte; symbolic links by their targets. Submodules and nested repositories are listed but not compared. A change to a file's permissions alone is not shown as a difference.
+Files are compared byte for byte; symbolic links by their targets. Empty folders appear when folders are walked (without Git, or with **Ignored Files**); Git's list of files has no empty folders. Submodules and nested repositories are listed but not compared. A change to a file's permissions alone is not shown as a difference.
 
 ## File tabs
 
@@ -61,7 +61,7 @@ Changes can be copied in either direction.
 
 Compare only writes over what it compared: if a file changed on disk since it was compared, the copy is refused and asks you to compare again. Unsaved changes in TextMate are not part of the comparison: Compare reads and writes the files on disk, and TextMate treats its writes like those of any other program.
 
-Every write replaces the file atomically and keeps its permissions. **Edit → Undo** (⌘Z) reverses the last copy or move to the Trash, and **Redo** (⇧⌘Z) does it again. Undo is refused when a file has changed since.
+Every write replaces the file atomically and keeps its permissions. **Edit → Undo** (⌘Z) reverses the last copy or move to the Trash, and **Redo** (⇧⌘Z) does it again. Undo is refused when a file has changed since, and Redo when anything it would change has changed since the Undo.
 
 ## Development
 

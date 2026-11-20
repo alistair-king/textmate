@@ -1261,7 +1261,21 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 // `block` again), then re-reads the affected entries from disk.
 - (BOOL)performChangesNamed:(NSString*)name affecting:(NSArray<NSString*>*)paths using:(CompareChangeBlock)block
 {
+	return [self performChangesNamed:name affecting:paths using:block expecting:nil];
+}
+
+// `expected`: for a redo, the disk as the undo left it. The original transfer
+// is replayed only when nothing has changed since; otherwise a newer edit
+// would become the redo's baseline and be overwritten.
+- (BOOL)performChangesNamed:(NSString*)name affecting:(NSArray<NSString*>*)paths using:(CompareChangeBlock)block expecting:(CompareDiskSnapshot*)expected
+{
 	_lastProblem = nil;
+	if(NSString* changed = expected.changedPath)
+	{
+		[self reloadAfterChangingRelativePaths:paths];
+		[self presentProblem:[NSString stringWithFormat:@"“%@” has changed since the undo, so the change cannot be redone.", changed.lastPathComponent]];
+		return NO;
+	}
 	CompareChangeSet* changes = [CompareChangeSet new];
 	NSString* problem = nil;
 	BOOL ok = block(changes, &problem);
@@ -1282,13 +1296,15 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 - (void)undoChanges:(CompareChangeSet*)changes named:(NSString*)name affecting:(NSArray<NSString*>*)paths redo:(CompareChangeBlock)block
 {
 	_lastProblem = nil;
+	NSArray<NSString*>* touched = changes.paths;
 	NSString* problem = nil;
 	BOOL ok = [changes undo:&problem];
 	[self reloadAfterChangingRelativePaths:paths];
 	if(ok)
 	{
+		CompareDiskSnapshot* restored = [CompareDiskSnapshot snapshotOfPaths:touched];
 		[self.window.undoManager registerUndoWithTarget:self handler:^(CompareWindowController* target){
-			[target performChangesNamed:name affecting:paths using:block];
+			[target performChangesNamed:name affecting:paths using:block expecting:restored];
 		}];
 		[self.window.undoManager setActionName:name];
 	}

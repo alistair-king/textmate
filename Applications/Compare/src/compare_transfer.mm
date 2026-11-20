@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <vector>
+#include <CommonCrypto/CommonDigest.h>
 
 // ===============
 // = Change sets =
@@ -10,7 +11,7 @@
 
 namespace {
 
-	enum class change_kind { write, trash };
+	enum class change_kind { write, trash, folder };
 
 	struct change_t
 	{
@@ -20,7 +21,39 @@ namespace {
 		NSURL* trashed = nil;            // trash: where the entry went
 		std::vector<NSString*> folders;  // write: parent folders this change created
 		compare_stamp_t after;           // what `path` looked like right after the change
+		NSData* signature = nil;         // its contents (digest, or link target) then
 	};
+
+	// The contents of a file (SHA-256) or a link (its target), to recognise a
+	// path that was replaced by an identical copy (an undo restores a backup
+	// as a new file, so its inode and device differ).
+	NSData* ContentSignature (NSString* path, compare_stamp_t const& stamp)
+	{
+		if(S_ISLNK(stamp.mode))
+			return [[NSFileManager.defaultManager destinationOfSymbolicLinkAtPath:path error:nil] dataUsingEncoding:NSUTF8StringEncoding];
+		if(!S_ISREG(stamp.mode))
+			return nil;
+		NSData* data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:nil];
+		if(!data)
+			return nil;
+		unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+		CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+		return [NSData dataWithBytes:digest length:sizeof(digest)];
+	}
+
+	// The path still looks as the change left it: the same entry, or an
+	// identical one (same type, size, permissions and contents).
+	BOOL Unchanged (change_t const& change)
+	{
+		compare_stamp_t now = CompareStampAtPath(change.path);
+		if(change.kind == change_kind::folder) // its contents change as entries are copied in
+			return now.exists && S_ISDIR(now.mode);
+		if(now == change.after)
+			return YES;
+		if(!now.exists || !change.after.exists || now.mode != change.after.mode || now.size != change.after.size)
+			return NO;
+		return change.signature && [ContentSignature(change.path, now) isEqualToData:change.signature];
+	}
 
 	NSString* DisplayName (NSString* path)
 	{
@@ -147,7 +180,8 @@ namespace {
 	}
 	if(!MoveIntoPlace(temporary, path, error))
 		return NO;
-	change.after = CompareStampAtPath(path);
+	change.after     = CompareStampAtPath(path);
+	change.signature = ContentSignature(path, change.after);
 	_changes.push_back(change);
 	return YES;
 }
@@ -168,9 +202,34 @@ namespace {
 	}
 	if(!MoveIntoPlace(temporary, path, error))
 		return NO;
+	change.after     = CompareStampAtPath(path);
+	change.signature = ContentSignature(path, change.after);
+	_changes.push_back(change);
+	return YES;
+}
+
+- (BOOL)createFolderAtPath:(NSString*)path error:(NSString**)error
+{
+	change_t change = { change_kind::folder, path };
+	if(![self createParentOf:path folders:change.folders error:error])
+		return NO;
+	if(mkdir(path.fileSystemRepresentation, 0777) != 0)
+	{
+		if(error)
+			*error = [NSString stringWithFormat:@"The folder %@ could not be created: %s.", DisplayName(path), strerror(errno)];
+		return NO;
+	}
 	change.after = CompareStampAtPath(path);
 	_changes.push_back(change);
 	return YES;
+}
+
+- (NSArray<NSString*>*)paths
+{
+	NSMutableOrderedSet* paths = [NSMutableOrderedSet orderedSet];
+	for(auto const& change : _changes)
+		[paths addObject:change.path];
+	return paths.array;
 }
 
 - (BOOL)trashItemAtPath:(NSString*)path error:(NSString**)error
@@ -195,6 +254,14 @@ namespace {
 	// Check everything first so a refused undo changes nothing. A path changed
 	// more than once (a folder trashed, then a file written in its place) must
 	// look like its latest change left it.
+	// Parent folders created along the way may stand where an entry was
+	// trashed (a file “config” replaced by the folder for config/settings.json).
+	NSMutableSet<NSString*>* createdFolders = [NSMutableSet set];
+	for(auto const& change : _changes)
+	{
+		for(NSString* folder : change.folders)
+			[createdFolders addObject:folder];
+	}
 	NSMutableSet<NSString*>* checked = [NSMutableSet set];
 	for(auto it = _changes.rbegin(); it != _changes.rend(); ++it)
 	{
@@ -202,7 +269,8 @@ namespace {
 		if([checked containsObject:change.path])
 			continue;
 		[checked addObject:change.path];
-		if(CompareStampAtPath(change.path) != change.after)
+		BOOL replacedByCreatedFolder = change.kind == change_kind::trash && [createdFolders containsObject:change.path] && S_ISDIR(CompareStampAtPath(change.path).mode);
+		if(!replacedByCreatedFolder && !Unchanged(change))
 		{
 			if(error)
 				*error = [NSString stringWithFormat:@"%@ has changed since, so this change cannot be undone.", DisplayName(change.path)];
@@ -225,6 +293,13 @@ namespace {
 			NSError* moveError = nil;
 			if(![NSFileManager.defaultManager moveItemAtURL:it->trashed toURL:[NSURL fileURLWithPath:it->path] error:&moveError])
 				problem = moveError.localizedDescription;
+		}
+		else if(it->kind == change_kind::folder)
+		{
+			if(rmdir(it->path.fileSystemRepresentation) != 0) // only if still empty
+				problem = @(strerror(errno));
+			for(auto folder = it->folders.rbegin(); folder != it->folders.rend(); ++folder)
+				rmdir((*folder).fileSystemRepresentation);
 		}
 		else if(it->backup)
 		{
@@ -254,6 +329,41 @@ namespace {
 }
 @end
 
+// =================
+// = Disk snapshots =
+// =================
+
+@implementation CompareDiskSnapshot
+{
+	std::vector<change_t> _entries; // `after` and `signature` as of the snapshot
+}
+
++ (instancetype)snapshotOfPaths:(NSArray<NSString*>*)paths
+{
+	CompareDiskSnapshot* snapshot = [CompareDiskSnapshot new];
+	for(NSString* path in paths)
+	{
+		change_t entry = { change_kind::write, path };
+		entry.after     = CompareStampAtPath(path);
+		entry.signature = ContentSignature(path, entry.after);
+		snapshot->_entries.push_back(entry);
+	}
+	return snapshot;
+}
+
+- (NSString*)changedPath
+{
+	for(auto const& entry : _entries)
+	{
+		compare_stamp_t now = CompareStampAtPath(entry.path);
+		BOOL bothFolders = now.exists && entry.after.exists && S_ISDIR(now.mode) && S_ISDIR(entry.after.mode);
+		if(!bothFolders && !Unchanged(entry))
+			return entry.path;
+	}
+	return nil;
+}
+@end
+
 // ==================
 // = Tree transfers =
 // ==================
@@ -273,10 +383,29 @@ NSUInteger CompareCountCopies (CompareNode* node, BOOL toRight)
 	NSUInteger count = 0;
 	for(CompareNode* child in node.children)
 		count += CompareCountCopies(child, toRight);
+	// A folder with nothing to copy inside (empty) is still created.
+	CompareKind destination = toRight ? node.rightKind : node.leftKind;
+	if(count == 0 && source == CompareKindDirectory && destination != CompareKindDirectory)
+		count = 1;
 	return count;
 }
 
+static BOOL ReplacesTypeAtOrBelow (CompareNode* node, BOOL toRight);
+
+// Also a file where a folder above the entry is needed on the destination:
+// copying the entry moves that file to the Trash.
 BOOL CompareCopyReplacesType (CompareNode* node, BOOL toRight)
+{
+	for(CompareNode* ancestor = node.parent; ancestor.parent; ancestor = ancestor.parent)
+	{
+		CompareKind destination = toRight ? ancestor.rightKind : ancestor.leftKind;
+		if(destination != CompareKindNone && destination != CompareKindDirectory)
+			return YES;
+	}
+	return ReplacesTypeAtOrBelow(node, toRight);
+}
+
+static BOOL ReplacesTypeAtOrBelow (CompareNode* node, BOOL toRight)
 {
 	CompareKind source      = toRight ? node.leftKind : node.rightKind;
 	CompareKind destination = toRight ? node.rightKind : node.leftKind;
@@ -286,7 +415,7 @@ BOOL CompareCopyReplacesType (CompareNode* node, BOOL toRight)
 	{
 		for(CompareNode* child in node.children)
 		{
-			if(CompareCopyReplacesType(child, toRight))
+			if(ReplacesTypeAtOrBelow(child, toRight))
 				return YES;
 		}
 	}
@@ -324,6 +453,10 @@ static BOOL CopyNode (CompareNode* node, BOOL toRight, CompareChangeSet* changes
 	if(source == CompareKindDirectory)
 	{
 		if(!ClearForCopy(node, toRight, YES, changes, error))
+			return NO;
+		// Create it (empty folders are entries too); children fill it.
+		NSString* folder = [node pathOnLeft:!toRight];
+		if(!CompareStampAtPath(folder).exists && ![changes createFolderAtPath:folder error:error])
 			return NO;
 		for(CompareNode* child in node.children)
 		{

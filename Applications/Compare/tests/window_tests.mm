@@ -653,6 +653,38 @@ static void TestTransfers (compare_fixture_t const& fixture)
 	SelectFilter(controller, 0);
 	[controller selectTabAtIndex:1];
 
+	// Redo replays a copy only over the state Undo restored: an edit made
+	// after the undo is not overwritten, even once Compare has refreshed.
+	[controller selectTabAtIndex:0];
+	SelectFilter(controller, 3);
+	SelectRow(left, @"same-size.txt");
+	[controller refresh:nil];
+	CHECK(WaitUntil(^{ return Loaded(controller); }));
+	SelectRow(left, @"same-size.txt");
+	NSString* sameSize = [fixture.right stringByAppendingPathComponent:@"same-size.txt"];
+	NSString* beforeCopy = Contents(fixture.right, @"same-size.txt");
+	[controller copyToRight:nil];
+	CHECK(controller.lastProblem == nil);
+	[undo undo];
+	CHECK([Contents(fixture.right, @"same-size.txt") isEqualToString:beforeCopy]);
+	[@"edited after the undo\n" writeToFile:sameSize atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	[controller refresh:nil];
+	CHECK(WaitUntil(^{ return Loaded(controller); }));
+	CHECK(undo.canRedo);
+	[undo redo];
+	CHECK([controller.lastProblem containsString:@"has changed since the undo"]);
+	CHECK([Contents(fixture.right, @"same-size.txt") isEqualToString:@"edited after the undo\n"]);
+	// Untouched, redo still works.
+	SelectRow(left, @"grown.txt");
+	[controller copyToRight:nil];
+	[undo undo];
+	[undo redo];
+	CHECK(controller.lastProblem == nil);
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:@"short\n"]);
+	[undo undo];
+	SelectFilter(controller, 0);
+	[controller selectTabAtIndex:1];
+
 	// A file tab refuses to copy over a file edited since it was shown.
 	[[Contents(fixture.right, @"multi.txt") stringByAppendingString:@"appended\n"] writeToFile:[fixture.right stringByAppendingPathComponent:@"multi.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
 	[controller copyToRight:nil];

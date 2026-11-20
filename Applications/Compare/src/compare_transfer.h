@@ -8,7 +8,8 @@
 // Reversible file changes. Every write is atomic (a temporary file renamed
 // into place) and keeps what it replaced in a private backup folder, so
 // -undo: can restore it. Undo refuses to touch anything that has changed
-// since this change set wrote it.
+// since this change set wrote it; a path replaced by an identical copy (as an
+// undo of a later change restores it) counts as unchanged.
 @interface CompareChangeSet : NSObject
 @property (nonatomic, readonly) NSUInteger count;
 
@@ -19,8 +20,20 @@
 // permissions; a new one gets `mode`.
 - (BOOL)writeData:(NSData*)data toPath:(NSString*)path mode:(mode_t)mode error:(NSString**)error;
 - (BOOL)trashItemAtPath:(NSString*)path error:(NSString**)error;
+// Creates an empty folder (and missing parents); undo removes it if still empty.
+- (BOOL)createFolderAtPath:(NSString*)path error:(NSString**)error;
+
+// Every path this change set changed, in order.
+@property (nonatomic, readonly) NSArray<NSString*>* paths;
 
 - (BOOL)undo:(NSString**)error;
+@end
+
+// How some paths look on disk at one moment, to tell later whether anything
+// has changed them (an identical copy counts as unchanged, as for undo).
+@interface CompareDiskSnapshot : NSObject
++ (instancetype)snapshotOfPaths:(NSArray<NSString*>*)paths;
+@property (nonatomic, readonly) NSString* changedPath; // the first that changed, nil when none
 @end
 
 // =====================
