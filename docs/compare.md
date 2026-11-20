@@ -59,6 +59,12 @@ Each side is shown as TextMate's editor would show that file: the file type it d
 
 **File → Close Tab** (⌘W) closes the selected file tab; on the Files tab it closes the window. The Files tab cannot be closed and has no close button. **Window → Select Next Tab** (⇧⌘]) and **Select Previous Tab** (⇧⌘[) move between tabs. Tabs for files with the same name show their parent folder.
 
+## Editing in TextMate
+
+**File → Edit in TextMate** (⌘E) opens files in TextMate for editing. In the Files tab it opens the selected files on the side whose tree has focus (the left one unless you clicked the right). Each tree's context menu has the same command for its own side. In a file tab, the command is titled **Edit Left in TextMate** or **Edit Right in TextMate** after the focused side, and opens that side's file at the current change. Folders, and entries missing on that side, are not opened. Compare uses the TextMate it is embedded in, so a development build opens files in the development TextMate.
+
+Compare notices the saved file changing on disk and compares again, keeping the file tab on the same change. Unsaved edits in TextMate are not compared.
+
 ## Settings
 
 **Compare → Settings…** (⌘,) opens Compare's settings.
@@ -99,7 +105,7 @@ Tests (see CLAUDE.md for running them):
 
 | Suite | Covers |
 |---|---|
-| `compare` | URL encoding, hunk model |
+| `compare` | URL encoding (Compare's and TextMate's `txmt://open`), hunk model |
 | `compare-tree` | Listing and classification against a repository with a linked worktree, `check-ignore`, branch labels, ignore patterns |
 | `compare-syntax` | Highlighting with a test bundle: file type, theme colors and font traits, parser state across lines, UTF-16 ranges, dark theme, files without a grammar, size limit |
 | `compare-transfer` | Applying changes, change sets and undo, tree copies, type changes, refused copies, the Trash |

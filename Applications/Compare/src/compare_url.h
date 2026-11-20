@@ -55,6 +55,23 @@ namespace compare {
 		return components.URL;
 	}
 
+	// txmt://open?url=file://<abs path>[&line=<1-based>]: TextMate opens the
+	// file, at the line when given. Its handler splits on & and = before
+	// decoding, so the value is encoded like ours.
+	inline NSURL* textmate_url (NSString* path, NSInteger line = 0)
+	{
+		if(!is_valid_root(path))
+			return nil;
+		NSMutableString* query = [NSMutableString stringWithFormat:@"url=%@", encode_query_value([@"file://" stringByAppendingString:path])];
+		if(line > 0)
+			[query appendFormat:@"&line=%ld", (long)line];
+		NSURLComponents* components = [NSURLComponents new];
+		components.scheme = @"txmt";
+		components.host   = @"open";
+		components.percentEncodedQuery = query;
+		return components.URL;
+	}
+
 	struct request_t
 	{
 		NSString* left  = nil;

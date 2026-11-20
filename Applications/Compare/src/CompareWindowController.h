@@ -7,6 +7,9 @@
 @property (class, nonatomic, copy) NSString* gitExecutable;
 // NO skips confirmation alerts and shows problems only in `lastProblem` (tests).
 @property (class, nonatomic) BOOL confirmsChanges;
+// Opens txmt:// URLs (Edit in TextMate); tests replace it. By default they go
+// to the TextMate.app this Compare is embedded in, or else an installed one.
+@property (class, nonatomic, copy) void (^editHandler)(NSArray<NSURL*>* urls);
 @property (nonatomic, readonly) NSString* lastProblem;
 
 - (instancetype)initWithLeftPath:(NSString*)left rightPath:(NSString*)right focus:(NSString*)focus;

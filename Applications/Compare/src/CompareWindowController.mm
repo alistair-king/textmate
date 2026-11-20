@@ -5,6 +5,7 @@
 #import "compare_transfer.h"
 #import "compare_watch.h"
 #import "CompareSettings.h"
+#import "compare_url.h"
 #include <stdlib.h>
 #import <FileBrowser/FileItem.h>
 #import <FileBrowser/FileBrowserOutlineView.h>
@@ -297,6 +298,30 @@ static BOOL ConfirmsChanges = YES;
 + (void)setGitExecutable:(NSString*)git { GitExecutable = [git copy]; }
 + (BOOL)confirmsChanges                 { return ConfirmsChanges; }
 + (void)setConfirmsChanges:(BOOL)flag   { ConfirmsChanges = flag; }
+
+static void (^EditHandler)(NSArray<NSURL*>*) = nil;
++ (void (^)(NSArray<NSURL*>*))editHandler       { return EditHandler; }
++ (void)setEditHandler:(void (^)(NSArray<NSURL*>*))handler { EditHandler = [handler copy]; }
+
+// The TextMate to edit in: the app this Compare is embedded in
+// (TextMate.app/Contents/Helpers/Compare.app), else an installed one,
+// preferring the development build.
+static NSURL* TextMateApplicationURL ()
+{
+	NSURL* helpers = NSBundle.mainBundle.bundleURL.URLByDeletingLastPathComponent;
+	if([helpers.lastPathComponent isEqualToString:@"Helpers"])
+	{
+		NSURL* app = helpers.URLByDeletingLastPathComponent.URLByDeletingLastPathComponent;
+		if([app.pathExtension isEqualToString:@"app"])
+			return app;
+	}
+	for(NSString* identifier in @[ @"com.macromates.TextMate-dev", @"com.macromates.TextMate" ])
+	{
+		if(NSURL* app = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:identifier])
+			return app;
+	}
+	return nil;
+}
 
 - (instancetype)initWithLeftPath:(NSString*)left rightPath:(NSString*)right focus:(NSString*)focus
 {
@@ -1330,6 +1355,79 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 	return options;
 }
 
+// =====================
+// = Edit in TextMate =
+// =====================
+
+// The side File → Edit in TextMate opens: the focused tree or text view, else
+// the left (the project's own worktree).
+- (BOOL)editsLeftSide
+{
+	NSResponder* responder = self.window.firstResponder;
+	if(CompareDiffView* diff = self.selectedDiffView)
+		return responder != diff.rightTextView;
+	return responder != _sides[1].outlineView;
+}
+
+// What Edit in TextMate opens: files and links on that side (TextMate opens
+// a link's target), at the current change's line in a file tab.
+- (NSArray<NSURL*>*)editURLsForNodes:(NSArray<CompareNode*>*)nodes left:(BOOL)left line:(NSInteger)line
+{
+	NSMutableArray<NSURL*>* urls = [NSMutableArray array];
+	for(CompareNode* node in nodes)
+	{
+		CompareKind kind = left ? node.leftKind : node.rightKind;
+		NSString* path   = left ? node.leftPath : node.rightPath;
+		if((kind == CompareKindFile || kind == CompareKindSymlink) && path)
+		{
+			if(NSURL* url = compare::textmate_url(path, line))
+				[urls addObject:url];
+		}
+	}
+	return urls;
+}
+
+- (NSArray<NSURL*>*)editURLs
+{
+	BOOL left = self.editsLeftSide;
+	if(CompareDiffView* diff = self.selectedDiffView)
+		return diff.node ? [self editURLsForNodes:@[ diff.node ] left:left line:[diff editingLineOnLeft:left]] : @[ ];
+	NSOutlineView* outlineView = _sides[0].outlineView;
+	return [self editURLsForNodes:[self topmostNodesInRows:outlineView.selectedRowIndexes outlineView:outlineView] left:left line:0];
+}
+
+- (IBAction)editInTextMate:(id)sender
+{
+	[self openInTextMate:self.editURLs];
+}
+
+- (void)editClickedEntries:(NSMenuItem*)sender
+{
+	[self openInTextMate:sender.representedObject];
+}
+
+- (void)openInTextMate:(NSArray<NSURL*>*)urls
+{
+	if(!urls.count)
+		return;
+	if(EditHandler)
+		return EditHandler(urls);
+	NSURL* app = TextMateApplicationURL();
+	if(!app)
+		return [self presentProblem:@"TextMate could not be found."];
+	NSWorkspaceOpenConfiguration* configuration = [NSWorkspaceOpenConfiguration configuration];
+	configuration.activates = YES;
+	__weak CompareWindowController* weakSelf = self;
+	[NSWorkspace.sharedWorkspace openURLs:urls withApplicationAtURL:app configuration:configuration completionHandler:^(NSRunningApplication* application, NSError* error){
+		if(error)
+		{
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[weakSelf presentProblem:[NSString stringWithFormat:@"TextMate could not open the file: %@", error.localizedDescription]];
+			});
+		}
+	}];
+}
+
 - (void)presentProblem:(NSString*)problem
 {
 	_lastProblem = [problem copy];
@@ -1586,6 +1684,12 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 		item.state = _includeIgnored ? NSControlStateValueOn : NSControlStateValueOff;
 	if(item.action == @selector(expandAllFolders:) || item.action == @selector(collapseAllFolders:))
 		return _root != nil;
+	if(item.action == @selector(editInTextMate:))
+	{
+		// In a file tab, say which side opens.
+		item.title = self.selectedDiffView ? (self.editsLeftSide ? @"Edit Left in TextMate" : @"Edit Right in TextMate") : @"Edit in TextMate";
+		return self.editURLs.count > 0;
+	}
 	if(item.action == @selector(openSelectedFiles:))
 		return _selectedTab == 0 && _sides[0].outlineView.numberOfSelectedRows > 0;
 	if(item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))
@@ -1706,6 +1810,10 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 		trash.target = self;
 		trash.representedObject = @{ @"left": @(side.left), @"paths": [nodes valueForKey:@"relativePath"] };
 		[menu addItem:NSMenuItem.separatorItem];
+		NSArray<NSURL*>* edits = [self editURLsForNodes:nodes left:side.left line:0];
+		NSMenuItem* edit = [menu addItemWithTitle:@"Edit in TextMate" action:edits.count ? @selector(editClickedEntries:) : NULL keyEquivalent:@""];
+		edit.target = self;
+		edit.representedObject = edits;
 		NSMenuItem* reveal = [menu addItemWithTitle:@"Reveal in Finder" action:path ? @selector(revealInFinder:) : NULL keyEquivalent:@""];
 		reveal.target = self;
 		reveal.representedObject = path;

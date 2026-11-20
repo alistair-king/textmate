@@ -790,6 +790,14 @@ static CGFloat const kStripWidth = 34;
 	return _data[left ? 0 : 1];
 }
 
+- (NSInteger)editingLineOnLeft:(BOOL)left
+{
+	if(_hunks.empty())
+		return 1;
+	auto const& hunk = _hunks[std::clamp<NSInteger>(_currentChange, 0, _hunks.size() - 1)];
+	return std::max<long>(left ? hunk.left_start : hunk.right_start, 0) + 1;
+}
+
 - (NSData*)contentsWithChange:(NSInteger)change toRight:(BOOL)toRight
 {
 	if(change < 0 || change >= (NSInteger)_hunks.size() || !_data[0] || !_data[1])

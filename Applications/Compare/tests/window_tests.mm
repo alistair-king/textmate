@@ -27,6 +27,8 @@
 - (NSOutlineView*)outlineViewForLeftSide:(BOOL)left;
 - (void)setFilter:(NSInteger)filter;
 - (IBAction)expandAllFolders:(id)sender;
+- (IBAction)editInTextMate:(id)sender;
+- (void)menuNeedsUpdate:(NSMenu*)menu;
 - (IBAction)collapseAllFolders:(id)sender;
 - (void)takeDisplayModeFrom:(NSMenuItem*)sender;
 - (void)toggleIgnoredFilesFromMenu:(id)sender;
@@ -1075,6 +1077,84 @@ static void TestExpandAndCollapseAll (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+// The file a txmt://open URL names, and its line (0 without one).
+static NSString* EditedPath (NSURL* url, NSInteger* line = nullptr)
+{
+	NSMutableDictionary* parameters = [NSMutableDictionary dictionary];
+	for(NSString* part in [url.query componentsSeparatedByString:@"&"])
+	{
+		NSArray* keyValue = [part componentsSeparatedByString:@"="];
+		if(keyValue.count == 2)
+			parameters[keyValue[0]] = [keyValue[1] stringByRemovingPercentEncoding];
+	}
+	if(line)
+		*line = [parameters[@"line"] integerValue];
+	return [parameters[@"url"] hasPrefix:@"file://"] ? [parameters[@"url"] substringFromIndex:7] : nil;
+}
+
+// File → Edit in TextMate (⌘E) and the trees' context menus open files in
+// TextMate: the focused side's, at the current change in a file tab.
+static void TestEditInTextMate (compare_fixture_t const& fixture)
+{
+	NSMutableArray<NSURL*>* opened = [NSMutableArray array];
+	CompareWindowController.editHandler = ^(NSArray<NSURL*>* urls){ [opened addObjectsFromArray:urls]; };
+	CompareWindowController* controller = Open(fixture, nil);
+	[controller.window makeKeyAndOrderFront:nil];
+	NSOutlineView* left  = [controller outlineViewForLeftSide:YES];
+	NSOutlineView* right = [controller outlineViewForLeftSide:NO];
+	NSMenuItem* edit = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(editInTextMate:) keyEquivalent:@""];
+
+	// The selected file, on the left by default.
+	SelectRow(left, @"grown.txt");
+	CHECK([controller validateMenuItem:edit] && [edit.title isEqualToString:@"Edit in TextMate"]);
+	[controller editInTextMate:nil];
+	CHECK(opened.count == 1 && [EditedPath(opened.lastObject) isEqualToString:[fixture.left stringByAppendingPathComponent:@"grown.txt"]]);
+
+	// The focused tree's side.
+	[controller.window makeFirstResponder:right];
+	[opened removeAllObjects];
+	[controller editInTextMate:nil];
+	CHECK(opened.count == 1 && [EditedPath(opened.lastObject) isEqualToString:[fixture.right stringByAppendingPathComponent:@"grown.txt"]]);
+
+	// Nothing to edit: a file missing on that side, or a folder.
+	SelectRow(left, @"gone.txt"); // only on the left
+	CHECK(![controller validateMenuItem:edit]);
+	[controller.window makeFirstResponder:left];
+	CHECK([controller validateMenuItem:edit]);
+	SelectRow(left, @"deep");
+	CHECK(![controller validateMenuItem:edit]);
+
+	// Several files at once, and the context menu of the clicked side.
+	NSMutableIndexSet* rows = [NSMutableIndexSet indexSetWithIndex:RowFor(left, @"grown.txt")];
+	[rows addIndex:RowFor(left, @"multi.txt")];
+	[left selectRowIndexes:rows byExtendingSelection:NO];
+	[controller menuNeedsUpdate:right.menu];
+	NSMenuItem* contextEdit = [right.menu itemWithTitle:@"Edit in TextMate"];
+	CHECK(contextEdit.action != NULL);
+	[opened removeAllObjects];
+	[NSApp sendAction:contextEdit.action to:contextEdit.target from:contextEdit];
+	CHECK(opened.count == 2 && [EditedPath(opened.firstObject) hasPrefix:fixture.right] && [EditedPath(opened.lastObject) hasSuffix:@"/multi.txt"]);
+
+	// A file tab opens at the current change's line (lines 3 and 16 differ).
+	CompareDiffView* diff = Show(controller, @"multi.txt");
+	CHECK(WaitUntil(^{ return (BOOL)(!diff.loading && diff.changeCount == 2); }));
+	[controller.window makeFirstResponder:diff.leftTextView];
+	CHECK([controller validateMenuItem:edit] && [edit.title isEqualToString:@"Edit Left in TextMate"]);
+	[opened removeAllObjects];
+	[controller editInTextMate:nil];
+	NSInteger line = 0;
+	CHECK(opened.count == 1 && [EditedPath(opened.lastObject, &line) isEqualToString:[fixture.left stringByAppendingPathComponent:@"multi.txt"]] && line == 3);
+	[NSApp sendAction:@selector(nextChange:) to:controller from:nil];
+	[controller.window makeFirstResponder:diff.rightTextView];
+	CHECK([controller validateMenuItem:edit] && [edit.title isEqualToString:@"Edit Right in TextMate"]);
+	[opened removeAllObjects];
+	[controller editInTextMate:nil];
+	CHECK(opened.count == 1 && [EditedPath(opened.lastObject, &line) isEqualToString:[fixture.right stringByAppendingPathComponent:@"multi.txt"]] && line == 16);
+
+	CompareWindowController.editHandler = nil;
+	[controller close];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -1116,6 +1196,7 @@ int main (int argc, char const* argv[])
 			TestViewMenuShortcuts();
 			TestDisplayModeAcrossWindows(fixture);
 			TestExpandAndCollapseAll(fixture);
+			TestEditInTextMate(fixture);
 
 			// Transfers change files: use a fixture of their own.
 			compare_fixture_t writable = compare_fixture::create(@COMPARE_TEST_GIT);

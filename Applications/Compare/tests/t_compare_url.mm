@@ -59,3 +59,35 @@ void test_parses_unencoded_plus_literally ()
 	OAK_ASSERT(compare::parse([NSURL URLWithString:@"textmate-compare://compare/?left=%2Fa+b&right=%2Fc"], &request));
 	OAK_ASSERT([request.left isEqualToString:@"/a+b"]);
 }
+
+// Decodes a txmt://open URL as TextMate's handler does: split on & and =,
+// then percent-decode each part.
+static NSDictionary<NSString*, NSString*>* TextMateParameters (NSURL* url)
+{
+	NSMutableDictionary* parameters = [NSMutableDictionary dictionary];
+	for(NSString* part in [url.query componentsSeparatedByString:@"&"])
+	{
+		NSArray* keyValue = [part componentsSeparatedByString:@"="];
+		if(keyValue.count == 2)
+			parameters[[keyValue[0] stringByRemovingPercentEncoding]] = [keyValue[1] stringByRemovingPercentEncoding];
+	}
+	return parameters;
+}
+
+void test_textmate_url_opens_file_at_line ()
+{
+	NSURL* url = compare::textmate_url(@"/Users/me/develop/src/main.mm", 42);
+	OAK_ASSERT([url.scheme isEqualToString:@"txmt"] && [url.host isEqualToString:@"open"]);
+	NSDictionary* parameters = TextMateParameters(url);
+	OAK_ASSERT([parameters[@"url"] isEqualToString:@"file:///Users/me/develop/src/main.mm"]);
+	OAK_ASSERT([parameters[@"line"] isEqualToString:@"42"]);
+	OAK_ASSERT(TextMateParameters(compare::textmate_url(@"/tmp/a.txt"))[@"line"] == nil);
+}
+
+void test_textmate_url_encodes_separators ()
+{
+	NSString* path = @"/tmp/a&b=c+d#e;f%20g?h/space é.txt";
+	NSDictionary* parameters = TextMateParameters(compare::textmate_url(path, 1));
+	OAK_ASSERT([parameters[@"url"] isEqualToString:[@"file://" stringByAppendingString:path]]);
+	OAK_ASSERT(compare::textmate_url(@"relative/path") == nil);
+}

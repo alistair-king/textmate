@@ -140,6 +140,7 @@ static BOOL IsDirectory (NSString* path)
 	NSMenuItem* file = [NSMenuItem new];
 	file.submenu = [[NSMenu alloc] initWithTitle:@"File"];
 	[file.submenu addItemWithTitle:@"Open File Comparison" action:@selector(openSelectedFiles:) keyEquivalent:@"o"];
+	[file.submenu addItemWithTitle:@"Edit in TextMate" action:@selector(editInTextMate:) keyEquivalent:@"e"];
 	[file.submenu addItemWithTitle:@"Compare Again" action:@selector(refresh:) keyEquivalent:@"r"];
 	[file.submenu addItem:NSMenuItem.separatorItem];
 	[file.submenu addItemWithTitle:@"Close Tab" action:@selector(closeTab:) keyEquivalent:@"w"];

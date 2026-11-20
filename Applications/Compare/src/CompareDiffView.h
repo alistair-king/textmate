@@ -21,6 +21,9 @@
 @property (nonatomic, weak) NSWindow* hostWindow;
 @property (nonatomic, readonly) NSInteger changeCount;   // hunks in the shown file
 @property (nonatomic, readonly) NSInteger currentChange; // -1 before the first
+// The 1-based line to edit one side at: where the current change (or the
+// first, before any) starts on that side; 1 without changes.
+- (NSInteger)editingLineOnLeft:(BOOL)left;
 
 - (IBAction)nextChange:(id)sender;
 - (IBAction)previousChange:(id)sender;
