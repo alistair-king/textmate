@@ -53,5 +53,7 @@ typedef NS_ENUM(NSInteger, OakTabStatus) {
 // Return an empty string for "no tooltip"; the tab then falls back to its path, which is empty too.
 - (NSString*)tabBarView:(OakTabBarView*)aTabBarView toolTipForIndex:(NSUInteger)anIndex;
 - (OakTabStatus)tabBarView:(OakTabBarView*)bar statusForIndex:(NSUInteger)index;
+// NO hides the tab's close button and ignores close clicks; tabs are closable by default.
+- (BOOL)tabBarView:(OakTabBarView*)aTabBarView isClosableAtIndex:(NSUInteger)anIndex;
 - (NSString*)tabBarView:(OakTabBarView*)bar statusDescriptionForIndex:(NSUInteger)index;
 @end

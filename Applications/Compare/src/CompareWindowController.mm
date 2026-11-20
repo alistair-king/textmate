@@ -1520,6 +1520,11 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 	return NO;
 }
 
+- (BOOL)tabBarView:(OakTabBarView*)aTabBarView isClosableAtIndex:(NSUInteger)index
+{
+	return index != 0; // the Files tab stays
+}
+
 - (BOOL)tabBarView:(OakTabBarView*)aTabBarView shouldSelectIndex:(NSUInteger)index
 {
 	[self selectTabAtIndex:index];

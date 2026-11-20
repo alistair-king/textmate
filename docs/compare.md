@@ -47,7 +47,7 @@ Both versions are shown side by side with line numbers. Rows line up: a line onl
 
 Binary files, files over 8 MB, folders, symbolic links (their targets are described instead), submodules and entries that are a file on one side and a folder on the other are not shown as text. Lines are shown in the user's fixed-pitch font without syntax highlighting.
 
-**File → Close Tab** (⌘W) closes the selected file tab; on the Files tab it closes the window. The Files tab cannot be closed. **Window → Select Next Tab** (⇧⌘]) and **Select Previous Tab** (⇧⌘[) move between tabs. Tabs for files with the same name show their parent folder.
+**File → Close Tab** (⌘W) closes the selected file tab; on the Files tab it closes the window. The Files tab cannot be closed and has no close button. **Window → Select Next Tab** (⇧⌘]) and **Select Previous Tab** (⇧⌘[) move between tabs. Tabs for files with the same name show their parent folder.
 
 ## Copying changes
 

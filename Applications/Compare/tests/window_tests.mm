@@ -31,6 +31,7 @@
 - (void)openSelectedFiles:(id)sender;
 - (void)closeTab:(id)sender;
 - (NSString*)tabBarView:(id)tabBar titleForIndex:(NSUInteger)index;
+- (BOOL)tabBarView:(id)tabBar isClosableAtIndex:(NSUInteger)index;
 - (void)trashClickedEntries:(NSMenuItem*)sender;
 - (void)searchChanged:(NSSearchField*)sender;
 - (void)toggleIgnoredFiles:(NSButton*)sender;
@@ -441,6 +442,26 @@ static void TestFileTabs (compare_fixture_t const& fixture)
 	[controller selectTabAtIndex:4];
 	CHECK([controller.selectedDiffView.message isEqualToString:@"This file is no longer in either folder."]);
 	[@"new on the right\n" writeToFile:[fixture.right stringByAppendingPathComponent:@"newdir/x.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+
+	// The Files tab has no close button; file tabs do.
+	CHECK(![controller tabBarView:nil isClosableAtIndex:0] && [controller tabBarView:nil isClosableAtIndex:1]);
+	{
+		NSView* tabBar = [controller valueForKey:@"_tabBar"];
+		[tabBar layoutSubtreeIfNeeded];
+		int checked = 0;
+		for(NSView* tabView in tabBar.subviews)
+		{
+			if(![NSStringFromClass(tabView.class) isEqualToString:@"OakTabView"] || ![tabView valueForKey:@"tabItem"])
+				continue;
+			[tabView setValue:@YES forKey:@"mouseInside"]; // as when the pointer is over the tab
+			BOOL files = [[tabView valueForKeyPath:@"tabItem.title"] isEqualToString:@"Files"];
+			NSView* closeButton = [tabView valueForKey:@"closeButton"];
+			CHECK(files ? closeButton.alphaValue == 0 : closeButton.alphaValue == 1);
+			[tabView setValue:@NO forKey:@"mouseInside"];
+			++checked;
+		}
+		CHECK(checked >= 2);
+	}
 
 	// Closing tabs: the tree tab cannot be closed; Close Tab on it closes nothing else.
 	[controller closeTabAtIndex:0];
