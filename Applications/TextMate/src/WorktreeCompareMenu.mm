@@ -2,7 +2,6 @@
 #import "CommandPaletteProjects.h"
 #import "../../Compare/src/compare_url.h"
 #import "../../Compare/src/compare_watch.h"
-#import <DocumentWindow/DocumentWindowController.h>
 #import <scm/drivers/api.h>
 #import <oak/oak.h>
 
@@ -61,10 +60,21 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 	return self;
 }
 
+// The main window's project. Looked up by name so the menu (and its test)
+// does not depend on the DocumentWindow framework.
 - (NSString*)mainProjectPath
 {
+	if(_projectPathProvider)
+		return _projectPathProvider();
+	static Class documentWindowController = NSClassFromString(@"DocumentWindowController");
 	id delegate = NSApp.mainWindow.delegate;
-	return [delegate isKindOfClass:DocumentWindowController.class] ? [(DocumentWindowController*)delegate projectPath] : nil;
+	return documentWindowController && [delegate isKindOfClass:documentWindowController] ? [delegate valueForKey:@"projectPath"] : nil;
+}
+
+- (NSArray<NSString*>*)otherWorktreePaths
+{
+	NSString* projectPath = self.mainProjectPath;
+	return projectPath ? [_entries[projectPath][@"others"] valueForKey:@"path"] : nil;
 }
 
 - (void)setMenuItem:(NSMenuItem*)menuItem
@@ -102,9 +112,15 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 	if([_pending containsObject:projectPath])
 		return;
 	[_pending addObject:projectPath];
+	NSString* configuredGit = _gitExecutable;
 	dispatch_async(_queue, ^{
-		std::string git = scm::find_executable("git", "TM_GIT");
-		NSDictionary* worktrees = CommandPaletteWorktrees(@[ projectPath ], git == NULL_STR ? nil : @(git.c_str()));
+		NSString* gitPath = configuredGit;
+		if(!gitPath)
+		{
+			std::string git = scm::find_executable("git", "TM_GIT");
+			gitPath = git == NULL_STR ? nil : @(git.c_str());
+		}
+		NSDictionary* worktrees = CommandPaletteWorktrees(@[ projectPath ], gitPath);
 		NSDictionary* entry = WorktreeEntry(projectPath, worktrees);
 		dispatch_async(dispatch_get_main_queue(), ^{
 			[_pending removeObject:projectPath];
@@ -189,6 +205,12 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 	NSURL* url = compare::url(request[@"left"], request[@"right"], request[@"focus"]);
 	if(!url)
 		return;
+
+	if(_openHandler)
+	{
+		_openHandler(url);
+		return;
+	}
 
 	NSURL* app = [NSBundle.mainBundle.bundleURL URLByAppendingPathComponent:@"Contents/Helpers/Compare.app" isDirectory:YES];
 	NSWorkspaceOpenConfiguration* configuration = [NSWorkspaceOpenConfiguration configuration];

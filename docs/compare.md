@@ -84,6 +84,7 @@ Tests (see CLAUDE.md for running them):
 | `compare-window` | The real window: alignment, tints, sync, filters, focus, tabs, transfers with undo, live refresh, search, remembered expansion |
 | `compare-launch` | The signed app binary starts (library validation) |
 | `tm-compare-help`, `tm-compare-rejects-missing-folder` | The launcher |
+| `worktree-compare-menu` | TextMate's **Compare To** menu: hidden without other worktrees, entries and the URL they open, following worktrees added or removed by Git |
 
 `compare-window` needs a GUI session. It also checks real window pixels (the same row's tint on both sides, a changed line's tint), which catches views covered by others; snapshots of the view hierarchy do not. With `COMPARE_SNAPSHOT_DIR` set it writes light and dark PNG snapshots for looking at.
 

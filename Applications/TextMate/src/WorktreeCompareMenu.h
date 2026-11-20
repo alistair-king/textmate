@@ -13,4 +13,10 @@
 // Cheap enough to call from -applicationDidUpdate:.
 - (void)updateMenuItemVisibility;
 - (IBAction)compareToWorktree:(id)sender;
+
+// For tests (tests/worktree_compare_menu.mm); nil keeps TextMate's behaviour.
+@property (nonatomic, copy) NSString* (^projectPathProvider)(void); // default: the main window's project
+@property (nonatomic, copy) NSString* gitExecutable;                // default: found like TextMate's SCM support
+@property (nonatomic, copy) void (^openHandler)(NSURL* url);       // default: opens Compare.app with the URL
+@property (nonatomic, readonly) NSArray<NSString*>* otherWorktreePaths; // the current project's, as cached
 @end

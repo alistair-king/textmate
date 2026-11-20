@@ -136,6 +136,15 @@ if(BUILD_TESTING)
     target_link_libraries(command-palette-projects PRIVATE "-framework Foundation")
     add_test(NAME command-palette-projects
       COMMAND command-palette-projects ${TEXTMATE_TEST_GIT_EXECUTABLE})
+
+    # Text → Compare To: visibility, entries, the URL opened, and following
+    # worktrees added or removed by Git.
+    add_executable(worktree-compare-menu tests/worktree_compare_menu.mm
+      src/WorktreeCompareMenu.mm src/CommandPaletteProjects.mm)
+    target_link_libraries(worktree-compare-menu PRIVATE scm ${TEXTMATE_DEBUG_LIBS} "-framework Cocoa")
+    add_test(NAME worktree-compare-menu
+      COMMAND worktree-compare-menu ${TEXTMATE_TEST_GIT_EXECUTABLE})
+    set_tests_properties(worktree-compare-menu PROPERTIES TIMEOUT 120)
   endif()
 endif()
 
