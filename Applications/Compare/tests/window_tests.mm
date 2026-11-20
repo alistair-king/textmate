@@ -323,6 +323,21 @@ static void TestFileTabs (compare_fixture_t const& fixture)
 		NSColor* rightColor = PixelAt(rendered, right, rightRow);
 		CHECK(SameColor(leftColor, rightColor));
 		CHECK(!White(leftColor));
+
+		// A placeholder (left-only.txt has no file on the right) is hatched:
+		// along the row there are stripe pixels and pixels between stripes.
+		NSRect placeholder = [right rectOfRow:RowFor(right, @"left-only.txt")];
+		NSColor* first = PixelAt(rendered, right, NSMakeRect(NSMinX(placeholder) + 2, NSMidY(placeholder), 0, 0));
+		BOOL varies = NO;
+		for(CGFloat x = NSMinX(placeholder) + 3; x < NSMinX(placeholder) + 20 && !varies; x += 1)
+			varies = !SameColor(first, PixelAt(rendered, right, NSMakeRect(x, NSMidY(placeholder), 0, 0)));
+		CHECK(varies);
+		// A modified row is a flat tint.
+		NSColor* flat = PixelAt(rendered, left, NSMakeRect(NSMinX(leftRow) + 2, NSMidY(leftRow), 0, 0));
+		BOOL uniform = YES;
+		for(CGFloat x = NSMinX(leftRow) + 3; x < NSMinX(leftRow) + 20 && uniform; x += 1)
+			uniform = SameColor(flat, PixelAt(rendered, left, NSMakeRect(x, NSMidY(leftRow), 0, 0)));
+		CHECK(uniform);
 	}
 	else
 	{

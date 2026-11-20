@@ -19,7 +19,7 @@ Only differences get a background color, so they stand out; everything else keep
 | Default background | Identical |
 | Default background, amber dot at the end | A folder on both sides with differences somewhere inside it |
 | Amber | File contents differ |
-| Green | Only on this side (the other side shows a grey placeholder) |
+| Green | Only on this side (the other side shows a hatched grey placeholder) |
 | Red | A file on one side and a folder or link on the other |
 
 Above the trees:
@@ -41,7 +41,7 @@ Double-click a file in either tree, or select it and press ⌘↓ or ⌘O (**Fil
 Both versions are shown side by side with line numbers. Rows line up: a line only on one side shows as a grey gap on the other.
 
 - Changed lines are amber on both sides, with the part that differs in a stronger amber.
-- Lines only on one side are green.
+- Lines only on one side are green; the other side shows a hatched gap.
 - The header shows the file's path, how many changes there are and how many lines they affect, and notes different line endings (CRLF) or a missing newline at the end of a file.
 - **Go → Next Change** (⌃⌘↓) and **Previous Change** (⌃⌘↑), or the chevrons in the header, move between changes. Opening a file shows its first change.
 

@@ -72,11 +72,7 @@ static CompareStatus MaskForFilter (CompareFilter filter)
 - (void)drawBackgroundInRect:(NSRect)dirtyRect
 {
 	[super drawBackgroundInRect:dirtyRect];
-	if(_tintColor)
-	{
-		[_tintColor set];
-		NSRectFillUsingOperation(NSIntersectionRect(self.bounds, dirtyRect), NSCompositingOperationSourceOver);
-	}
+	compare::fill_row(_tintColor, NSIntersectionRect(self.bounds, dirtyRect));
 }
 
 // Drawn after the selection so it stays visible on a selected row.

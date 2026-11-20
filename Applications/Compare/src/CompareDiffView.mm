@@ -60,9 +60,7 @@ NSAttributedStringKey const CompareLineTintAttributeName = @"CompareLineTint";
 		if(!tint)
 			return;
 		NSTextView* textView = container.textView;
-		NSRect line = NSMakeRect(0, NSMinY(rect) + origin.y, NSWidth(textView.bounds), NSHeight(rect));
-		[tint set];
-		NSRectFillUsingOperation(line, NSCompositingOperationSourceOver);
+		compare::fill_row(tint, NSMakeRect(0, NSMinY(rect) + origin.y, NSWidth(textView.bounds), NSHeight(rect)));
 	}];
 	// Changed-text spans (NSBackgroundColorAttributeName) draw on top.
 	[super drawBackgroundForGlyphRange:glyphsToShow atPoint:origin];

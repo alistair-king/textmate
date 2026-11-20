@@ -20,9 +20,39 @@ namespace compare {
 
 	inline NSColor* modified_color ()     { static NSColor* color = tint(@"compare.modified",    NSColor.systemOrangeColor, 0.22, 0.30); return color; }
 	inline NSColor* added_color ()        { static NSColor* color = tint(@"compare.added",       NSColor.systemGreenColor,  0.20, 0.28); return color; }
-	inline NSColor* placeholder_color ()  { static NSColor* color = tint(@"compare.placeholder", NSColor.systemGrayColor,   0.14, 0.20); return color; }
+	inline NSColor* placeholder_color ()  { static NSColor* color = tint(@"compare.placeholder", NSColor.systemGrayColor,   0.07, 0.10); return color; }
+	inline NSColor* hatch_color ()        { static NSColor* color = tint(@"compare.hatch",       NSColor.systemGrayColor,   0.30, 0.40); return color; }
 	inline NSColor* changed_text_color () { static NSColor* color = tint(@"compare.changedText", NSColor.systemOrangeColor, 0.38, 0.50); return color; }
 	inline NSColor* type_changed_color () { static NSColor* color = tint(@"compare.typeChanged", NSColor.systemRedColor,    0.20, 0.28); return color; }
+
+	// Fills a row (tree row, or a line in a file tab) with its tint. Placeholders
+	// (where the other side has an entry or a line) are hatched, so they cannot
+	// be mistaken for the default background. The lines are anchored to the
+	// view's coordinates, so neighbouring rows join up.
+	inline void fill_row (NSColor* color, NSRect rect)
+	{
+		if(!color || NSIsEmptyRect(rect))
+			return;
+		[color set];
+		NSRectFillUsingOperation(rect, NSCompositingOperationSourceOver);
+		if(color != placeholder_color())
+			return;
+
+		CGFloat const spacing = 6;
+		NSBezierPath* path = [NSBezierPath bezierPath];
+		path.lineWidth = 1;
+		// Lines x − y = c across the rectangle.
+		for(CGFloat c = floor((NSMinX(rect) - NSMaxY(rect)) / spacing) * spacing; c <= NSMaxX(rect) - NSMinY(rect); c += spacing)
+		{
+			[path moveToPoint:NSMakePoint(NSMinY(rect) + c, NSMinY(rect))];
+			[path lineToPoint:NSMakePoint(NSMaxY(rect) + c, NSMaxY(rect))];
+		}
+		[NSGraphicsContext saveGraphicsState];
+		NSRectClip(rect);
+		[hatch_color() set];
+		[path stroke];
+		[NSGraphicsContext restoreGraphicsState];
+	}
 
 	// The dot marking a folder whose contents differ.
 	inline NSColor* marker_color () { return NSColor.systemOrangeColor; }
