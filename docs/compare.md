@@ -28,8 +28,9 @@ The **View** menu chooses what the trees show, with the current choice checked:
 - **Only on the Left** (⌘2) and **Only on the Right** (⌘3) show entries that exist on one side only, and the folders containing them.
 - **All Files** (⌘4) shows everything, identical entries included.
 - **Show Ignored Files** (⌘>, which is ⇧⌘. on a US keyboard) also compares files that `.gitignore` excludes. By default the comparison uses Git's list of tracked and untracked files, so build output and other ignored files are left out; with this on, both folders are walked on disk instead.
+- **Expand All** and **Collapse All** expand or collapse every folder in both trees, within the current display mode and name filter. They have no shortcuts, since ⇧⌘ and ⌥⌘ with the arrow keys already move the caret and copy changes.
 
-Choosing one from a file tab switches to the Files tab. A choice applies to every open Compare window and is remembered for new ones.
+Choosing any of these from a file tab switches to the Files tab. The display mode and Show Ignored Files apply to every open Compare window and are remembered for new ones; Expand All and Collapse All affect only the front window.
 
 Above the trees:
 

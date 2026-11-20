@@ -1025,6 +1025,29 @@ static BOOL ConfirmsChanges = YES;
 	[self setFilter:(CompareFilter)MIN(MAX(sender.tag, 0), CompareFilterAll)];
 }
 
+// View → Expand All / Collapse All: every folder the trees show (in the
+// current display mode and name filter), on both sides.
+- (IBAction)expandAllFolders:(id)sender
+{
+	[self selectTabAtIndex:0];
+	[_sides[0].outlineView expandItem:nil expandChildren:YES];
+	[self scrollSelectionOrTopToVisible];
+}
+
+- (IBAction)collapseAllFolders:(id)sender
+{
+	[self selectTabAtIndex:0];
+	[_sides[0].outlineView collapseItem:nil collapseChildren:YES];
+	[self scrollSelectionOrTopToVisible];
+}
+
+- (void)scrollSelectionOrTopToVisible
+{
+	NSOutlineView* outlineView = _sides[0].outlineView;
+	NSInteger row = outlineView.selectedRow;
+	[outlineView scrollRowToVisible:row != -1 ? row : 0];
+}
+
 // ===================================
 // = Outline data source (both sides) =
 // ===================================
@@ -1561,6 +1584,8 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 		item.state = item.tag == _filter ? NSControlStateValueOn : NSControlStateValueOff;
 	if(item.action == @selector(toggleIgnoredFilesFromMenu:))
 		item.state = _includeIgnored ? NSControlStateValueOn : NSControlStateValueOff;
+	if(item.action == @selector(expandAllFolders:) || item.action == @selector(collapseAllFolders:))
+		return _root != nil;
 	if(item.action == @selector(openSelectedFiles:))
 		return _selectedTab == 0 && _sides[0].outlineView.numberOfSelectedRows > 0;
 	if(item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))

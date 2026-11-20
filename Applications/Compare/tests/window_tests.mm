@@ -26,6 +26,8 @@
 @interface CompareWindowController (Testing)
 - (NSOutlineView*)outlineViewForLeftSide:(BOOL)left;
 - (void)setFilter:(NSInteger)filter;
+- (IBAction)expandAllFolders:(id)sender;
+- (IBAction)collapseAllFolders:(id)sender;
 - (void)takeDisplayModeFrom:(NSMenuItem*)sender;
 - (void)toggleIgnoredFilesFromMenu:(id)sender;
 - (CompareDiffView*)selectedDiffView;
@@ -956,11 +958,14 @@ static void TestViewMenuShortcuts ()
 	// ⇧⌘. on a US layout: Shift turns “.” into “>”.
 	CHECK(press(@">", @">", 47, NSEventModifierFlagCommand|NSEventModifierFlagShift));
 	CHECK(recorder.action == @selector(toggleIgnoredFilesFromMenu:));
+	// Expand All and Collapse All are there, without shortcuts.
+	CHECK([menu indexOfItemWithTitle:@"Expand All"] != -1 && [menu itemWithTitle:@"Expand All"].keyEquivalent.length == 0);
+	CHECK([menu itemWithTitle:@"Collapse All"].action == @selector(collapseAllFolders:));
 	// ⌘4: All Files.
 	CHECK(press(@"4", @"4", 21, NSEventModifierFlagCommand));
 	CHECK(recorder.action == @selector(takeDisplayModeFrom:) && recorder.tag == 3);
 	// The ignored-files item explains itself.
-	CHECK([[menu itemAtIndex:menu.numberOfItems - 1].toolTip containsString:@".gitignore"]);
+	CHECK([[menu itemWithTitle:@"Show Ignored Files"].toolTip containsString:@".gitignore"]);
 }
 
 // Settings → Ignore folders and files: node_modules is hidden by default, on
@@ -1033,6 +1038,43 @@ static void TestIgnoreSetting (compare_fixture_t const& fixture)
 	[other close];
 }
 
+// View → Expand All and Collapse All, on both sides, within the display mode.
+static void TestExpandAndCollapseAll (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	NSOutlineView* left  = [controller outlineViewForLeftSide:YES];
+	NSOutlineView* right = [controller outlineViewForLeftSide:NO];
+	CHECK(RowFor(left, @"deep/a/b.txt") != -1); // opened above changed files
+
+	// Also from a file tab, which switches to Files.
+	Show(controller, @"multi.txt");
+	CHECK(controller.selectedTabIndex == 1);
+	NSMenuItem* collapse = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(collapseAllFolders:) keyEquivalent:@""];
+	CHECK([controller validateMenuItem:collapse]);
+	[controller collapseAllFolders:nil];
+	CHECK(controller.selectedTabIndex == 0);
+	CHECK(left.numberOfRows == (NSInteger)TopLevelNames(left).count);
+	CHECK(right.numberOfRows == left.numberOfRows);
+	CHECK(RowFor(left, @"deep/a") == -1);
+
+	[controller expandAllFolders:nil];
+	for(NSString* path in @[ @"deep/a/b.txt", @"kind/inner.txt", @"newdir/x.txt" ])
+		CHECK(RowFor(left, path) != -1 && RowFor(left, path) == RowFor(right, path));
+	CHECK(RowFor(left, @"deep/a/c.txt") == -1); // identical: not in Changed Files
+	CHECK(Aligned(controller));
+
+	// In All Files, identical entries inside folders show too.
+	SelectFilter(controller, 3);
+	[controller expandAllFolders:nil];
+	CHECK(RowFor(left, @"deep/a/c.txt") != -1);
+	CHECK(Aligned(controller));
+	[controller collapseAllFolders:nil];
+	CHECK(RowFor(left, @"deep/a/c.txt") == -1 && RowFor(left, @"deep/a") == -1);
+
+	SelectFilter(controller, 0);
+	[controller close];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -1073,6 +1115,7 @@ int main (int argc, char const* argv[])
 			TestSyntaxHighlighting();
 			TestViewMenuShortcuts();
 			TestDisplayModeAcrossWindows(fixture);
+			TestExpandAndCollapseAll(fixture);
 
 			// Transfers change files: use a fixture of their own.
 			compare_fixture_t writable = compare_fixture::create(@COMPARE_TEST_GIT);
