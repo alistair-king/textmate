@@ -2,6 +2,7 @@
 #import "CompareWindowController.h"
 #import "compare_url.h"
 #import "compare_syntax.h"
+#import "compare_menu.h"
 #import <mach-o/dyld.h>
 #import <OakSystem/application.h>
 #import <Preferences/Keys.h>
@@ -151,6 +152,10 @@ static BOOL IsDirectory (NSString* path)
 		item.keyEquivalentModifierMask = NSEventModifierFlagCommand|NSEventModifierFlagOption;
 	}
 	[menu addItem:edit];
+
+	NSMenuItem* view = [NSMenuItem new];
+	view.submenu = compare::view_menu();
+	[menu addItem:view];
 
 	NSMenuItem* go = [NSMenuItem new];
 	go.submenu = [[NSMenu alloc] initWithTitle:@"Go"];

@@ -18,6 +18,9 @@ typedef NS_ENUM(NSInteger, CompareFilter) {
 	CompareFilterAll,
 };
 
+// Posted by a window whose display mode or ignored-files choice changed.
+static NSString* const CompareDisplayDidChangeNotification = @"CompareDisplayDidChangeNotification";
+
 static NSString* const kCompareFilterDefaultsKey         = @"compareFilter";
 static NSString* const kCompareIncludeIgnoredDefaultsKey = @"compareIncludeIgnored";
 static NSString* const kCompareExpandedDefaultsKey       = @"compareExpandedFolders"; // { pair: { paths, date } }
@@ -262,7 +265,6 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	CompareFilter _filter;
 	NSMapTable<CompareNode*, NSArray<CompareNode*>*>* _visibleChildren;
 
-	NSSegmentedControl* _filterControl;
 	NSTextField* _summaryLabel;
 	NSProgressIndicator* _spinner;
 
@@ -274,7 +276,6 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	NSSearchField* _searchField;
 	NSString* _search;                       // nil or empty: no name filter
 	NSArray<NSString*>* _expandedBeforeSearch;
-	NSButton* _ignoredButton;
 	BOOL _includeIgnored;
 
 	compare::folder_watch_t _watch;
@@ -403,6 +404,7 @@ static BOOL ConfirmsChanges = YES;
 			[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(clipViewBoundsDidChange:) name:NSViewBoundsDidChangeNotification object:side.scrollView.contentView];
 		}
 
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(displayDidChange:) name:CompareDisplayDidChangeNotification object:nil];
 		[self refresh:self];
 		[self startWatching];
 	}
@@ -619,9 +621,37 @@ static BOOL ConfirmsChanges = YES;
 	return NO;
 }
 
-- (void)toggleIgnoredFiles:(NSButton*)sender
+// Another window's View menu choice.
+- (void)displayDidChange:(NSNotification*)notification
 {
-	_includeIgnored = sender.state == NSControlStateValueOn;
+	if(notification.object == self)
+		return;
+	if(NSNumber* filter = notification.userInfo[@"filter"])
+		[self applyFilter:(CompareFilter)filter.integerValue];
+	if(NSNumber* includeIgnored = notification.userInfo[@"includeIgnored"])
+		[self applyIncludeIgnored:includeIgnored.boolValue];
+}
+
+// View → Show Ignored Files.
+- (IBAction)toggleIgnoredFilesFromMenu:(id)sender
+{
+	[self selectTabAtIndex:0];
+	[self setIncludeIgnored:!_includeIgnored];
+}
+
+- (void)setIncludeIgnored:(BOOL)flag
+{
+	if(flag == _includeIgnored)
+		return;
+	[self applyIncludeIgnored:flag];
+	[NSNotificationCenter.defaultCenter postNotificationName:CompareDisplayDidChangeNotification object:self userInfo:@{ @"includeIgnored": @(flag) }];
+}
+
+- (void)applyIncludeIgnored:(BOOL)flag
+{
+	if(flag == _includeIgnored)
+		return;
+	_includeIgnored = flag;
 	[NSUserDefaults.standardUserDefaults setBool:_includeIgnored forKey:kCompareIncludeIgnoredDefaultsKey];
 	[self refresh:self];
 }
@@ -632,11 +662,6 @@ static BOOL ConfirmsChanges = YES;
 
 - (NSView*)makeBar
 {
-	_filterControl = [NSSegmentedControl segmentedControlWithLabels:@[ @"Changed", @"Left Only", @"Right Only", @"All" ] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(takeFilterFrom:)];
-	_filterControl.selectedSegment = _filter;
-	_filterControl.controlSize = NSControlSizeSmall;
-	_filterControl.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
-
 	_summaryLabel = Label(@"", [NSFont systemFontOfSize:NSFont.smallSystemFontSize], NSColor.secondaryLabelColor);
 	_summaryLabel.alignment = NSTextAlignmentRight;
 	_summaryLabel.lineBreakMode = NSLineBreakByTruncatingTail; // keep the first counts readable
@@ -645,12 +670,6 @@ static BOOL ConfirmsChanges = YES;
 	_spinner.style = NSProgressIndicatorStyleSpinning;
 	_spinner.controlSize = NSControlSizeSmall;
 	_spinner.displayedWhenStopped = NO;
-
-	_ignoredButton = [NSButton checkboxWithTitle:@"Ignored Files" target:self action:@selector(toggleIgnoredFiles:)];
-	_ignoredButton.controlSize = NSControlSizeSmall;
-	_ignoredButton.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
-	_ignoredButton.state = _includeIgnored ? NSControlStateValueOn : NSControlStateValueOff;
-	_ignoredButton.toolTip = @"Also compare files that .gitignore excludes";
 
 	_searchField = [NSSearchField new];
 	_searchField.placeholderString = @"Filter by name";
@@ -668,7 +687,8 @@ static BOOL ConfirmsChanges = YES;
 	// The summary label takes the spare width.
 	[_summaryLabel setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-	NSStackView* bar = [NSStackView stackViewWithViews:@[ _filterControl, _ignoredButton, _summaryLabel, _searchField, _spinner, refresh ]];
+	// Display modes and ignored files are in the View menu.
+	NSStackView* bar = [NSStackView stackViewWithViews:@[ _summaryLabel, _searchField, _spinner, refresh ]];
 	[bar setHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
 	bar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
 	bar.spacing     = 8;
@@ -942,9 +962,18 @@ static BOOL ConfirmsChanges = YES;
 // = Filters =
 // ===========
 
-- (void)takeFilterFrom:(NSSegmentedControl*)sender
+// The display mode: which entries the trees show (View menu). Every open
+// window follows, as the choice is also the default for new windows.
+- (void)setFilter:(CompareFilter)filter
 {
-	CompareFilter filter = (CompareFilter)sender.selectedSegment;
+	if(filter == _filter)
+		return;
+	[self applyFilter:filter];
+	[NSNotificationCenter.defaultCenter postNotificationName:CompareDisplayDidChangeNotification object:self userInfo:@{ @"filter": @(filter) }];
+}
+
+- (void)applyFilter:(CompareFilter)filter
+{
 	if(filter == _filter)
 		return;
 	NSArray* expanded = [self expandedRelativePaths];
@@ -955,6 +984,13 @@ static BOOL ConfirmsChanges = YES;
 	[self expandRelativePaths:expanded];
 	if(selected)
 		[self revealRelativePath:selected select:YES];
+}
+
+// View → Changed Files / Only on the Left / Only on the Right / All Files (tag = mode).
+- (IBAction)takeDisplayModeFrom:(NSMenuItem*)sender
+{
+	[self selectTabAtIndex:0];
+	[self setFilter:(CompareFilter)MIN(MAX(sender.tag, 0), CompareFilterAll)];
 }
 
 // ===================================
@@ -1487,6 +1523,10 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 		item.title = fileTab ? (toRight ? @"Copy Change to the Right" : @"Copy Change to the Left") : (toRight ? @"Copy to the Right" : @"Copy to the Left");
 		return [self canCopySelectionToRight:toRight];
 	}
+	if(item.action == @selector(takeDisplayModeFrom:))
+		item.state = item.tag == _filter ? NSControlStateValueOn : NSControlStateValueOff;
+	if(item.action == @selector(toggleIgnoredFilesFromMenu:))
+		item.state = _includeIgnored ? NSControlStateValueOn : NSControlStateValueOff;
 	if(item.action == @selector(openSelectedFiles:))
 		return _selectedTab == 0 && _sides[0].outlineView.numberOfSelectedRows > 0;
 	if(item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))

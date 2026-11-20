@@ -8,6 +8,7 @@
 #import "../src/CompareDiffView.h"
 #import "compare_fixture.h"
 #import "syntax_fixture.h"
+#import "../src/compare_menu.h"
 
 // Drives the real CompareWindowController over the shared fixture. Failures
 // print `file:line: Assertion failed: …` and make the process exit non-zero.
@@ -23,7 +24,9 @@
 
 @interface CompareWindowController (Testing)
 - (NSOutlineView*)outlineViewForLeftSide:(BOOL)left;
-- (void)takeFilterFrom:(NSSegmentedControl*)sender;
+- (void)setFilter:(NSInteger)filter;
+- (void)takeDisplayModeFrom:(NSMenuItem*)sender;
+- (void)toggleIgnoredFilesFromMenu:(id)sender;
 - (CompareDiffView*)selectedDiffView;
 - (NSUInteger)tabCount;
 - (NSUInteger)selectedTabIndex;
@@ -35,7 +38,6 @@
 - (BOOL)tabBarView:(id)tabBar isClosableAtIndex:(NSUInteger)index;
 - (void)trashClickedEntries:(NSMenuItem*)sender;
 - (void)searchChanged:(NSSearchField*)sender;
-- (void)toggleIgnoredFiles:(NSButton*)sender;
 @end
 
 static int Failures = 0;
@@ -114,9 +116,7 @@ static BOOL Aligned (CompareWindowController* controller)
 
 static void SelectFilter (CompareWindowController* controller, NSInteger filter)
 {
-	NSSegmentedControl* control = [controller valueForKey:@"_filterControl"];
-	control.selectedSegment = filter;
-	[controller takeFilterFrom:control];
+	[controller setFilter:filter];
 	[controller.window layoutIfNeeded];
 }
 
@@ -277,6 +277,32 @@ static void TestChangedFilter (compare_fixture_t const& fixture)
 	SelectFilter(controller, 2);
 	CHECK([TopLevelNames(left) isEqual:(@[ @"kind", @"newdir" ])]);
 	CHECK(Aligned(controller));
+
+	// The View menu chooses the display mode, with the current one checked.
+	NSMenuItem* modes[4];
+	for(NSInteger mode = 0; mode < 4; ++mode)
+	{
+		modes[mode] = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(takeDisplayModeFrom:) keyEquivalent:@""];
+		modes[mode].tag = mode;
+	}
+	[controller takeDisplayModeFrom:modes[3]];
+	CHECK(RowFor(left, @"same.txt") != -1); // identical files are shown
+	for(NSInteger mode = 0; mode < 4; ++mode)
+	{
+		[controller validateMenuItem:modes[mode]];
+		CHECK(modes[mode].state == (mode == 3 ? NSControlStateValueOn : NSControlStateValueOff));
+	}
+	[controller takeDisplayModeFrom:modes[0]];
+	CHECK(RowFor(left, @"same.txt") == -1);
+	[controller validateMenuItem:modes[0]];
+	CHECK(modes[0].state == NSControlStateValueOn);
+	// The window has no display-mode or ignored-files controls of its own.
+	for(NSView* view in [[controller valueForKey:@"_summaryLabel"] superview].subviews)
+	{
+		CHECK(![view isKindOfClass:NSSegmentedControl.class]);
+		CHECK(!([view isKindOfClass:NSButton.class] && [[(NSButton*)view title] isEqualToString:@"Ignored Files"]));
+	}
+	SelectFilter(controller, 2);
 
 	[controller close];
 }
@@ -774,16 +800,20 @@ static void TestLiveRefreshAndSearch (compare_fixture_t const& fixture)
 	CHECK(diff.currentChange == 1);
 	[controller selectTabAtIndex:0];
 
-	// Ignored files, when asked for.
-	NSButton* ignored = [controller valueForKey:@"_ignoredButton"];
-	ignored.state = NSControlStateValueOn;
+	// View → Show Ignored Files, also from a file tab; the menu item is checked.
+	[controller selectTabAtIndex:1];
+	NSMenuItem* showIgnored = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(toggleIgnoredFilesFromMenu:) keyEquivalent:@""];
 	count = controller.comparisonCount;
-	[controller toggleIgnoredFiles:ignored];
+	[controller toggleIgnoredFilesFromMenu:showIgnored];
+	CHECK(controller.selectedTabIndex == 0);
 	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
 	CHECK(RowFor(left, @"build") != -1);
-	ignored.state = NSControlStateValueOff;
+	[controller validateMenuItem:showIgnored];
+	CHECK(showIgnored.state == NSControlStateValueOn);
 	count = controller.comparisonCount;
-	[controller toggleIgnoredFiles:ignored];
+	[controller toggleIgnoredFilesFromMenu:showIgnored];
+	[controller validateMenuItem:showIgnored];
+	CHECK(showIgnored.state == NSControlStateValueOff);
 	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
 	CHECK(RowFor(left, @"build") == -1);
 
@@ -846,6 +876,69 @@ static void TestSyntaxHighlighting ()
 	[controller close];
 }
 
+// A View menu choice applies to every open window; new windows in the tests
+// start in the default mode because the defaults are pinned in the argument
+// domain (so tests cannot leak a mode into one another).
+static void TestDisplayModeAcrossWindows (compare_fixture_t const& fixture)
+{
+	CompareWindowController* first  = Open(fixture, nil);
+	CompareWindowController* second = Open(fixture, nil);
+	NSMenuItem* all = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(takeDisplayModeFrom:) keyEquivalent:@""];
+	all.tag = 3;
+	[first takeDisplayModeFrom:all];
+	[second.window layoutIfNeeded];
+	CHECK(RowFor([second outlineViewForLeftSide:YES], @"same.txt") != -1);
+	[second validateMenuItem:all];
+	CHECK(all.state == NSControlStateValueOn);
+
+	CompareWindowController* third = Open(fixture, nil);
+	NSMenuItem* changed = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(takeDisplayModeFrom:) keyEquivalent:@""];
+	changed.tag = 0;
+	[third validateMenuItem:changed];
+	CHECK(changed.state == NSControlStateValueOn);
+	CHECK(RowFor([third outlineViewForLeftSide:YES], @"same.txt") == -1);
+
+	all.tag = 0;
+	[first takeDisplayModeFrom:all]; // back to the default for later tests
+	[first close];
+	[second close];
+	[third close];
+}
+
+// Records which View menu action AppKit sent for a key equivalent.
+@interface MenuActionRecorder : NSObject
+@property (nonatomic) SEL action;
+@property (nonatomic) NSInteger tag;
+@end
+
+@implementation MenuActionRecorder
+- (void)takeDisplayModeFrom:(NSMenuItem*)sender  { _action = _cmd; _tag = sender.tag; }
+- (void)toggleIgnoredFilesFromMenu:(id)sender    { _action = _cmd; }
+@end
+
+// The View menu's shortcuts, matched by AppKit as for a real key press.
+static void TestViewMenuShortcuts ()
+{
+	NSMenu* menu = compare::view_menu();
+	MenuActionRecorder* recorder = [MenuActionRecorder new];
+	for(NSMenuItem* item in menu.itemArray)
+		item.target = recorder;
+	NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 100, 100) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+	auto press = ^BOOL(NSString* characters, NSString* ignoringModifiers, unsigned short keyCode, NSEventModifierFlags flags){
+		recorder.action = NULL;
+		NSEvent* event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:flags timestamp:0 windowNumber:window.windowNumber context:nil characters:characters charactersIgnoringModifiers:ignoringModifiers isARepeat:NO keyCode:keyCode];
+		return [menu performKeyEquivalent:event];
+	};
+	// ⇧⌘. on a US layout: Shift turns “.” into “>”.
+	CHECK(press(@">", @">", 47, NSEventModifierFlagCommand|NSEventModifierFlagShift));
+	CHECK(recorder.action == @selector(toggleIgnoredFilesFromMenu:));
+	// ⌘4: All Files.
+	CHECK(press(@"4", @"4", 21, NSEventModifierFlagCommand));
+	CHECK(recorder.action == @selector(takeDisplayModeFrom:) && recorder.tag == 3);
+	// The ignored-files item explains itself.
+	CHECK([[menu itemAtIndex:menu.numberOfItems - 1].toolTip containsString:@".gitignore"]);
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -881,6 +974,8 @@ int main (int argc, char const* argv[])
 			TestChangedFilter(fixture);
 			TestFileTabs(fixture);
 			TestSyntaxHighlighting();
+			TestViewMenuShortcuts();
+			TestDisplayModeAcrossWindows(fixture);
 
 			// Transfers change files: use a fixture of their own.
 			compare_fixture_t writable = compare_fixture::create(@COMPARE_TEST_GIT);

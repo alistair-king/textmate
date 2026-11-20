@@ -22,17 +22,24 @@ Only differences get a background color, so they stand out; everything else keep
 | Green | Only on this side (the other side shows a hatched grey placeholder) |
 | Red | A file on one side and a folder or link on the other |
 
+The **View** menu chooses what the trees show, with the current choice checked:
+
+- **Changed Files** (⌘1), the default, shows differences and hides identical entries.
+- **Only on the Left** (⌘2) and **Only on the Right** (⌘3) show entries that exist on one side only, and the folders containing them.
+- **All Files** (⌘4) shows everything, identical entries included.
+- **Show Ignored Files** (⌘>, which is ⇧⌘. on a US keyboard) also compares files that `.gitignore` excludes. By default the comparison uses Git's list of tracked and untracked files, so build output and other ignored files are left out; with this on, both folders are walked on disk instead.
+
+Choosing one from a file tab switches to the Files tab. A choice applies to every open Compare window and is remembered for new ones.
+
 Above the trees:
 
-- **Changed**, **Left Only**, **Right Only** and **All** choose which entries are shown. Changed is the default and hides identical entries.
-- **Ignored Files** also compares files that `.gitignore` excludes. By default the comparison uses Git's list of tracked and untracked files, so build output and other ignored files are left out.
 - The summary counts modified entries, entries only on each side, and type changes.
 - **Filter by name** narrows both trees to entries whose names contain the text (ignoring case and accents), expanding to show them. A matching folder shows everything inside it. Clearing the field restores the folders that were expanded before.
 - The refresh button (**File → Compare Again**, ⌘R) compares everything again.
 
 If Git takes longer than a minute to list the files, the comparison fails rather than listing every file, ignored ones included. Comparisons stay current: when a compared file changes on disk, or a new file appears that is not ignored, Compare compares again. Changes inside `.git` and to ignored files do not trigger a comparison. Expanded folders are remembered for each pair of folders.
 
-Files are compared byte for byte; symbolic links by their targets. Empty folders appear when folders are walked (without Git, or with **Ignored Files**); Git's list of files has no empty folders. Submodules and nested repositories are listed but not compared. A change to a file's permissions alone is not shown as a difference.
+Files are compared byte for byte; symbolic links by their targets. Empty folders appear when folders are walked (without Git, or with **Show Ignored Files**); Git's list of files has no empty folders. Submodules and nested repositories are listed but not compared. A change to a file's permissions alone is not shown as a difference.
 
 ## File tabs
 
