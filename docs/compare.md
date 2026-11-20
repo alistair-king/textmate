@@ -66,9 +66,9 @@ Changes can be copied in either direction.
 - **Move to Trash** in a tree's context menu moves that side's entries to the Trash.
 - **In a file tab**, the arrows between the two sides, next to each change, copy that change to the right (→) or to the left (←). **Edit → Copy Change to the Right** and **Copy Change to the Left** copy the current change. The tab stays on the same change number afterwards.
 
-Compare only writes over what it compared: if a file changed on disk since it was compared, the copy is refused and asks you to compare again. Unsaved changes in TextMate are not part of the comparison: Compare reads and writes the files on disk, and TextMate treats its writes like those of any other program.
+Compare only writes over what it compared: if a file changed on disk since it was compared, the copy is refused and asks you to compare again. Copies never write outside the two compared folders, and never through a symbolic link that has taken the place of a folder since the comparison. Unsaved changes in TextMate are not part of the comparison: Compare reads and writes the files on disk, and TextMate treats its writes like those of any other program.
 
-Every write replaces the file atomically and keeps its permissions. **Edit → Undo** (⌘Z) reverses the last copy or move to the Trash, and **Redo** (⇧⌘Z) does it again. Undo is refused when a file has changed since, and Redo when anything it would change has changed since the Undo.
+Every write replaces the file atomically and keeps its permissions. **Edit → Undo** (⌘Z) reverses the last copy or move to the Trash, and **Redo** (⇧⌘Z) does it again. Undo is refused when a file has changed since, and Redo when anything it would change has changed since the Undo, including anything inside a folder it would move to the Trash.
 
 ## Development
 

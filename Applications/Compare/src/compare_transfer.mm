@@ -27,8 +27,42 @@ namespace {
 	// The contents of a file (SHA-256) or a link (its target), to recognise a
 	// path that was replaced by an identical copy (an undo restores a backup
 	// as a new file, so its inode and device differ).
+	NSData* ContentSignature (NSString* path, compare_stamp_t const& stamp);
+
+	// A folder's contents: every entry's relative path, type and signature,
+	// so an edit anywhere inside changes it. Links are not followed.
+	NSData* FolderSignature (NSString* path)
+	{
+		NSMutableArray<NSString*>* entries = [NSMutableArray array];
+		NSDirectoryEnumerator<NSString*>* enumerator = [NSFileManager.defaultManager enumeratorAtPath:path];
+		for(NSString* relative in enumerator)
+			[entries addObject:relative];
+		[entries sortUsingSelector:@selector(compare:)];
+		CC_SHA256_CTX context;
+		CC_SHA256_Init(&context);
+		for(NSString* relative in entries)
+		{
+			NSString* full = [path stringByAppendingPathComponent:relative];
+			compare_stamp_t stamp = CompareStampAtPath(full);
+			NSData* name = [relative dataUsingEncoding:NSUTF8StringEncoding];
+			CC_SHA256_Update(&context, name.bytes, (CC_LONG)name.length);
+			mode_t type = stamp.mode & S_IFMT;
+			CC_SHA256_Update(&context, &type, sizeof(type));
+			if(!S_ISDIR(stamp.mode))
+			{
+				NSData* signature = ContentSignature(full, stamp) ?: [NSData data];
+				CC_SHA256_Update(&context, signature.bytes, (CC_LONG)signature.length);
+			}
+		}
+		unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+		CC_SHA256_Final(digest, &context);
+		return [NSData dataWithBytes:digest length:sizeof(digest)];
+	}
+
 	NSData* ContentSignature (NSString* path, compare_stamp_t const& stamp)
 	{
+		if(S_ISDIR(stamp.mode))
+			return FolderSignature(path);
 		if(S_ISLNK(stamp.mode))
 			return [[NSFileManager.defaultManager destinationOfSymbolicLinkAtPath:path error:nil] dataUsingEncoding:NSUTF8StringEncoding];
 		if(!S_ISREG(stamp.mode))
@@ -109,8 +143,59 @@ namespace {
 }
 
 // Creates missing parent folders, recording them for undo.
+// With `roots` set, `path` must be inside one of them, and every folder
+// between that root and `path` a real folder: never a link, which could lead
+// the write somewhere else.
+- (BOOL)checkConfined:(NSString*)path error:(NSString**)error
+{
+	if(!_roots)
+		return YES;
+	for(NSString* root in _roots)
+	{
+		NSString* prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
+		if(![path hasPrefix:prefix])
+			continue;
+		NSString* folder = root;
+		NSArray<NSString*>* components = [[path substringFromIndex:prefix.length] componentsSeparatedByString:@"/"];
+		for(NSUInteger i = 0; i + 1 < components.count; ++i)
+		{
+			folder = [folder stringByAppendingPathComponent:components[i]];
+			compare_stamp_t stamp = CompareStampAtPath(folder);
+			if(!stamp.exists)
+				break; // created as a real folder by this change
+			if(!S_ISDIR(stamp.mode))
+			{
+				if(error)
+					*error = [NSString stringWithFormat:@"%@ is no longer a folder (it may be a link), so nothing was written through it. Compare again, then try once more.", DisplayName(folder)];
+				return NO;
+			}
+		}
+		return YES;
+	}
+	if(error)
+		*error = [NSString stringWithFormat:@"%@ is outside the folders being compared.", DisplayName(path)];
+	return NO;
+}
+
+- (BOOL)hasChangedPath:(NSString*)path
+{
+	for(auto const& change : _changes)
+	{
+		if([change.path isEqualToString:path])
+			return YES;
+		for(NSString* folder : change.folders)
+		{
+			if([folder isEqualToString:path])
+				return YES;
+		}
+	}
+	return NO;
+}
+
 - (BOOL)createParentOf:(NSString*)path folders:(std::vector<NSString*>&)created error:(NSString**)error
 {
+	if(![self checkConfined:path error:error])
+		return NO;
 	NSMutableArray<NSString*>* missing = [NSMutableArray array];
 	for(NSString* folder = path.stringByDeletingLastPathComponent; folder.length > 1; folder = folder.stringByDeletingLastPathComponent)
 	{
@@ -257,6 +342,8 @@ namespace {
 
 - (BOOL)trashItemAtPath:(NSString*)path error:(NSString**)error
 {
+	if(![self checkConfined:path error:error])
+		return NO;
 	NSURL* trashed = nil;
 	NSError* trashError = nil;
 	if(![NSFileManager.defaultManager trashItemAtURL:[NSURL fileURLWithPath:path] resultingItemURL:&trashed error:&trashError])
@@ -289,7 +376,8 @@ namespace {
 	// wrote the same path: restoring it is the last step of the undo.
 	for(auto const& change : _changes)
 	{
-		if(change.kind == change_kind::trash && ![NSFileManager.defaultManager fileExistsAtPath:change.trashed.path])
+		// lstat: a trashed relative link may not resolve from the Trash.
+		if(change.kind == change_kind::trash && !CompareStampAtPath(change.trashed.path).exists)
 		{
 			if(error)
 				*error = [NSString stringWithFormat:@"%@ is no longer in the Trash, so this change cannot be undone.", DisplayName(change.path)];
@@ -386,7 +474,8 @@ namespace {
 	{
 		compare_stamp_t now = CompareStampAtPath(entry.path);
 		BOOL bothFolders = now.exists && entry.after.exists && S_ISDIR(now.mode) && S_ISDIR(entry.after.mode);
-		if(!bothFolders && !Unchanged(entry))
+		// A folder is unchanged only if everything inside it is.
+		if(bothFolders ? ![ContentSignature(entry.path, now) isEqualToData:entry.signature] : !Unchanged(entry))
 			return entry.path;
 	}
 	return nil;
@@ -464,7 +553,11 @@ static BOOL ClearForCopy (CompareNode* node, BOOL toRight, BOOL needFolder, Comp
 	if(destination == CompareKindNone || (destination == CompareKindDirectory) == needFolder)
 		return YES;
 	NSString* path = [node pathOnLeft:!toRight];
-	if(CompareStampAtPath(path) != (toRight ? node.rightStamp : node.leftStamp))
+	compare_stamp_t now = CompareStampAtPath(path);
+	// Already replaced earlier in this batch (a sibling copied first).
+	if([changes hasChangedPath:path] && now.exists && S_ISDIR(now.mode) == needFolder)
+		return YES;
+	if(now != (toRight ? node.rightStamp : node.leftStamp))
 	{
 		if(error)
 			*error = ChangedError(node, !toRight);

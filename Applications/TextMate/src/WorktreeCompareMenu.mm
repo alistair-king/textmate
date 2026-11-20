@@ -90,7 +90,9 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 	if(projectPath != _projectPath && ![projectPath isEqualToString:_projectPath])
 	{
 		_projectPath = projectPath;
-		if(projectPath && !_entries[projectPath])
+		// Also when cached: worktrees may have changed while another project
+		// (whose repository was the one watched) was in front.
+		if(projectPath)
 			[self refreshProjectPath:projectPath];
 		[self watchRepository:_entries[projectPath][@"repository"]];
 	}

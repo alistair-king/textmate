@@ -1317,6 +1317,7 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 		return NO;
 	}
 	CompareChangeSet* changes = [CompareChangeSet new];
+	changes.roots = @[ _leftPath, _rightPath ]; // never write through a link out of them
 	NSString* problem = nil;
 	BOOL ok = block(changes, &problem);
 	if(changes.count)

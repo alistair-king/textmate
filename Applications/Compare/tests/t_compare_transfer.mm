@@ -444,3 +444,90 @@ void test_undo_refuses_when_a_trashed_entry_has_left_the_trash ()
 	OAK_ASSERT([error containsString:@"no longer in the Trash"]);
 	OAK_ASSERT([Read(pair.right, @"config/settings.json") isEqualToString:@"{}\n"]); // nothing undone
 }
+
+// ======================
+// = Second review round =
+// ======================
+
+void test_copy_never_writes_through_a_link_that_replaced_a_folder ()
+{
+	// After comparing, the right's folder “a” is replaced by a link to an
+	// unrelated folder that also has “b/”: the copy must not write into it.
+	pair_t pair = { Folder(), Folder() };
+	NSString* outside = Folder();
+	Write(pair.left,  @"a/b/new.txt",   @"new\n");
+	Write(pair.right, @"a/b/other.txt", @"other\n");
+	Write(outside,    @"b/keep.txt",    @"unrelated\n");
+	CompareNode* root = CompareBuildTree(pair.left, pair.right, Options());
+	CompareNode* node = [root nodeAtRelativePath:@"a/b/new.txt"];
+	OAK_ASSERT(node != nil);
+
+	NSString* a = [pair.right stringByAppendingPathComponent:@"a"];
+	[NSFileManager.defaultManager moveItemAtPath:a toPath:[Folder() stringByAppendingPathComponent:@"moved"] error:nil];
+	OAK_ASSERT([NSFileManager.defaultManager createSymbolicLinkAtPath:a withDestinationPath:outside error:nil]);
+
+	CompareChangeSet* changes = [CompareChangeSet new];
+	changes.roots = @[ pair.left, pair.right ];
+	NSString* error = nil;
+	OAK_ASSERT(!CompareCopyNode(node, YES, changes, &error));
+	OAK_ASSERT([error containsString:@"no longer a folder"]);
+	OAK_ASSERT(!Exists(outside, @"b/new.txt"));
+	OAK_ASSERT_EQ(changes.count, 0);
+}
+
+void test_changes_outside_the_roots_are_refused ()
+{
+	NSString* root = Folder();
+	CompareChangeSet* changes = [CompareChangeSet new];
+	changes.roots = @[ root ];
+	NSString* error = nil;
+	OAK_ASSERT(![changes writeData:Data(@"x\n") toPath:[Folder() stringByAppendingPathComponent:@"elsewhere.txt"] mode:0644 error:&error]);
+	OAK_ASSERT([error containsString:@"outside"]);
+	OAK_ASSERT([changes writeData:Data(@"x\n") toPath:[root stringByAppendingPathComponent:@"sub/inside.txt"] mode:0644 error:&error]);
+}
+
+void test_snapshot_of_a_folder_sees_edits_inside_it ()
+{
+	NSString* root = Folder();
+	Write(root, @"config/a.txt", @"one\n");
+	NSString* config = [root stringByAppendingPathComponent:@"config"];
+	CompareDiskSnapshot* snapshot = [CompareDiskSnapshot snapshotOfPaths:@[ config ]];
+	OAK_ASSERT(snapshot.changedPath == nil);
+	Write(root, @"config/a.txt", @"two\n");
+	OAK_ASSERT([snapshot.changedPath isEqualToString:config]);
+	Write(root, @"config/a.txt", @"one\n");
+	OAK_ASSERT(snapshot.changedPath == nil);
+	Write(root, @"config/added.txt", @"new\n");
+	OAK_ASSERT([snapshot.changedPath isEqualToString:config]);
+}
+
+void test_undo_restores_a_trashed_relative_link ()
+{
+	NSString* root = Folder();
+	Write(root, @"target.txt", @"target\n");
+	NSString* link = [root stringByAppendingPathComponent:@"link"];
+	OAK_ASSERT([NSFileManager.defaultManager createSymbolicLinkAtPath:link withDestinationPath:@"target.txt" error:nil]);
+	CompareChangeSet* changes = [CompareChangeSet new];
+	NSString* error = nil;
+	OAK_ASSERT([changes trashItemAtPath:link error:&error]);
+	OAK_ASSERT([changes undo:&error]); // the link does not resolve from the Trash
+	OAK_ASSERT([[NSFileManager.defaultManager destinationOfSymbolicLinkAtPath:link error:nil] isEqualToString:@"target.txt"]);
+}
+
+void test_copy_siblings_over_a_file_in_one_batch ()
+{
+	pair_t pair = { Folder(), Folder() };
+	Write(pair.left,  @"config/a.txt", @"a\n");
+	Write(pair.left,  @"config/b.txt", @"b\n");
+	Write(pair.right, @"config",       @"a file\n");
+	CompareNode* root = CompareBuildTree(pair.left, pair.right, Options());
+	CompareChangeSet* changes = [CompareChangeSet new];
+	changes.roots = @[ pair.left, pair.right ];
+	NSString* error = nil;
+	OAK_ASSERT(CompareCopyNode([root nodeAtRelativePath:@"config/a.txt"], YES, changes, &error));
+	OAK_ASSERT(CompareCopyNode([root nodeAtRelativePath:@"config/b.txt"], YES, changes, &error));
+	OAK_ASSERT([Read(pair.right, @"config/a.txt") isEqualToString:@"a\n"]);
+	OAK_ASSERT([Read(pair.right, @"config/b.txt") isEqualToString:@"b\n"]);
+	OAK_ASSERT([changes undo:&error]);
+	OAK_ASSERT([Read(pair.right, @"config") isEqualToString:@"a file\n"]);
+}

@@ -116,6 +116,22 @@ int main (int argc, char const* argv[])
 		projectPath = project;
 		[menu updateMenuItemVisibility];
 
+		// Worktrees added while another project is in front (its repository
+		// watched instead) are found on switching back.
+		NSString* elsewhere = [base.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"elsewhere"];
+		[NSFileManager.defaultManager createDirectoryAtPath:elsewhere withIntermediateDirectories:YES attributes:nil error:nil];
+		NSUInteger before = menu.discoveryCount;
+		projectPath = elsewhere;
+		[menu updateMenuItemVisibility];
+		CHECK(WaitUntil(^{ return (BOOL)(menu.discoveryCount > before); })); // looked up, not a repository
+		CHECK(item.hidden);
+		NSString* fourth = [base stringByAppendingPathComponent:@"fourth"];
+		CHECK(RunGit(main, @[ @"worktree", @"add", @"-q", @"--detach", fourth ]));
+		projectPath = project;
+		CHECK(WaitUntil(^{ [menu updateMenuItemVisibility]; return (BOOL)(menu.otherWorktreePaths.count == 3); }));
+		CHECK([menu.otherWorktreePaths containsObject:CommandPaletteCanonicalPath(fourth)]);
+		CHECK(RunGit(main, @[ @"worktree", @"remove", @"--force", fourth ]));
+
 		// Removing the worktrees hides the item again.
 		CHECK(RunGit(main, @[ @"worktree", @"remove", @"--force", feature ]));
 		CHECK(RunGit(main, @[ @"worktree", @"remove", @"--force", third ]));

@@ -12,6 +12,11 @@
 // undo of a later change restores it) counts as unchanged.
 @interface CompareChangeSet : NSObject
 @property (nonatomic, readonly) NSUInteger count;
+// When set, every write, new folder and move to the Trash must be inside one
+// of these folders, through real folders only (never through a link).
+@property (nonatomic, copy) NSArray<NSString*>* roots;
+// This change set wrote, created or trashed `path` (or created it as a parent).
+- (BOOL)hasChangedPath:(NSString*)path;
 
 // Replaces or creates `path` with a copy of the file or symbolic link at
 // `source`, keeping its permissions. Creates missing parent folders.
