@@ -844,12 +844,15 @@ static BOOL ConfirmsChanges = YES;
 
 - (void)showTree:(CompareNode*)root leftBranch:(NSString*)leftBranch rightBranch:(NSString*)rightBranch
 {
-	NSArray<NSString*>* expanded = _root ? [self expandedRelativePaths] : self.savedExpandedPaths;
+	BOOL first = !_root;
+	NSArray<NSString*>* expanded = first ? self.savedExpandedPaths : [self expandedRelativePaths];
 	NSString* selected = [self selectedRelativePath];
 
 	_root = root;
 	[self reloadOutlines];
 	[self expandRelativePaths:expanded];
+	if(first)
+		[self expandFoldersWithDifferences:_root];
 	if(_revealFocusAfterLoad)
 	{
 		_revealFocusAfterLoad = NO;
@@ -925,6 +928,21 @@ static BOOL ConfirmsChanges = YES;
 - (BOOL)isVisible:(CompareNode*)node
 {
 	return node == _root || ((node.mask & MaskForFilter(_filter)) && [self searchShows:node]);
+}
+
+// A new window opens with its changed entries in view: every folder that
+// contains differences is expanded. Folders that are a difference themselves
+// (only on one side, or a file on the other) stay collapsed; their row shows it.
+- (void)expandFoldersWithDifferences:(CompareNode*)node
+{
+	for(CompareNode* child in node.children)
+	{
+		if(compare::contains_differences(child) && [self isVisible:child])
+		{
+			[_sides[0].outlineView expandItem:child];
+			[self expandFoldersWithDifferences:child];
+		}
+	}
 }
 
 - (void)expandRelativePaths:(NSArray<NSString*>*)paths

@@ -212,6 +212,14 @@ static void TestChangedFilter (compare_fixture_t const& fixture)
 	CHECK([names isEqual:(@[ @"deep", @"kind", @"newdir", @"gone.txt", @"grown.txt", @"left-only.txt", @"link", @"multi.txt", @"same-size.txt" ])]);
 	CHECK(Aligned(controller));
 
+	// A new comparison opens the folders above changed files, on both sides;
+	// folders that are differences themselves stay collapsed.
+	CHECK(RowFor(left, @"deep/a/b.txt") != -1 && RowFor(right, @"deep/a/b.txt") != -1);
+	CHECK(RowFor(left, @"deep/a/b.txt") == RowFor(right, @"deep/a/b.txt"));
+	CHECK(RowFor(left, @"newdir") != -1 && RowFor(left, @"newdir/x.txt") == -1); // only on the right
+	CHECK(RowFor(left, @"kind") != -1 && RowFor(left, @"kind/inner.txt") == -1);  // a file on the left
+	[left collapseItem:nil collapseChildren:YES];
+
 	// Expanding on one side expands the other.
 	[left expandItem:[left itemAtRow:RowFor(left, @"deep")] expandChildren:YES];
 	CHECK([right isItemExpanded:[right itemAtRow:RowFor(right, @"deep/a")]]);
@@ -846,11 +854,13 @@ static void TestLiveRefreshAndSearch (compare_fixture_t const& fixture)
 	CHECK(RowFor(left, @"deep/a") == -1); // collapsed again
 	CHECK(RowFor(left, @"newdir/x.txt") != -1);
 
-	// Expanded folders are remembered for this pair.
+	// Expanded folders are remembered for this pair; folders above changed
+	// files open again even if they were collapsed.
 	[controller close];
 	CompareWindowController* reopened = Open(fixture, nil);
 	CHECK(RowFor([reopened outlineViewForLeftSide:YES], @"newdir/x.txt") != -1);
-	CHECK(RowFor([reopened outlineViewForLeftSide:YES], @"deep/a") == -1);
+	CHECK(RowFor([reopened outlineViewForLeftSide:YES], @"deep/a/b.txt") != -1);
+	CHECK(RowFor([reopened outlineViewForLeftSide:YES], @"kind/inner.txt") == -1);
 	[reopened close];
 }
 
