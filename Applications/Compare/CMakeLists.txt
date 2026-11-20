@@ -1,4 +1,4 @@
-add_executable(Compare MACOSX_BUNDLE src/main.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm)
+add_executable(Compare MACOSX_BUNDLE src/main.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm)
 # Static frameworks cannot carry resources: bundle the tab bar's images and the
 # file-type icons TMFileReference uses, as TextMate's app bundle does.
 file(GLOB _compare_resources CONFIGURE_DEPENDS
@@ -13,7 +13,7 @@ set_source_files_properties(${_compare_doctypes} PROPERTIES MACOSX_PACKAGE_LOCAT
 # FileBrowser supplies the tree views; the rest mirrors ThemeEditor's setup of
 # TextMate's support folder, settings and preferences.
 target_link_libraries(Compare PRIVATE
-  FileBrowser OakTabBarView OakSystem Preferences io ns scm settings xdiff
+  FileBrowser OakTabBarView OakSystem Preferences bundles file io ns parse plist scm settings text theme xdiff
   ${TEXTMATE_DEBUG_LIBS} "-framework Cocoa")
 set_target_properties(Compare PROPERTIES
   OUTPUT_NAME "Compare"
@@ -73,16 +73,26 @@ if(BUILD_TESTING)
     target_link_libraries(compare_transfer_tests PRIVATE xdiff ${TEXTMATE_DEBUG_LIBS} "-framework Foundation")
     add_test(NAME compare-transfer COMMAND compare_transfer_tests)
 
+    set(_syntax_runner "${CMAKE_CURRENT_BINARY_DIR}/syntax_test_runner.mm")
+    add_custom_command(OUTPUT "${_syntax_runner}"
+      COMMAND "${CMAKE_SOURCE_DIR}/bin/gen_test"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/t_compare_syntax.mm" > "${_syntax_runner}"
+      DEPENDS tests/t_compare_syntax.mm src/compare_syntax.h "${CMAKE_SOURCE_DIR}/bin/gen_test")
+    add_executable(compare_syntax_tests "${_syntax_runner}" src/compare_syntax.mm)
+    target_link_libraries(compare_syntax_tests PRIVATE
+      bundles file io ns parse plist settings text theme ${TEXTMATE_DEBUG_LIBS} "-framework Cocoa")
+    add_test(NAME compare-syntax COMMAND compare_syntax_tests)
+
     # Drives the real window over the fixture; needs a GUI session.
     add_executable(compare_window_tests MACOSX_BUNDLE
-      tests/window_tests.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm
+      tests/window_tests.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm
       ${_compare_resources} ${_compare_doctypes})
     set_target_properties(compare_window_tests PROPERTIES
       MACOSX_BUNDLE_GUI_IDENTIFIER "com.macromates.TextMate.Compare.Tests"
       BUILD_RPATH "${CMAKE_BINARY_DIR}/lib")
     target_compile_definitions(compare_window_tests PRIVATE COMPARE_TEST_GIT="${COMPARE_TEST_GIT_EXECUTABLE}")
     target_link_libraries(compare_window_tests PRIVATE
-      FileBrowser OakTabBarView OakSystem Preferences io ns scm settings xdiff
+      FileBrowser OakTabBarView OakSystem Preferences bundles file io ns parse plist scm settings text theme xdiff
       ${TEXTMATE_DEBUG_LIBS} "-framework Cocoa")
     add_test(NAME compare-window COMMAND $<TARGET_FILE:compare_window_tests>)
     set_tests_properties(compare-window PROPERTIES RUN_SERIAL TRUE TIMEOUT 60)

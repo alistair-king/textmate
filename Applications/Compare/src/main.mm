@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import "CompareWindowController.h"
 #import "compare_url.h"
+#import "compare_syntax.h"
 #import <mach-o/dyld.h>
 #import <OakSystem/application.h>
 #import <Preferences/Keys.h>
@@ -201,6 +202,9 @@ int main (int argc, char const* argv[])
 			fprintf(stdout, "Compare launched\n");
 			return 0;
 		}
+
+		// The bundle catalogue (grammars, themes) for syntax highlighting.
+		compare::load_bundle_index();
 
 		std::string git = scm::find_executable("git", "TM_GIT");
 		CompareWindowController.gitExecutable = git == NULL_STR ? nil : to_ns(git);

@@ -155,7 +155,7 @@ See [Theme Editor](docs/theme-editor.md) for editing and storage details.
 
 ## Compare
 
-When the project belongs to a Git repository with other worktrees, choose **Text → Compare To** and a worktree to compare the two side by side, or run `tm-compare <left-folder> <right-folder>` to compare any two folders. The **Files** tab shows both folders as aligned trees, with background colors for modified entries, entries on one side only, and file/folder type changes; filters, a name search, and an option to include ignored files narrow it down. Double-click a file to compare its contents in a tab of its own, with changed lines highlighted and next/previous change navigation.
+When the project belongs to a Git repository with other worktrees, choose **Text → Compare To** and a worktree to compare the two side by side, or run `tm-compare <left-folder> <right-folder>` to compare any two folders. The **Files** tab shows both folders as aligned trees, with background colors for modified entries, entries on one side only, and file/folder type changes; filters, a name search, and an option to include ignored files narrow it down. Double-click a file to compare its contents in a tab of its own, in the editor's syntax highlighting, theme and font, with changed lines highlighted and next/previous change navigation.
 
 Copy files, folders, or single changes to either side with the arrows between the trees or beside each change in a file tab, **Edit → Copy to the Right** (⌥⌘→) and **Copy to the Left** (⌥⌘←), or the trees' context menus. Copies refuse to overwrite anything that changed on disk since it was compared, and **Undo** reverses them. The comparison refreshes itself when files change.
 

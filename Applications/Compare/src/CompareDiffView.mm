@@ -3,6 +3,7 @@
 #import "compare_diff.h"
 #import "compare_colors.h"
 #import "compare_transfer.h"
+#import "compare_syntax.h"
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -153,29 +154,32 @@ struct prepared_diff_t
 	std::vector<compare::diff_hunk_t> hunks;
 	NSData* left_data  = nil;
 	NSData* right_data = nil;
+	CGFloat row_height = 0;
+	NSColor* background[2] = { nil, nil }; // the theme's, per side
+	BOOL dark[2] = { NO, NO };
 };
 
-static NSFont* TextFont ()
+static NSFont* DefaultFont ()
 {
-	return [NSFont userFixedPitchFontOfSize:12] ?: [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+	return [NSFont userFixedPitchFontOfSize:11] ?: [NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];
 }
 
-// Every row has this height, so rows line up across the sides and the strip.
-static CGFloat RowHeight ()
+static CGFloat LineHeight (NSFont* font)
 {
-	NSFont* font = TextFont();
 	return ceil(font.ascender - font.descender + font.leading);
 }
 
 static CGFloat const kTextInset = 2; // textContainerInset.height
 
-static NSDictionary* BaseAttributes ()
+// The font with bold and/or italic, as the theme asks (sizes stay the same so
+// rows keep one height).
+static NSFont* FontWithTraits (NSFont* font, NSFontTraitMask traits)
 {
-	NSFont* font = TextFont();
-	NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
-	CGFloat height = RowHeight();
-	style.minimumLineHeight = style.maximumLineHeight = height;
-	return @{ NSFontAttributeName: font, NSForegroundColorAttributeName: NSColor.textColor, NSParagraphStyleAttributeName: style };
+	CTFontSymbolicTraits symbolic = ((traits & NSBoldFontMask) ? kCTFontBoldTrait : 0) | ((traits & NSItalicFontMask) ? kCTFontItalicTrait : 0);
+	if(!symbolic)
+		return font;
+	CTFontRef variant = CTFontCreateCopyWithSymbolicTraits((__bridge CTFontRef)font, 0, nullptr, symbolic, kCTFontBoldTrait|kCTFontItalicTrait);
+	return variant ? (__bridge_transfer NSFont*)variant : font;
 }
 
 static NSString* Plural (NSUInteger count, NSString* singular, NSString* plural)
@@ -183,8 +187,9 @@ static NSString* Plural (NSUInteger count, NSString* singular, NSString* plural)
 	return [NSString stringWithFormat:@"%lu %@", count, count == 1 ? singular : plural];
 }
 
-// Builds both sides off the main thread.
-static prepared_diff_t Prepare (compare::text_diff_t const& diff)
+// Builds both sides off the main thread, in each file's editor font and
+// theme colors, with its syntax highlighting.
+static prepared_diff_t Prepare (compare::text_diff_t const& diff, compare::side_syntax_t const syntax[2])
 {
 	prepared_diff_t result;
 	if(diff.problem)
@@ -193,18 +198,51 @@ static prepared_diff_t Prepare (compare::text_diff_t const& diff)
 		return result;
 	}
 
-	NSDictionary* base = BaseAttributes();
+	NSFont* fonts[2];
+	for(size_t i = 0; i < 2; ++i)
+		fonts[i] = syntax[i].font ?: DefaultFont();
+	result.row_height = MAX(LineHeight(fonts[0]), LineHeight(fonts[1]));
+	NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
+	style.minimumLineHeight = style.maximumLineHeight = result.row_height;
+	NSDictionary* bases[2];
+	for(size_t i = 0; i < 2; ++i)
+	{
+		bases[i] = @{ NSFontAttributeName: fonts[i], NSForegroundColorAttributeName: syntax[i].foreground ?: NSColor.textColor, NSParagraphStyleAttributeName: style };
+		result.background[i] = syntax[i].background;
+		result.dark[i]       = syntax[i].dark;
+	}
+
 	NSMutableAttributedString* left  = [[NSMutableAttributedString alloc] init];
 	NSMutableAttributedString* right = [[NSMutableAttributedString alloc] init];
 	auto leftRows  = std::make_shared<side_rows_t>();
 	auto rightRows = std::make_shared<side_rows_t>();
 
-	auto append = [&](NSMutableAttributedString* text, side_rows_t& rows, long line, NSArray<NSString*>* lines, NSColor* tint, NSString* other){
+	auto append = [&](NSMutableAttributedString* text, size_t side, side_rows_t& rows, long line, NSArray<NSString*>* lines, NSColor* tint, NSString* other){
 		rows.starts.push_back(text.length);
 		rows.lines.push_back(line);
 		NSString* content = line >= 0 ? lines[line] : @"";
 		NSUInteger start = text.length;
-		[text appendAttributedString:[[NSAttributedString alloc] initWithString:[content stringByAppendingString:@"\n"] attributes:base]];
+		[text appendAttributedString:[[NSAttributedString alloc] initWithString:[content stringByAppendingString:@"\n"] attributes:bases[side]]];
+		if(line >= 0 && (size_t)line < syntax[side].lines.size())
+		{
+			for(auto const& run : syntax[side].lines[line])
+			{
+				NSRange range = NSIntersectionRange(run.range, NSMakeRange(0, content.length));
+				if(!range.length)
+					continue;
+				range.location += start;
+				NSMutableDictionary* attributes = [NSMutableDictionary dictionary];
+				if(run.foreground)
+					attributes[NSForegroundColorAttributeName] = run.foreground;
+				if(run.traits)
+					attributes[NSFontAttributeName] = FontWithTraits(fonts[side], run.traits);
+				if(run.underline)
+					attributes[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
+				if(run.strikethrough)
+					attributes[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
+				[text addAttributes:attributes range:range];
+			}
+		}
 		if(tint)
 			[text addAttribute:CompareLineTintAttributeName value:tint range:NSMakeRange(start, content.length + 1)];
 		if(other)
@@ -244,8 +282,8 @@ static prepared_diff_t Prepare (compare::text_diff_t const& diff)
 				rightTint = compare::added_color();
 			break;
 		}
-		append(left,  *leftRows,  row.left,  diff.left_lines,  leftTint,  leftOther);
-		append(right, *rightRows, row.right, diff.right_lines, rightTint, rightOther);
+		append(left,  0, *leftRows,  row.left,  diff.left_lines,  leftTint,  leftOther);
+		append(right, 1, *rightRows, row.right, diff.right_lines, rightTint, rightOther);
 	}
 
 	NSMutableArray* status = [NSMutableArray array];
@@ -346,7 +384,7 @@ static CGFloat const kStripWidth = 34;
 // The arrows sit on each change's first row: → copies it to the right, ← to the left.
 - (NSRect)arrowRectForChange:(std::pair<long, long> const&)rows toRight:(BOOL)toRight
 {
-	CGFloat height = RowHeight();
+	CGFloat height = self.diffView.rowHeight;
 	CGFloat y = kTextInset + rows.first * height - self.diffView.scrollOffset;
 	return NSMakeRect(toRight ? 1 : kStripWidth / 2, y, kStripWidth / 2 - 1, height);
 }
@@ -360,7 +398,7 @@ static CGFloat const kStripWidth = 34;
 	NSRectFill(NSMakeRect(0, NSMinY(dirtyRect), 1, NSHeight(dirtyRect)));
 	NSRectFill(NSMakeRect(NSMaxX(self.bounds) - 1, NSMinY(dirtyRect), 1, NSHeight(dirtyRect)));
 
-	CGFloat height = RowHeight();
+	CGFloat height = self.diffView.rowHeight;
 	NSImageSymbolConfiguration* configuration = [[NSImageSymbolConfiguration configurationWithPointSize:height * 0.62 weight:NSFontWeightSemibold] configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:NSColor.secondaryLabelColor]];
 	NSImage* right = [[NSImage imageWithSystemSymbolName:@"arrow.right" accessibilityDescription:@"Copy to the right"] imageWithSymbolConfiguration:configuration];
 	NSImage* left  = [[NSImage imageWithSystemSymbolName:@"arrow.left" accessibilityDescription:@"Copy to the left"] imageWithSymbolConfiguration:configuration];
@@ -423,6 +461,7 @@ static CGFloat const kStripWidth = 34;
 	NSView* _body;
 	std::vector<long> _hunkRows;
 	std::vector<compare::diff_hunk_t> _hunks;
+	BOOL _shownDarkAppearance;
 	NSData* _data[2];
 	CompareChangeStrip* _strip;
 	NSUInteger _generation;
@@ -434,6 +473,7 @@ static CGFloat const kStripWidth = 34;
 	if(self = [super initWithFrame:frame])
 	{
 		_currentChange = -1;
+		_rowHeight = LineHeight(DefaultFont());
 
 		_pathLabel = [NSTextField labelWithString:@""];
 		_pathLabel.font = [NSFont boldSystemFontOfSize:NSFont.smallSystemFontSize];
@@ -626,14 +666,41 @@ static CGFloat const kStripWidth = 34;
 	_statusLabel.stringValue = @"Loading…";
 	NSString* left  = node.leftKind  == CompareKindFile ? node.leftPath  : nil;
 	NSString* right = node.rightKind == CompareKindFile ? node.rightPath : nil;
+	BOOL darkAppearance = self.darkAppearance;
+	_shownDarkAppearance = darkAppearance;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		auto prepared = std::make_shared<prepared_diff_t>(Prepare(compare::diff_files(left, right)));
+		compare::text_diff_t diff = compare::diff_files(left, right);
+		// A side without the file still gets the other file's theme and font.
+		compare::side_syntax_t syntax[2];
+		if(!diff.problem)
+		{
+			syntax[0] = compare::syntax_for_lines(diff.left_lines,  left ?: right, diff.left_data,  darkAppearance);
+			syntax[1] = compare::syntax_for_lines(diff.right_lines, right ?: left, diff.right_data, darkAppearance);
+		}
+		auto prepared = std::make_shared<prepared_diff_t>(Prepare(diff, syntax));
 		dispatch_async(dispatch_get_main_queue(), ^{
 			if(generation != _generation)
 				return;
 			[self showPrepared:*prepared change:keptChange];
 		});
 	});
+}
+
+// The appearance of the window this view is in, or will be in once its tab
+// is shown (a tab's view is not in the window until it is selected).
+- (BOOL)darkAppearance
+{
+	NSAppearance* appearance = self.window ? self.effectiveAppearance : (_hostWindow.effectiveAppearance ?: NSApp.effectiveAppearance);
+	return [[appearance bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]] isEqualToString:NSAppearanceNameDarkAqua];
+}
+
+// Like TextMate's editor, switch to the other appearance's theme when the
+// appearance changes (also when the view first joins its window).
+- (void)viewDidChangeEffectiveAppearance
+{
+	[super viewDidChangeEffectiveAppearance];
+	if(_node && !_message && self.darkAppearance != _shownDarkAppearance)
+		[self showNode:_node keepingChange:YES];
 }
 
 - (void)showPrepared:(prepared_diff_t const&)prepared change:(NSInteger)keptChange
@@ -653,10 +720,15 @@ static CGFloat const kStripWidth = 34;
 	_data[0]  = prepared.left_data;
 	_data[1]  = prepared.right_data;
 
+	_rowHeight = prepared.row_height;
 	NSAttributedString* texts[2] = { prepared.left, prepared.right };
 	std::shared_ptr<side_rows_t> rows[2] = { prepared.left_rows, prepared.right_rows };
 	for(size_t i = 0; i < 2; ++i)
 	{
+		// The theme's background; a dark theme draws the text (and the
+		// difference tints, which follow the appearance) as dark.
+		_textViews[i].backgroundColor = prepared.background[i] ?: NSColor.textBackgroundColor;
+		_scrollViews[i].appearance = prepared.background[i] ? [NSAppearance appearanceNamed:prepared.dark[i] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua] : nil;
 		[_textViews[i].textStorage setAttributedString:texts[i]];
 		_rulers[i].rows = rows[i];
 		[_textViews[i] scrollPoint:NSZeroPoint];

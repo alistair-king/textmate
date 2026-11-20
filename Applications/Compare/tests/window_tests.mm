@@ -7,6 +7,7 @@
 #import "../src/compare_colors.h"
 #import "../src/CompareDiffView.h"
 #import "compare_fixture.h"
+#import "syntax_fixture.h"
 
 // Drives the real CompareWindowController over the shared fixture. Failures
 // print `file:line: Assertion failed: …` and make the process exit non-zero.
@@ -619,6 +620,11 @@ static void TestTransfers (compare_fixture_t const& fixture)
 	CHECK([strip hasArrowForRow:RowFor(left, @"grown.txt") toRight:YES] && [strip hasArrowForRow:RowFor(left, @"grown.txt") toRight:NO]);
 	CHECK([strip hasArrowForRow:RowFor(left, @"left-only.txt") toRight:YES] && ![strip hasArrowForRow:RowFor(left, @"left-only.txt") toRight:NO]);
 	CHECK(![strip hasArrowForRow:RowFor(left, @"newdir") toRight:YES] && [strip hasArrowForRow:RowFor(left, @"newdir") toRight:NO]);
+	// A folder on both sides only contains differences: no arrows (it looks
+	// identical), though Copy to the Right still copies what differs inside it.
+	CHECK(![strip hasArrowForRow:RowFor(left, @"deep") toRight:YES] && ![strip hasArrowForRow:RowFor(left, @"deep") toRight:NO]);
+	SelectRow(left, @"deep");
+	CHECK([controller validateMenuItem:toRight]);
 	CHECK(![strip hasArrowForRow:RowFor(left, @"same.txt") toRight:YES] && ![strip hasArrowForRow:RowFor(left, @"same.txt") toRight:NO]);
 	[controller.window layoutIfNeeded];
 	NSOutlineView* right = [controller outlineViewForLeftSide:NO];
@@ -741,6 +747,42 @@ static void TestLiveRefreshAndSearch (compare_fixture_t const& fixture)
 	[reopened close];
 }
 
+// File tabs use TextMate's syntax highlighting, theme and font for the file.
+static void TestSyntaxHighlighting ()
+{
+	compare_fixture_t folders;
+	NSString* base = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"compare-syntax-window-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+	folders.left  = [base stringByAppendingPathComponent:@"left"];
+	folders.right = [base stringByAppendingPathComponent:@"right"];
+	CHECK(compare_fixture::write(folders.left,  @"code.cmpt", @"// note\nkeyword one\n") == nil);
+	CHECK(compare_fixture::write(folders.right, @"code.cmpt", @"// note\nkeyword two\nextra\n") == nil);
+
+	CompareWindowController* controller = Open(folders, nil);
+	controller.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+	[controller.window setFrame:NSMakeRect(100, 100, 1000, 600) display:NO];
+	CompareDiffView* diff = Show(controller, @"code.cmpt");
+	NSTextView* right = diff.rightTextView;
+	CHECK([syntax_fixture::hex(right.backgroundColor) isEqualToString:@"#FAFAFA"]);
+	CHECK([syntax_fixture::hex(AttributeAt(right, NSForegroundColorAttributeName, 0)) isEqualToString:@"#FF0000"]);   // comment
+	NSUInteger keyword = [right.string rangeOfString:@"keyword"].location;
+	CHECK([syntax_fixture::hex(AttributeAt(right, NSForegroundColorAttributeName, keyword)) isEqualToString:@"#0000FF"]);
+	NSFont* font = AttributeAt(right, NSFontAttributeName, keyword);
+	CHECK(font && (CTFontGetSymbolicTraits((__bridge CTFontRef)font) & kCTFontBoldTrait));
+	CHECK([syntax_fixture::hex(AttributeAt(right, NSForegroundColorAttributeName, keyword + 8)) isEqualToString:@"#111111"]); // plain text
+	// The tints still mark differences on top of the theme.
+	CHECK(AttributeAt(right, CompareLineTintAttributeName, keyword) == compare::modified_color());
+	CHECK(diff.rowHeight > 0);
+
+	// In dark appearance the dark theme is used, and the tints follow it.
+	[controller closeTabAtIndex:1];
+	controller.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+	diff = Show(controller, @"code.cmpt");
+	CHECK([syntax_fixture::hex(diff.rightTextView.backgroundColor) isEqualToString:@"#101010"]);
+	CHECK([diff.rightTextView.enclosingScrollView.appearance.name isEqualToString:NSAppearanceNameDarkAqua]);
+	Snapshot(controller, @"syntax");
+	[controller close];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -764,7 +806,8 @@ int main (int argc, char const* argv[])
 		[NSApplication sharedApplication];
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 		RegisterDefaults(); // tab widths, as Compare.app's main does
-		[NSUserDefaults.standardUserDefaults setVolatileDomain:@{ @"compareFilter": @0, @"compareIncludeIgnored": @NO, kUserDefaultsFoldersOnTopKey: @YES } forName:NSArgumentDomain];
+		// A test bundle (grammar and themes) plus these defaults, in the argument domain.
+		CHECK(syntax_fixture::install(@{ @"compareFilter": @0, @"compareIncludeIgnored": @NO, @"themeAppearance": @"auto", kUserDefaultsFoldersOnTopKey: @YES }));
 		CompareWindowController.gitExecutable = @COMPARE_TEST_GIT;
 		CompareWindowController.confirmsChanges = NO;
 
@@ -774,6 +817,7 @@ int main (int argc, char const* argv[])
 		{
 			TestChangedFilter(fixture);
 			TestFileTabs(fixture);
+			TestSyntaxHighlighting();
 
 			// Transfers change files: use a fixture of their own.
 			compare_fixture_t writable = compare_fixture::create(@COMPARE_TEST_GIT);

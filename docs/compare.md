@@ -45,7 +45,9 @@ Both versions are shown side by side with line numbers. Rows line up: a line onl
 - The header shows the file's path, how many changes there are and how many lines they affect, and notes different line endings (CRLF) or a missing newline at the end of a file.
 - **Go → Next Change** (⌃⌘↓) and **Previous Change** (⌃⌘↑), or the chevrons in the header, move between changes. Opening a file shows its first change.
 
-Binary files, files over 8 MB, folders, symbolic links (their targets are described instead), submodules and entries that are a file on one side and a folder on the other are not shown as text. Lines are shown in the user's fixed-pitch font without syntax highlighting.
+Binary files, files over 8 MB, folders, symbolic links (their targets are described instead), submodules and entries that are a file on one side and a folder on the other are not shown as text.
+
+Each side is shown as TextMate's editor would show that file: the file type it detects (from the name and first line), its grammar's syntax highlighting, the font and size from the `fontName` and `fontSize` settings, and the theme from the `theme` setting or, without one, the theme chosen for the current light or dark appearance (**View → Theme**). Settings in `.tm_properties` files apply as in the editor. The difference tints are drawn over the theme's background, and switching between light and dark appearance switches the theme. Files over 2 MB are shown in the theme's colors without highlighting.
 
 **File → Close Tab** (⌘W) closes the selected file tab; on the Files tab it closes the window. The Files tab cannot be closed and has no close button. **Window → Select Next Tab** (⇧⌘]) and **Select Previous Tab** (⇧⌘[) move between tabs. Tabs for files with the same name show their parent folder.
 
@@ -53,7 +55,7 @@ Binary files, files over 8 MB, folders, symbolic links (their targets are descri
 
 Changes can be copied in either direction.
 
-- **In the Files tab**, click the → or ← arrow between the two trees, beside an entry, to copy that entry to the right or to the left; arrows appear only where there is something to copy in that direction. To copy several entries, select them and choose **Edit → Copy to the Right** (⌥⌘→) or **Copy to the Left** (⌥⌘←), or use the same commands in either tree's context menu. A file or link replaces the other side's entry. A folder copies every differing entry inside it; entries only on the destination side are left alone. Where the destination has a folder in place of a file, or a file in place of a folder, that entry is moved to the Trash first. Copying more than one item, or replacing a folder or file of the other kind, asks for confirmation first.
+- **In the Files tab**, click the → or ← arrow between the two trees, beside an entry, to copy that entry to the right or to the left; arrows appear only on rows that are differences themselves, and only where there is something to copy in that direction. Folders that merely contain differences (default background, amber dot) have no arrows; select one and use the menu commands below to copy everything that differs inside it. To copy several entries, select them and choose **Edit → Copy to the Right** (⌥⌘→) or **Copy to the Left** (⌥⌘←), or use the same commands in either tree's context menu. A file or link replaces the other side's entry. A folder copies every differing entry inside it; entries only on the destination side are left alone. Where the destination has a folder in place of a file, or a file in place of a folder, that entry is moved to the Trash first. Copying more than one item, or replacing a folder or file of the other kind, asks for confirmation first.
 - **Move to Trash** in a tree's context menu moves that side's entries to the Trash.
 - **In a file tab**, the arrows between the two sides, next to each change, copy that change to the right (→) or to the left (←). **Edit → Copy Change to the Right** and **Copy Change to the Left** copy the current change. The tab stays on the same change number afterwards.
 
@@ -71,6 +73,7 @@ Every write replaces the file atomically and keeps its permissions. **Edit → U
 | `src/compare_diff.{h,mm}` | Line diff (xdiff histogram) as aligned rows and hunks |
 | `src/compare_transfer.{h,mm}` | Undoable change sets, tree copies and moves to the Trash, applying one change |
 | `src/compare_watch.h` | FSEvents wrapper, also used by TextMate's menu |
+| `src/compare_syntax.{h,mm}` | Syntax highlighting as TextMate's editor chooses it: file type, settings, font, theme, grammar parsed line by line |
 | `src/CompareWindowController.mm` | Window, tabs (`OakTabBarView`), trees (`FileBrowserOutlineView`, `FileItemTableCellView`), transfers and undo |
 | `src/CompareDiffView.mm` | File tab: text views, full-width line tints, line numbers, change arrows |
 
@@ -80,6 +83,7 @@ Tests (see CLAUDE.md for running them):
 |---|---|
 | `compare` | URL encoding, hunk model |
 | `compare-tree` | Listing and classification against a repository with a linked worktree, `check-ignore`, branch labels |
+| `compare-syntax` | Highlighting with a test bundle: file type, theme colors and font traits, parser state across lines, UTF-16 ranges, dark theme, files without a grammar, size limit |
 | `compare-transfer` | Applying changes, change sets and undo, tree copies, type changes, refused copies, the Trash |
 | `compare-window` | The real window: alignment, tints, sync, filters, focus, tabs, transfers with undo, live refresh, search, remembered expansion |
 | `compare-launch` | The signed app binary starts (library validation) |

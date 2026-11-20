@@ -321,8 +321,11 @@ static BOOL ConfirmsChanges = YES;
 		// Two equal trees with the copy arrows between them.
 		_treeStrip = [[CompareTreeStrip alloc] initWithFrame:NSZeroRect];
 		_treeStrip.outlineView = _sides[0].outlineView;
+		// Arrows only on rows that are themselves differences: a folder on both
+		// sides (default background, amber dot) gets none, though the Edit and
+		// context menus still copy what differs inside it.
 		_treeStrip.canCopy = ^BOOL(CompareNode* node, BOOL toRight){
-			return CompareCountCopies(node, toRight) > 0;
+			return !compare::contains_differences(node) && CompareCountCopies(node, toRight) > 0;
 		};
 		__weak CompareWindowController* weakController = self;
 		_treeStrip.copyHandler = ^(CompareNode* node, BOOL toRight){
@@ -1127,6 +1130,7 @@ static BOOL ConfirmsChanges = YES;
 	tab.relativePath = node.relativePath;
 	tab.node         = node;
 	tab.diffView     = [[CompareDiffView alloc] initWithFrame:NSZeroRect];
+	tab.diffView.hostWindow = self.window;
 	__weak CompareWindowController* weakSelf = self;
 	tab.diffView.changeHandler = ^(CompareDiffView* view, NSInteger change, BOOL toRight){
 		[weakSelf copyChange:change inView:view toRight:toRight];

@@ -13,6 +13,9 @@
 - (void)showMessage:(NSString*)message;
 
 @property (nonatomic, readonly, getter = isLoading) BOOL loading;
+@property (nonatomic, readonly) CGFloat rowHeight; // every row's height, on both sides
+// The window whose appearance picks the theme while this view is not in it.
+@property (nonatomic, weak) NSWindow* hostWindow;
 @property (nonatomic, readonly) NSInteger changeCount;   // hunks in the shown file
 @property (nonatomic, readonly) NSInteger currentChange; // -1 before the first
 
