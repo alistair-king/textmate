@@ -1,6 +1,6 @@
 # tm-compare — Development Plan
 
-Status: Phases 0 and 1 done (2026-11-20); Phase 2 next. This file is the working plan; it will be
+Status: Phases 0–2 done (2026-11-20); Phase 3 next. This file is the working plan; it will be
 replaced by `docs/compare.md` (user documentation) once the feature ships.
 
 ## Goal
@@ -155,7 +155,14 @@ patterns:
 │   README.md                   │  │   README.md                    │  ← identical: no background
 │   (missing)                   │ ←│   NOTES.md                     │  ← right only: grey left / green right
 └───────────────────────────────┴──┴────────────────────────────────┘
-│ file diff for the selected row (phase 2)                           │
+```
+
+The window is tabbed with TextMate's `OakTabBarView`: the first tab, "Files",
+holds the filter bar and the two trees above; each other tab compares one file.
+
+```
+┌ Files │ grown.txt │ multi.txt ─────────────────────────────────────┐
+│ (selected tab's view: the trees, or one file's side-by-side diff)  │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -212,7 +219,7 @@ Each phase ends with a green ctest suite (see CLAUDE.md → Testing).
 |---|---|---|
 | **0. Skeleton** ✅ | Compare.app and tm-compare built, embedded and signed. URL handling works. The window shows the two paths. Worktree discovery is reused and the Text → Compare To menu is live. | `command-palette-projects` still green; launcher `--help` |
 | **1. Tree comparison (read-only)** ✅ | File enumeration and classification. Two synchronised `FileBrowserOutlineView` trees with `FileItemTableCellView` cells, row background colours, filters and opening on `focus`. | `compare-tree` (model, Git fixture with a linked worktree) and `compare-window` (real window: alignment, tints, sync, filters, focus; `COMPARE_SNAPSHOT_DIR` writes light/dark PNGs) |
-| **2. File diff view** | xdiff hunks, side-by-side view with line background colours, synchronised scroll, next/previous change | Hunk-model unit tests (empty files, missing trailing newline, CRLF) |
+| **2. File diff view** ✅ | xdiff hunks, side-by-side view with line background colours, synchronised scroll, next/previous change | `compare` (hunk model: insert/delete/change pairing, empty sides, missing trailing newline, CRLF, binary, Latin-1, changed spans) and `compare-window` (contents, tints, navigation, messages) |
 | **3. Transfers** | File and folder copy in both directions, delete to Trash, then per-hunk apply in both directions. Staleness check, undo, re-classify after each change. | Apply/undo round-trips; refusal when the target changed on disk; a GUI test bundle like `theme-editor-selection` |
 | **4. Polish** | Live refresh via file-system events, "include ignored files" option, remembered expansion state, `docs/compare.md`, README | — |
 
@@ -230,3 +237,42 @@ Each phase ends with a green ctest suite (see CLAUDE.md → Testing).
   (Phase 3), comparing file modes (an executable-bit change alone currently
   counts as identical), and submodule contents (a submodule shows as
   identical when present on both sides).
+
+## Phase 2 notes
+
+- Model: `compare_diff.{h,mm}` turns xdiff hunks (`hunk_func`, no context)
+  into aligned rows: same, changed (paired lines), removed and added. View:
+  `CompareDiffView.{h,mm}`, one per file tab.
+- Tabs (changed from a bottom pane at the user's request): double-clicking a
+  file in either tree, ⌘↓ or ⌘O (the file browser's own double-click keys) or
+  File → Open File Comparison opens the file in its own tab, or selects its
+  existing tab. Double-clicking a folder expands or collapses it. The Files
+  tab cannot be closed; File → Close Tab (⌘W) closes the selected file tab
+  and becomes Close Window on the Files tab. Window → Select Next/Previous
+  Tab (⇧⌘] / ⇧⌘[). Compare Again refreshes every open tab; a file gone from
+  both sides says so. Tabs with the same file name show the parent folder.
+- `OakTabBarView` gained `showsCreateNewTabButton` (default YES, so TextMate
+  is unchanged); Compare hides the “+” button. Compare.app bundles the tab
+  bar's images and TMFileReference's file-type icons, which static
+  frameworks cannot carry.
+- Rows are paragraphs in two read-only TextKit 1 text views. A custom layout
+  manager draws full-width line tints (`CompareLineTintAttributeName`); the
+  differing span of a changed line (common prefix/suffix removed) gets a
+  stronger tint. Line-number rulers skip gap rows.
+- Status line: change and line counts, plus differing line endings (CRLF)
+  and a missing final newline. Lines are shown without their terminators.
+- Not shown as text: binary files, files over 8 MB, type changes, symbolic
+  links (their targets are described), submodules, folders.
+- Go → Next/Previous Change (⌃⌘↓/⌃⌘↑) and the header chevrons move between
+  changes within the selected file; the first change is shown on selection.
+- The test snapshots cannot show the file-contents pane: both
+  `-cacheDisplayInRect:` and layer rendering leave those text views blank,
+  although hit-testing shows nothing covering them and a text view rendered
+  on its own shows the tints correctly. Check that pane in a real window.
+- Signing: Compare.app links FileBrowser, which pulls in libOakSwiftUI.dylib.
+  Ad-hoc builds therefore need `com.apple.security.cs.disable-library-validation`
+  (as ThemeEditor has), or dyld refuses the library at launch. The
+  `compare-launch` test runs the signed binary with `--check-launch` to catch
+  this; it was confirmed to fail without the entitlement.
+- Deferred: syntax highlighting (OakDocumentView), intra-line diff beyond
+  prefix/suffix trimming, jumping from the last change to the next file.

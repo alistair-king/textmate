@@ -47,6 +47,7 @@ void test_file_statuses ()
 	OAK_ASSERT_EQ((int)(StatusOf(root, @"left-only.txt")), (int)(CompareStatusLeftOnly));
 	OAK_ASSERT_EQ((int)(StatusOf(root, @"newdir/x.txt")), (int)(CompareStatusRightOnly));
 	OAK_ASSERT_EQ((int)(StatusOf(root, @"link")), (int)(CompareStatusModified));
+	OAK_ASSERT_EQ((int)(StatusOf(root, @"multi.txt")), (int)(CompareStatusModified));
 }
 
 void test_tracked_file_deleted_on_disk_is_missing ()
@@ -119,7 +120,7 @@ void test_children_sorted_folders_first ()
 {
 	CompareNode* root = Tree();
 	NSArray<CompareNode*>* children = root.children;
-	OAK_ASSERT_EQ(children.count, 11);
+	OAK_ASSERT_EQ(children.count, 12);
 	OAK_ASSERT([[[children subarrayWithRange:NSMakeRange(0, 3)] valueForKey:@"name"] isEqual:(@[ @"deep", @"kind", @"newdir" ])]);
 	for(NSUInteger i = 3; i < children.count; ++i)
 		OAK_ASSERT(!children[i].isFolder);
@@ -133,7 +134,7 @@ void test_leaf_counts ()
 {
 	NSDictionary* counts = CompareLeafCounts(Tree());
 	OAK_ASSERT_EQ([counts[@(CompareStatusIdentical)] intValue],   4); // same.txt, deep/a/c.txt, é.txt, .gitignore
-	OAK_ASSERT_EQ([counts[@(CompareStatusModified)] intValue],    4); // same-size, grown, deep/a/b, link
+	OAK_ASSERT_EQ([counts[@(CompareStatusModified)] intValue],    5); // same-size, grown, deep/a/b, link, multi
 	OAK_ASSERT_EQ([counts[@(CompareStatusLeftOnly)] intValue],    2); // left-only.txt, gone.txt
 	OAK_ASSERT_EQ([counts[@(CompareStatusRightOnly)] intValue],   2); // newdir/x.txt, kind/inner.txt
 	OAK_ASSERT_EQ([counts[@(CompareStatusTypeChanged)] intValue], 1); // kind: file on the left, folder on the right

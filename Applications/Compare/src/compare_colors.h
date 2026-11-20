@@ -22,6 +22,7 @@ namespace compare {
 	inline NSColor* folder_color ()       { static NSColor* color = tint(@"compare.folder",      NSColor.systemOrangeColor, 0.09, 0.13); return color; }
 	inline NSColor* added_color ()        { static NSColor* color = tint(@"compare.added",       NSColor.systemGreenColor,  0.20, 0.28); return color; }
 	inline NSColor* placeholder_color ()  { static NSColor* color = tint(@"compare.placeholder", NSColor.systemGrayColor,   0.14, 0.20); return color; }
+	inline NSColor* changed_text_color () { static NSColor* color = tint(@"compare.changedText", NSColor.systemOrangeColor, 0.38, 0.50); return color; }
 	inline NSColor* type_changed_color () { static NSColor* color = tint(@"compare.typeChanged", NSColor.systemRedColor,    0.20, 0.28); return color; }
 
 	// Background for a node's row on one side; nil for identical rows.

@@ -833,6 +833,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		[self addSubview:_backgroundView positioned:NSWindowBelow relativeTo:nil];
 
 		[self addSubview:self.createNewTabButton positioned:NSWindowAbove relativeTo:nil];
+		_showsCreateNewTabButton = YES;
 
 		[self registerForDraggedTypes:@[ OakTabItemPasteboardType ]];
 	}
@@ -863,6 +864,15 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		_createNewTabButton.target     = self;
 	}
 	return _createNewTabButton;
+}
+
+- (void)setShowsCreateNewTabButton:(BOOL)flag
+{
+	if(_showsCreateNewTabButton == flag)
+		return;
+	_showsCreateNewTabButton = flag;
+	self.createNewTabButton.hidden = !flag;
+	[self updateToLayout:[self makeLayout]];
 }
 
 - (NSUInteger)selectedTabIndex
@@ -1370,7 +1380,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 - (NSArray<OakTabFrame*>*)makeLayout
 {
 	static NSString* const firstTabIdentifier = [NSUUID UUID].UUIDString;
-	CGFloat const visibleWidth = NSWidth(self.bounds) - NSWidth(self.createNewTabButton.frame);
+	CGFloat const visibleWidth = NSWidth(self.bounds) - (_showsCreateNewTabButton ? NSWidth(self.createNewTabButton.frame) : 0);
 	NSUInteger const countOfVisibleTabs = MIN(MAX(0, floor(visibleWidth / _minimumTabSize)), _tabItems.count);
 
 	NSMutableArray<OakTabItem*>* tabItems = [NSMutableArray array];

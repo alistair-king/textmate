@@ -2,6 +2,8 @@
 #define COMPARE_FIXTURE_H_H4M9XB2C
 
 #import <Foundation/Foundation.h>
+#include <algorithm>
+#include <initializer_list>
 
 // A repository (left, main checkout on `main`) and a linked worktree (right,
 // on `feature`) with one example of every comparison status. Shared by the
@@ -48,6 +50,15 @@ namespace compare_fixture {
 		return [NSFileManager.defaultManager removeItemAtPath:[root stringByAppendingPathComponent:relativePath] error:nil] ? nil : [@"could not remove " stringByAppendingString:relativePath];
 	}
 
+	// Twenty numbered lines; the right side changes two separate lines.
+	inline NSString* numbered_lines (std::initializer_list<long> changed)
+	{
+		NSMutableString* text = [NSMutableString string];
+		for(long i = 1; i <= 20; ++i)
+			[text appendFormat:std::find(changed.begin(), changed.end(), i) != changed.end() ? @"line %ld changed\n" : @"line %ld\n", i];
+		return text;
+	}
+
 	inline compare_fixture_t create (NSString* git)
 	{
 		compare_fixture_t fixture;
@@ -68,6 +79,7 @@ namespace compare_fixture {
 			^{ return write(left, @"deep/a/c.txt",   @"unchanged\n"); },
 			^{ return write(left, @"kind",           @"a file on the left\n"); },
 			^{ return link(left,  @"link",           @"same.txt"); },
+			^{ return write(left, @"multi.txt",      numbered_lines({ })); },
 			^{ return run_git(git, left, @[ @"add", @"-A" ]); },
 			^{ return run_git(git, left, @[ @"commit", @"-q", @"-m", @"Initial" ]); },
 			^{ return run_git(git, left, @[ @"worktree", @"add", @"-q", @"-b", @"feature", right ]); },
@@ -87,6 +99,7 @@ namespace compare_fixture {
 			^{ return remove(right, @"kind"); },
 			^{ return write(right, @"kind/inner.txt", @"a folder on the right\n"); },
 			^{ return link(right,  @"link",           @"grown.txt"); },
+			^{ return write(right, @"multi.txt",      numbered_lines({ 3, 16 })); },
 		];
 		for(NSString*(^step)() in steps)
 		{

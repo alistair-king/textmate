@@ -117,9 +117,11 @@ static BOOL IsDirectory (NSString* path)
 
 	NSMenuItem* file = [NSMenuItem new];
 	file.submenu = [[NSMenu alloc] initWithTitle:@"File"];
+	[file.submenu addItemWithTitle:@"Open File Comparison" action:@selector(openSelectedFiles:) keyEquivalent:@"o"];
 	[file.submenu addItemWithTitle:@"Compare Again" action:@selector(refresh:) keyEquivalent:@"r"];
 	[file.submenu addItem:NSMenuItem.separatorItem];
-	[file.submenu addItemWithTitle:@"Close" action:@selector(performClose:) keyEquivalent:@"w"];
+	[file.submenu addItemWithTitle:@"Close Tab" action:@selector(closeTab:) keyEquivalent:@"w"];
+	[file.submenu addItemWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"W"];
 	[menu addItem:file];
 
 	NSMenuItem* edit = [NSMenuItem new];
@@ -128,10 +130,21 @@ static BOOL IsDirectory (NSString* path)
 	[edit.submenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
 	[menu addItem:edit];
 
+	NSMenuItem* go = [NSMenuItem new];
+	go.submenu = [[NSMenu alloc] initWithTitle:@"Go"];
+	NSMenuItem* next = [go.submenu addItemWithTitle:@"Next Change" action:@selector(nextChange:) keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)NSDownArrowFunctionKey]];
+	next.keyEquivalentModifierMask = NSEventModifierFlagCommand|NSEventModifierFlagControl;
+	NSMenuItem* previous = [go.submenu addItemWithTitle:@"Previous Change" action:@selector(previousChange:) keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)NSUpArrowFunctionKey]];
+	previous.keyEquivalentModifierMask = NSEventModifierFlagCommand|NSEventModifierFlagControl;
+	[menu addItem:go];
+
 	NSMenuItem* window = [NSMenuItem new];
 	window.submenu = [[NSMenu alloc] initWithTitle:@"Window"];
 	[window.submenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
 	[window.submenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
+	[window.submenu addItem:NSMenuItem.separatorItem];
+	[window.submenu addItemWithTitle:@"Select Next Tab" action:@selector(selectNextTab:) keyEquivalent:@"}"];
+	[window.submenu addItemWithTitle:@"Select Previous Tab" action:@selector(selectPreviousTab:) keyEquivalent:@"{"];
 	[menu addItem:window];
 
 	NSApp.mainMenu = menu;
@@ -166,6 +179,14 @@ int main (int argc, char const* argv[])
 		settings_t::set_global_settings_path(oak::application_t::support("Global.tmProperties"));
 		if(NSString* defaults = [bundle pathForResource:@"Default" ofType:@"tmProperties"])
 			settings_t::set_default_settings_path(to_s(defaults));
+
+		// Used by the compare-launch test: reaching this point means dyld loaded
+		// every library under the app's real signature and entitlements.
+		if(argc == 2 && strcmp(argv[1], "--check-launch") == 0)
+		{
+			fprintf(stdout, "Compare launched\n");
+			return 0;
+		}
 
 		std::string git = scm::find_executable("git", "TM_GIT");
 		CompareWindowController.gitExecutable = git == NULL_STR ? nil : to_ns(git);

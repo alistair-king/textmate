@@ -1,9 +1,11 @@
 #import "CompareWindowController.h"
 #import "compare_tree.h"
 #import "compare_colors.h"
+#import "CompareDiffView.h"
 #import <FileBrowser/FileItem.h>
 #import <FileBrowser/FileBrowserOutlineView.h>
 #import <FileBrowser/FileItemTableCellView.h>
+#import <OakTabBarView/OakTabBarView.h>
 #import <Preferences/Keys.h>
 
 typedef NS_ENUM(NSInteger, CompareFilter) {
@@ -82,7 +84,23 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	return label;
 }
 
-@interface CompareWindowController () <NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate>
+// ========
+// = Tabs =
+// ========
+
+// The first tab compares the trees; the others each compare one file.
+@interface CompareTab : NSObject
+@property (nonatomic) NSUUID* identifier;
+@property (nonatomic) NSView* view;
+@property (nonatomic) NSString* relativePath;       // nil for the tree tab
+@property (nonatomic) CompareDiffView* diffView;    // nil for the tree tab
+@property (nonatomic) CompareNode* node;            // the entry shown, from the latest comparison
+@end
+
+@implementation CompareTab
+@end
+
+@interface CompareWindowController () <NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate, OakTabBarViewDataSource, OakTabBarViewDelegate>
 @end
 
 @implementation CompareWindowController
@@ -100,6 +118,11 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	NSUInteger _generation;
 	BOOL _synchronizing;
 	BOOL _revealFocusAfterLoad;
+
+	OakTabBarView* _tabBar;
+	NSView* _tabContent;
+	NSMutableArray<CompareTab*>* _tabs;
+	NSUInteger _selectedTab;
 }
 
 static NSString* GitExecutable;
@@ -120,7 +143,7 @@ static NSString* GitExecutable;
 		_revealFocusAfterLoad = YES;
 
 		window.title              = [NSString stringWithFormat:@"%@ ⇄ %@", left.lastPathComponent, right.lastPathComponent];
-		window.minSize            = NSMakeSize(560, 320);
+		window.minSize            = NSMakeSize(560, 420);
 		window.releasedWhenClosed = NO;
 		window.delegate           = self;
 		window.tabbingMode        = NSWindowTabbingModeDisallowed;
@@ -134,23 +157,50 @@ static NSString* GitExecutable;
 		[split addArrangedSubview:_sides[0].view];
 		[split addArrangedSubview:_sides[1].view];
 
-		NSBox* divider = [NSBox new];
-		divider.boxType = NSBoxSeparator;
-
+		// The tree tab: filter bar above the two trees.
+		CompareSeparatorView* divider = [[CompareSeparatorView alloc] initVertical:NO];
 		NSView* bar = [self makeBar];
-		NSView* content = [NSView new];
+		[split setContentHuggingPriority:NSLayoutPriorityDefaultLow - 10 forOrientation:NSLayoutConstraintOrientationVertical];
+		NSView* treesView = [NSView new];
 		for(NSView* view in @[ bar, divider, split ])
+		{
+			view.translatesAutoresizingMaskIntoConstraints = NO;
+			[treesView addSubview:view];
+			[view.leadingAnchor constraintEqualToAnchor:treesView.leadingAnchor].active = YES;
+			[view.trailingAnchor constraintEqualToAnchor:treesView.trailingAnchor].active = YES;
+		}
+		[bar.topAnchor constraintEqualToAnchor:treesView.topAnchor].active = YES;
+		[divider.topAnchor constraintEqualToAnchor:bar.bottomAnchor].active = YES;
+		[split.topAnchor constraintEqualToAnchor:divider.bottomAnchor].active = YES;
+		[split.bottomAnchor constraintEqualToAnchor:treesView.bottomAnchor].active = YES;
+
+		CompareTab* treesTab = [CompareTab new];
+		treesTab.identifier = [NSUUID UUID];
+		treesTab.view       = treesView;
+		_tabs = [NSMutableArray arrayWithObject:treesTab];
+
+		// TextMate's tab bar above the selected tab's view.
+		_tabBar = [[OakTabBarView alloc] initWithFrame:NSZeroRect];
+		_tabBar.dataSource = self;
+		_tabBar.delegate   = self;
+		_tabBar.showsCreateNewTabButton = NO;
+		_tabContent = [NSView new];
+
+		NSView* content = [NSView new];
+		for(NSView* view in @[ _tabBar, _tabContent ])
 		{
 			view.translatesAutoresizingMaskIntoConstraints = NO;
 			[content addSubview:view];
 			[view.leadingAnchor constraintEqualToAnchor:content.leadingAnchor].active = YES;
 			[view.trailingAnchor constraintEqualToAnchor:content.trailingAnchor].active = YES;
 		}
-		[bar.topAnchor constraintEqualToAnchor:content.topAnchor].active = YES;
-		[divider.topAnchor constraintEqualToAnchor:bar.bottomAnchor].active = YES;
-		[split.topAnchor constraintEqualToAnchor:divider.bottomAnchor].active = YES;
-		[split.bottomAnchor constraintEqualToAnchor:content.bottomAnchor].active = YES;
+		[_tabBar.topAnchor constraintEqualToAnchor:content.topAnchor].active = YES;
+		[_tabContent.topAnchor constraintEqualToAnchor:_tabBar.bottomAnchor].active = YES;
+		[_tabContent.bottomAnchor constraintEqualToAnchor:content.bottomAnchor].active = YES;
 		window.contentView = content;
+
+		[_tabBar reloadData];
+		[self selectTabAtIndex:0];
 
 		[window center];
 		[window setFrameAutosaveName:@"CompareWindow"];
@@ -202,13 +252,15 @@ static NSString* GitExecutable;
 	refresh.bezelStyle = NSBezelStyleAccessoryBarAction;
 	refresh.toolTip = @"Compare again (⌘R)";
 
-	NSView* spacer = [NSView new];
-	[spacer setContentHuggingPriority:NSLayoutPriorityDefaultLow - 1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+	// The summary label takes the spare width.
+	[_summaryLabel setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-	NSStackView* bar = [NSStackView stackViewWithViews:@[ _filterControl, spacer, _summaryLabel, _spinner, refresh ]];
+	NSStackView* bar = [NSStackView stackViewWithViews:@[ _filterControl, _summaryLabel, _spinner, refresh ]];
+	[bar setHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
 	bar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
 	bar.spacing     = 8;
 	bar.edgeInsets  = NSEdgeInsetsMake(6, 10, 6, 10);
+	[bar.heightAnchor constraintEqualToConstant:32].active = YES;
 	return bar;
 }
 
@@ -221,9 +273,12 @@ static NSString* GitExecutable;
 
 	side.nameLabel   = Label(root.lastPathComponent, [NSFont boldSystemFontOfSize:NSFont.systemFontSize], NSColor.labelColor);
 	side.branchLabel = Label(@"", [NSFont systemFontOfSize:NSFont.systemFontSize], NSColor.secondaryLabelColor);
-	[side.branchLabel setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+	[side.nameLabel setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+	[side.branchLabel setContentHuggingPriority:NSLayoutPriorityDefaultHigh + 1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+	[side.branchLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow - 1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 	NSStackView* title = [NSStackView stackViewWithViews:@[ side.nameLabel, side.branchLabel ]];
 	title.spacing = 6;
+	[title setHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
 
 	NSTextField* location = Label(root.stringByAbbreviatingWithTildeInPath, [NSFont systemFontOfSize:NSFont.smallSystemFontSize], NSColor.secondaryLabelColor);
 	location.toolTip = root;
@@ -250,6 +305,8 @@ static NSString* GitExecutable;
 	[outlineView sizeLastColumnToFit];
 	outlineView.dataSource = self;
 	outlineView.delegate   = self;
+	outlineView.target       = self;
+	outlineView.doubleAction = @selector(openSelectedFiles:); // also ⌘↓ and ⌘O
 	outlineView.menu       = [NSMenu new];
 	outlineView.menu.delegate = self;
 	side.outlineView = outlineView;
@@ -263,8 +320,7 @@ static NSString* GitExecutable;
 	scrollView.drawsBackground       = YES;
 	side.scrollView = scrollView;
 
-	NSBox* divider = [NSBox new];
-	divider.boxType = NSBoxSeparator;
+	CompareSeparatorView* divider = [[CompareSeparatorView alloc] initVertical:NO];
 
 	NSStackView* pane = [NSStackView stackViewWithViews:@[ header, divider, scrollView ]];
 	pane.orientation = NSUserInterfaceLayoutOrientationVertical;
@@ -354,6 +410,7 @@ static NSString* GitExecutable;
 		NSString* branch = side.left ? leftBranch : rightBranch;
 		side.branchLabel.stringValue = [branch isEqualToString:side.nameLabel.stringValue] ? @"" : branch ?: @"";
 	}
+	[self updateFileTabs]; // entries are new nodes after every comparison
 	if(leftBranch && rightBranch)
 		self.window.title = [NSString stringWithFormat:@"%@ ⇄ %@", leftBranch, rightBranch];
 	self.window.subtitle = _leftPath.stringByDeletingLastPathComponent.stringByAbbreviatingWithTildeInPath;
@@ -596,6 +653,204 @@ static NSString* GitExecutable;
 	NSOutlineView* source = notification.object;
 	[[self otherSide:[self sideForOutlineView:source]].outlineView selectRowIndexes:source.selectedRowIndexes byExtendingSelection:NO];
 	_synchronizing = NO;
+}
+
+// ==============================
+// = File comparison tabs =
+// ==============================
+
+- (IBAction)openSelectedFiles:(id)sender
+{
+	NSOutlineView* outlineView = [sender isKindOfClass:NSOutlineView.class] ? sender : _sides[0].outlineView;
+	NSInteger clicked = outlineView.clickedRow;
+	NSIndexSet* rows = clicked != -1 && ![outlineView.selectedRowIndexes containsIndex:clicked] ? [NSIndexSet indexSetWithIndex:clicked] : outlineView.selectedRowIndexes;
+
+	// Double-clicking a single folder expands or collapses it.
+	if(rows.count == 1)
+	{
+		CompareNode* node = [outlineView itemAtRow:rows.firstIndex];
+		if(node.isFolder)
+		{
+			if([outlineView isItemExpanded:node])
+					[outlineView collapseItem:node];
+			else	[outlineView expandItem:node];
+			return;
+		}
+	}
+
+	NSInteger last = NSNotFound;
+	for(NSUInteger row = rows.firstIndex; row != NSNotFound; row = [rows indexGreaterThanIndex:row])
+	{
+		CompareNode* node = [outlineView itemAtRow:row];
+		if(!node.isFolder)
+			last = [self indexOfTabForNode:node];
+	}
+	if(last != NSNotFound)
+		[self selectTabAtIndex:last];
+}
+
+// Returns the existing tab for the entry, or adds one.
+- (NSUInteger)indexOfTabForNode:(CompareNode*)node
+{
+	for(NSUInteger i = 1; i < _tabs.count; ++i)
+	{
+		if([_tabs[i].relativePath isEqualToString:node.relativePath])
+			return i;
+	}
+
+	CompareTab* tab = [CompareTab new];
+	tab.identifier   = [NSUUID UUID];
+	tab.relativePath = node.relativePath;
+	tab.node         = node;
+	tab.diffView     = [[CompareDiffView alloc] initWithFrame:NSZeroRect];
+	tab.view         = tab.diffView;
+	[tab.diffView showNode:node];
+	[_tabs addObject:tab];
+	[_tabBar reloadData];
+	return _tabs.count - 1;
+}
+
+- (void)updateFileTabs
+{
+	for(NSUInteger i = 1; i < _tabs.count; ++i)
+	{
+		CompareTab* tab = _tabs[i];
+		tab.node = [_root nodeAtRelativePath:tab.relativePath];
+		if(tab.node)
+				[tab.diffView showNode:tab.node];
+		else	[tab.diffView showMessage:@"This file is no longer in either folder."];
+	}
+	[_tabBar reloadData];
+}
+
+- (void)selectTabAtIndex:(NSUInteger)index
+{
+	if(index >= _tabs.count)
+		return;
+	NSView* view = _tabs[index].view;
+	if(view.superview != _tabContent)
+	{
+		[_tabContent.subviews makeObjectsPerformSelector:@selector(removeFromSuperview)];
+		view.translatesAutoresizingMaskIntoConstraints = NO;
+		[_tabContent addSubview:view];
+		[NSLayoutConstraint activateConstraints:@[
+			[view.topAnchor constraintEqualToAnchor:_tabContent.topAnchor],
+			[view.bottomAnchor constraintEqualToAnchor:_tabContent.bottomAnchor],
+			[view.leadingAnchor constraintEqualToAnchor:_tabContent.leadingAnchor],
+			[view.trailingAnchor constraintEqualToAnchor:_tabContent.trailingAnchor],
+		]];
+	}
+	_selectedTab = index;
+	_tabBar.selectedTabIndex = index;
+	NSView* responder = index == 0 ? (NSView*)_sides[0].outlineView : _tabs[index].diffView.leftTextView;
+	[self.window makeFirstResponder:responder];
+}
+
+- (void)closeTabAtIndex:(NSUInteger)index
+{
+	if(index == 0 || index >= _tabs.count) // the tree tab stays
+		return;
+	[_tabs removeObjectAtIndex:index];
+	NSUInteger selected = _selectedTab;
+	if(selected == index)
+		selected = MIN(index, _tabs.count - 1);
+	else if(selected > index)
+		--selected;
+	[_tabBar reloadData];
+	[self selectTabAtIndex:selected];
+}
+
+- (IBAction)closeTab:(id)sender
+{
+	if(_selectedTab == 0)
+			[self.window performClose:sender];
+	else	[self closeTabAtIndex:_selectedTab];
+}
+
+- (IBAction)selectNextTab:(id)sender     { [self selectTabAtIndex:(_selectedTab + 1) % _tabs.count]; }
+- (IBAction)selectPreviousTab:(id)sender { [self selectTabAtIndex:(_selectedTab + _tabs.count - 1) % _tabs.count]; }
+
+- (CompareDiffView*)selectedDiffView
+{
+	return _tabs[_selectedTab].diffView;
+}
+
+- (NSUInteger)tabCount         { return _tabs.count; }
+- (NSUInteger)selectedTabIndex { return _selectedTab; }
+
+- (IBAction)nextChange:(id)sender     { [self.selectedDiffView nextChange:sender]; }
+- (IBAction)previousChange:(id)sender { [self.selectedDiffView previousChange:sender]; }
+
+- (BOOL)validateMenuItem:(NSMenuItem*)item
+{
+	if(item.action == @selector(nextChange:) || item.action == @selector(previousChange:))
+		return self.selectedDiffView && [self.selectedDiffView validateMenuItem:item];
+	if(item.action == @selector(openSelectedFiles:))
+		return _selectedTab == 0 && _sides[0].outlineView.numberOfSelectedRows > 0;
+	if(item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))
+		return _tabs.count > 1;
+	if(item.action == @selector(closeTab:))
+		item.title = _selectedTab == 0 ? @"Close Window" : @"Close Tab";
+	return YES;
+}
+
+// ===================================
+// = Tab bar data source and delegate =
+// ===================================
+
+- (NSUInteger)numberOfRowsInTabBarView:(OakTabBarView*)aTabBarView
+{
+	return _tabs.count;
+}
+
+- (NSString*)tabBarView:(OakTabBarView*)aTabBarView titleForIndex:(NSUInteger)index
+{
+	CompareTab* tab = _tabs[index];
+	if(!tab.relativePath)
+		return @"Files";
+	// Name clashes show the parent folder, as TextMate's tabs do.
+	NSString* name = tab.relativePath.lastPathComponent;
+	for(CompareTab* other in _tabs)
+	{
+		if(other != tab && [other.relativePath.lastPathComponent isEqualToString:name])
+		{
+			NSString* parent = tab.relativePath.stringByDeletingLastPathComponent.lastPathComponent;
+			return parent.length ? [NSString stringWithFormat:@"%@ — %@", name, parent] : name;
+		}
+	}
+	return name;
+}
+
+- (NSString*)tabBarView:(OakTabBarView*)aTabBarView pathForIndex:(NSUInteger)index
+{
+	CompareTab* tab = _tabs[index];
+	return tab.node.leftPath ?: tab.node.rightPath ?: @"";
+}
+
+- (NSString*)tabBarView:(OakTabBarView*)aTabBarView toolTipForIndex:(NSUInteger)index
+{
+	return _tabs[index].relativePath ?: @"Folder comparison";
+}
+
+- (NSUUID*)tabBarView:(OakTabBarView*)aTabBarView UUIDForIndex:(NSUInteger)index
+{
+	return _tabs[index].identifier;
+}
+
+- (BOOL)tabBarView:(OakTabBarView*)aTabBarView isEditedAtIndex:(NSUInteger)index
+{
+	return NO;
+}
+
+- (BOOL)tabBarView:(OakTabBarView*)aTabBarView shouldSelectIndex:(NSUInteger)index
+{
+	[self selectTabAtIndex:index];
+	return YES;
+}
+
+- (void)performCloseTab:(OakTabBarView*)sender
+{
+	[self closeTabAtIndex:[sender isKindOfClass:OakTabBarView.class] ? sender.tag : _selectedTab];
 }
 
 - (void)clipViewBoundsDidChange:(NSNotification*)notification

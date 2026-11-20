@@ -1,8 +1,10 @@
 #import <Cocoa/Cocoa.h>
 #import <Preferences/Keys.h>
+#import <OakTabBarView/OakTabBarView.h>
 #import "../src/CompareWindowController.h"
 #import "../src/compare_tree.h"
 #import "../src/compare_colors.h"
+#import "../src/CompareDiffView.h"
 #import "compare_fixture.h"
 
 // Drives the real CompareWindowController over the shared fixture. Failures
@@ -12,6 +14,14 @@
 @interface CompareWindowController (Testing)
 - (NSOutlineView*)outlineViewForLeftSide:(BOOL)left;
 - (void)takeFilterFrom:(NSSegmentedControl*)sender;
+- (CompareDiffView*)selectedDiffView;
+- (NSUInteger)tabCount;
+- (NSUInteger)selectedTabIndex;
+- (void)selectTabAtIndex:(NSUInteger)index;
+- (void)closeTabAtIndex:(NSUInteger)index;
+- (void)openSelectedFiles:(id)sender;
+- (void)closeTab:(id)sender;
+- (NSString*)tabBarView:(id)tabBar titleForIndex:(NSUInteger)index;
 @end
 
 static int Failures = 0;
@@ -96,6 +106,10 @@ static void SelectFilter (CompareWindowController* controller, NSInteger filter)
 	[controller.window layoutIfNeeded];
 }
 
+// Draws the content view into a PNG. Note: on recent macOS releases this
+// drawing path leaves the file-contents text views (inside scroll views with
+// rulers) and their header blank, although they display on screen; the
+// assertions, not the snapshot, cover that pane.
 static void Snapshot (CompareWindowController* controller, NSString* name)
 {
 	NSString* directory = NSProcessInfo.processInfo.environment[@"COMPARE_SNAPSHOT_DIR"];
@@ -130,11 +144,11 @@ static void TestChangedFilter (compare_fixture_t const& fixture)
 	NSOutlineView* right = [controller outlineViewForLeftSide:NO];
 
 	NSTextField* summary = [controller valueForKey:@"_summaryLabel"];
-	CHECK([summary.stringValue isEqualToString:@"4 modified · 2 only on the left · 2 only on the right · 1 changed type"]);
+	CHECK([summary.stringValue isEqualToString:@"5 modified · 2 only on the left · 2 only on the right · 1 changed type"]);
 	CHECK([controller.window.title isEqualToString:@"main ⇄ feature"]);
 
 	NSArray* names = TopLevelNames(left);
-	CHECK([names isEqual:(@[ @"deep", @"kind", @"newdir", @"gone.txt", @"grown.txt", @"left-only.txt", @"link", @"same-size.txt" ])]);
+	CHECK([names isEqual:(@[ @"deep", @"kind", @"newdir", @"gone.txt", @"grown.txt", @"left-only.txt", @"link", @"multi.txt", @"same-size.txt" ])]);
 	CHECK(Aligned(controller));
 
 	// Expanding on one side expands the other.
@@ -202,6 +216,151 @@ static void TestChangedFilter (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+// Selects `relativePath` in the left tree, opens it as a tab (the double-click
+// action) and waits for the contents to load.
+static CompareDiffView* Show (CompareWindowController* controller, NSString* relativePath)
+{
+	NSOutlineView* left = [controller outlineViewForLeftSide:YES];
+	NSInteger row = RowFor(left, relativePath);
+	CHECK(row != -1);
+	[left selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+	[controller selectTabAtIndex:0];
+	[NSApp sendAction:left.doubleAction to:left.target from:left];
+	CompareDiffView* diffView = controller.selectedDiffView;
+	CHECK(diffView != nil);
+	CHECK(WaitUntil(^{ return (BOOL)!diffView.loading; }));
+	[controller.window layoutIfNeeded];
+	return diffView;
+}
+
+static id AttributeAt (NSTextView* textView, NSAttributedStringKey name, NSUInteger index)
+{
+	NSTextStorage* storage = textView.textStorage;
+	return index < storage.length ? [storage attribute:name atIndex:index effectiveRange:nullptr] : nil;
+}
+
+static void TestFileTabs (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	[controller.window setFrame:NSMakeRect(100, 100, 1000, 700) display:NO];
+	[controller.window layoutIfNeeded];
+	NSOutlineView* left = [controller outlineViewForLeftSide:YES];
+
+	// Only the tree tab to begin with; it shows the trees.
+	CHECK(controller.tabCount == 1);
+	CHECK(controller.selectedDiffView == nil);
+	CHECK([[controller tabBarView:nil titleForIndex:0] isEqualToString:@"Files"]);
+	CHECK(left.window == controller.window);
+
+	// Opening a modified file adds and selects its tab.
+	CompareDiffView* diff = Show(controller, @"grown.txt");
+	CHECK(controller.tabCount == 2 && controller.selectedTabIndex == 1);
+	CHECK([[controller tabBarView:nil titleForIndex:1] isEqualToString:@"grown.txt"]);
+	CHECK(left.window == nil); // the trees are not shown behind the file tab
+	CHECK(diff.message == nil);
+	CHECK([diff.leftTextView.string isEqualToString:@"short\n"]);
+	CHECK([diff.rightTextView.string isEqualToString:@"much longer contents\n"]);
+	CHECK(AttributeAt(diff.leftTextView, CompareLineTintAttributeName, 0) == compare::modified_color());
+	CHECK(AttributeAt(diff.rightTextView, CompareLineTintAttributeName, 0) == compare::modified_color());
+	CHECK(diff.changeCount == 1 && diff.currentChange == 0);
+	CHECK([diff.statusText hasPrefix:@"1 change · 1 line modified"]);
+
+	// Opening it again selects the existing tab.
+	CHECK(Show(controller, @"grown.txt") == diff);
+	CHECK(controller.tabCount == 2);
+
+	// The differing part of a changed line gets a stronger tint.
+	diff = Show(controller, @"same-size.txt");
+	CHECK(controller.tabCount == 3);
+	CHECK(AttributeAt(diff.leftTextView, NSBackgroundColorAttributeName, 0) == compare::changed_text_color());
+	CHECK(AttributeAt(diff.leftTextView, NSBackgroundColorAttributeName, 4) == nil); // the newline
+
+	// Two separate changes: navigation moves between them.
+	diff = Show(controller, @"multi.txt");
+	CHECK(diff.changeCount == 2);
+	CHECK(diff.currentChange == 0);
+	CHECK([diff.leftTextView.string componentsSeparatedByString:@"\n"].count == 21);
+	CHECK(AttributeAt(diff.leftTextView, CompareLineTintAttributeName, 0) == nil);
+	NSMenuItem* next = [[NSMenuItem alloc] initWithTitle:@"Next" action:@selector(nextChange:) keyEquivalent:@""];
+	NSMenuItem* previous = [[NSMenuItem alloc] initWithTitle:@"Previous" action:@selector(previousChange:) keyEquivalent:@""];
+	CHECK([controller validateMenuItem:next] && ![controller validateMenuItem:previous]);
+	[NSApp sendAction:@selector(nextChange:) to:controller from:nil];
+	CHECK(diff.currentChange == 1);
+	CHECK(![controller validateMenuItem:next] && [controller validateMenuItem:previous]);
+	[NSApp sendAction:@selector(previousChange:) to:controller from:nil];
+	CHECK(diff.currentChange == 0);
+
+	// A file only on one side: gaps on the other side.
+	[controller selectTabAtIndex:0];
+	[left expandItem:[left itemAtRow:RowFor(left, @"newdir")]];
+	diff = Show(controller, @"newdir/x.txt");
+	CHECK([diff.leftTextView.string isEqualToString:@"\n"]);
+	CHECK([diff.rightTextView.string isEqualToString:@"new on the right\n"]);
+	CHECK(AttributeAt(diff.leftTextView, CompareLineTintAttributeName, 0) == compare::placeholder_color());
+	CHECK(AttributeAt(diff.rightTextView, CompareLineTintAttributeName, 0) == compare::added_color());
+
+	// Entries without text explain why.
+	diff = Show(controller, @"link");
+	CHECK([diff.message isEqualToString:@"The symbolic link points to “same.txt” on the left and “grown.txt” on the right."]);
+	CHECK(controller.tabCount == 6);
+
+	// Double-clicking a folder expands or collapses it instead of opening a tab.
+	[controller selectTabAtIndex:0];
+	NSInteger deep = RowFor(left, @"deep");
+	[left selectRowIndexes:[NSIndexSet indexSetWithIndex:deep] byExtendingSelection:NO];
+	BOOL expanded = [left isItemExpanded:[left itemAtRow:deep]];
+	[NSApp sendAction:left.doubleAction to:left.target from:left];
+	CHECK([left isItemExpanded:[left itemAtRow:deep]] != expanded);
+	CHECK(controller.tabCount == 6 && controller.selectedTabIndex == 0);
+
+	// Several selected files open together; the last one is selected.
+	SelectFilter(controller, 3);
+	NSMutableIndexSet* rows = [NSMutableIndexSet indexSetWithIndex:RowFor(left, @"same.txt")];
+	[rows addIndex:RowFor(left, @".gitignore")];
+	[left selectRowIndexes:rows byExtendingSelection:NO];
+	[NSApp sendAction:left.doubleAction to:left.target from:left];
+	CHECK(controller.tabCount == 8 && controller.selectedTabIndex == 7);
+	CHECK(WaitUntil(^{ return (BOOL)!controller.selectedDiffView.loading; }));
+	CHECK([controller.selectedDiffView.statusText isEqualToString:@"No differences"]);
+	Snapshot(controller, @"file");
+
+	// A new comparison refreshes open tabs.
+	NSUInteger grown = NSNotFound;
+	for(NSUInteger i = 1; i < controller.tabCount; ++i)
+	{
+		if([[controller tabBarView:nil titleForIndex:i] isEqualToString:@"grown.txt"])
+			grown = i;
+	}
+	CHECK(grown == 1);
+	[NSFileManager.defaultManager removeItemAtPath:[fixture.right stringByAppendingPathComponent:@"newdir/x.txt"] error:nil];
+	[controller refresh:nil];
+	CHECK(WaitUntil(^{ return Loaded(controller); }));
+	[controller selectTabAtIndex:grown];
+	CHECK(WaitUntil(^{ return (BOOL)!controller.selectedDiffView.loading; }));
+	CHECK([controller.selectedDiffView.rightTextView.string isEqualToString:@"much longer contents\n"]);
+	[controller selectTabAtIndex:4];
+	CHECK([controller.selectedDiffView.message isEqualToString:@"This file is no longer in either folder."]);
+	[@"new on the right\n" writeToFile:[fixture.right stringByAppendingPathComponent:@"newdir/x.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+
+	// Closing tabs: the tree tab cannot be closed; Close Tab on it closes nothing else.
+	[controller closeTabAtIndex:0];
+	CHECK(controller.tabCount == 8);
+	[controller selectTabAtIndex:3];
+	[controller closeTab:nil];
+	CHECK(controller.tabCount == 7 && controller.selectedTabIndex == 3);
+	[controller closeTabAtIndex:1];
+	CHECK(controller.tabCount == 6 && controller.selectedTabIndex == 2);
+	NSMenuItem* close = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(closeTab:) keyEquivalent:@""];
+	[controller validateMenuItem:close];
+	CHECK([close.title isEqualToString:@"Close Tab"]);
+	[controller selectTabAtIndex:0];
+	[controller validateMenuItem:close];
+	CHECK([close.title isEqualToString:@"Close Window"]);
+
+	SelectFilter(controller, 0);
+	[controller close];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -224,6 +383,7 @@ int main (int argc, char const* argv[])
 	{
 		[NSApplication sharedApplication];
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+		RegisterDefaults(); // tab widths, as Compare.app's main does
 		[NSUserDefaults.standardUserDefaults setVolatileDomain:@{ @"compareFilter": @0, kUserDefaultsFoldersOnTopKey: @YES } forName:NSArgumentDomain];
 		CompareWindowController.gitExecutable = @COMPARE_TEST_GIT;
 
@@ -232,6 +392,7 @@ int main (int argc, char const* argv[])
 		if(!fixture.error)
 		{
 			TestChangedFilter(fixture);
+			TestFileTabs(fixture);
 			TestFocus(fixture);
 		}
 

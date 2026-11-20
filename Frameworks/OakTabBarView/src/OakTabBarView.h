@@ -15,6 +15,9 @@ typedef NS_ENUM(NSInteger, OakTabStatus) {
 - (void)performClose:(id)sender;
 
 @property (nonatomic) BOOL neverHideLeftBorder;
+// The trailing “+” button; YES by default. Tab bars whose tabs are not created
+// by the user (e.g. Compare) hide it, and the tabs use its width.
+@property (nonatomic) BOOL showsCreateNewTabButton;
 @end
 
 @protocol OakTabBarViewDelegate <NSObject>
