@@ -72,13 +72,17 @@ struct compare_options_t
 	BOOL include_ignored   = NO;
 	BOOL folders_first     = YES;
 	BOOL (^cancelled)()    = nil;
+	NSTimeInterval git_timeout = 60;          // listing with Git longer than this fails the comparison
+	void (^failed)(NSString* reason) = nil;   // why a listing failed (not called when cancelled)
 };
 
 // Relative paths of every non-folder entry below `root`. Uses
 // `git ls-files --cached --others --exclude-standard` when `git` is set and
 // `root` is inside a work tree (unless ignored files are included), otherwise
 // walks the folder. `.git` is never listed. Entries that no longer exist on
-// disk (deleted but still tracked) are skipped.
+// disk (deleted but still tracked) are skipped. When Git takes longer than
+// `git_timeout` the listing fails (nil, and `failed` is told why) rather than
+// walking the folder, which would include ignored files.
 NSArray<NSString*>* CompareListEntries (NSString* root, compare_options_t const& options);
 
 // Compares the two roots. Runs synchronously; call it from a worker queue.
@@ -105,7 +109,8 @@ NSSet<NSString*>* CompareIgnoredPaths (NSString* root, NSArray<NSString*>* relat
 NSString* CompareBranchLabel (NSString* root, NSString* git);
 
 // Counts of leaf nodes (files, links, …) by status, keyed by @(CompareStatus).
-// Folders whose type changed count once as CompareStatusTypeChanged.
+// A folder whose type changed counts once as CompareStatusTypeChanged, and
+// its contents are not counted again.
 NSDictionary<NSNumber*, NSNumber*>* CompareLeafCounts (CompareNode* root);
 
 #endif /* end of include guard: COMPARE_TREE_H_R3N8VZ1D */

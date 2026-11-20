@@ -102,11 +102,18 @@ static BOOL IsDirectory (NSString* path)
 
 - (void)windowWillClose:(NSNotification*)notification
 {
+	// This observer may run before the window's own delegate (the controller)
+	// hears of the close, so save its state here and release it only once
+	// the close has finished.
 	NSWindow* window = notification.object;
 	for(CompareWindowController* controller in [_controllers copy])
 	{
-		if(controller.window == window)
+		if(controller.window != window)
+			continue;
+		[controller saveState];
+		dispatch_async(dispatch_get_main_queue(), ^{
 			[_controllers removeObject:controller];
+		});
 	}
 }
 

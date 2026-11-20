@@ -19,4 +19,5 @@
 @property (nonatomic, copy) NSString* gitExecutable;                // default: found like TextMate's SCM support
 @property (nonatomic, copy) void (^openHandler)(NSURL* url);       // default: opens Compare.app with the URL
 @property (nonatomic, readonly) NSArray<NSString*>* otherWorktreePaths; // the current project's, as cached
+@property (nonatomic, readonly) NSUInteger discoveryCount;              // worktree lookups started
 @end

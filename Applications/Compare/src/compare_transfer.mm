@@ -167,6 +167,12 @@ namespace {
 
 - (BOOL)copyItemAtPath:(NSString*)source toPath:(NSString*)path error:(NSString**)error
 {
+	if(!path.length)
+	{
+		if(error)
+			*error = @"There is no destination for this change. Compare again, then try once more.";
+		return NO;
+	}
 	change_t change = { change_kind::write, path };
 	if(![self createParentOf:path folders:change.folders error:error] || ![self backUp:path into:&change.backup error:error])
 		return NO;
@@ -188,6 +194,12 @@ namespace {
 
 - (BOOL)writeData:(NSData*)data toPath:(NSString*)path mode:(mode_t)mode error:(NSString**)error
 {
+	if(!path.length)
+	{
+		if(error)
+			*error = @"There is no destination for this change. Compare again, then try once more.";
+		return NO;
+	}
 	change_t change = { change_kind::write, path };
 	if(![self createParentOf:path folders:change.folders error:error] || ![self backUp:path into:&change.backup error:error])
 		return NO;
@@ -222,6 +234,17 @@ namespace {
 	change.after = CompareStampAtPath(path);
 	_changes.push_back(change);
 	return YES;
+}
+
+- (NSArray<NSURL*>*)trashedURLs
+{
+	NSMutableArray* urls = [NSMutableArray array];
+	for(auto const& change : _changes)
+	{
+		if(change.kind == change_kind::trash && change.trashed)
+			[urls addObject:change.trashed];
+	}
+	return urls;
 }
 
 - (NSArray<NSString*>*)paths
@@ -262,6 +285,18 @@ namespace {
 		for(NSString* folder : change.folders)
 			[createdFolders addObject:folder];
 	}
+	// Every trashed entry must still be in the Trash, also where a later change
+	// wrote the same path: restoring it is the last step of the undo.
+	for(auto const& change : _changes)
+	{
+		if(change.kind == change_kind::trash && ![NSFileManager.defaultManager fileExistsAtPath:change.trashed.path])
+		{
+			if(error)
+				*error = [NSString stringWithFormat:@"%@ is no longer in the Trash, so this change cannot be undone.", DisplayName(change.path)];
+			return NO;
+		}
+	}
+
 	NSMutableSet<NSString*>* checked = [NSMutableSet set];
 	for(auto it = _changes.rbegin(); it != _changes.rend(); ++it)
 	{
@@ -274,12 +309,6 @@ namespace {
 		{
 			if(error)
 				*error = [NSString stringWithFormat:@"%@ has changed since, so this change cannot be undone.", DisplayName(change.path)];
-			return NO;
-		}
-		if(change.kind == change_kind::trash && ![NSFileManager.defaultManager fileExistsAtPath:change.trashed.path])
-		{
-			if(error)
-				*error = [NSString stringWithFormat:@"%@ is no longer in the Trash.", DisplayName(change.path)];
 			return NO;
 		}
 	}

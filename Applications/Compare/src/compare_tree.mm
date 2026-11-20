@@ -66,8 +66,10 @@
 // ==========
 
 // Runs git with file-backed output, so large listings cannot deadlock a pipe.
-static NSData* GitOutput (NSString* git, NSString* directory, NSArray<NSString*>* arguments, BOOL (^cancelled)(), NSData* input = nil, int acceptedStatus = 0)
+static NSData* GitOutput (NSString* git, NSString* directory, NSArray<NSString*>* arguments, BOOL (^cancelled)(), NSData* input = nil, int acceptedStatus = 0, NSTimeInterval timeout = 60, BOOL* timedOut = nullptr)
 {
+	if(timedOut)
+		*timedOut = NO;
 	FILE* output = tmpfile();
 	if(!output)
 		return nil;
@@ -104,12 +106,16 @@ static NSData* GitOutput (NSString* git, NSString* directory, NSArray<NSString*>
 			});
 		}
 		BOOL stopped = NO;
-		for(int waited = 0; dispatch_semaphore_wait(exited, dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC)) != 0; ++waited)
+		NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+		while(dispatch_semaphore_wait(exited, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_MSEC)) != 0)
 		{
-			if((cancelled && cancelled()) || waited > 600) // 60 s
+			BOOL late = deadline.timeIntervalSinceNow < 0;
+			if((cancelled && cancelled()) || late)
 			{
 				kill(task.processIdentifier, SIGKILL);
 				stopped = YES;
+				if(timedOut && late)
+					*timedOut = YES;
 				break;
 			}
 		}
@@ -124,9 +130,9 @@ static NSData* GitOutput (NSString* git, NSString* directory, NSArray<NSString*>
 	return result;
 }
 
-static NSArray<NSString*>* GitEntries (NSString* root, NSString* git, BOOL (^cancelled)())
+static NSArray<NSString*>* GitEntries (NSString* root, NSString* git, BOOL (^cancelled)(), NSTimeInterval timeout, BOOL* timedOut)
 {
-	NSData* data = GitOutput(git, root, @[ @"ls-files", @"-z", @"--cached", @"--others", @"--exclude-standard" ], cancelled);
+	NSData* data = GitOutput(git, root, @[ @"ls-files", @"-z", @"--cached", @"--others", @"--exclude-standard" ], cancelled, nil, 0, timeout, timedOut);
 	if(!data)
 		return nil;
 
@@ -227,7 +233,17 @@ NSArray<NSString*>* CompareListEntries (NSString* root, compare_options_t const&
 {
 	NSArray<NSString*>* entries = nil;
 	if(options.git && !options.include_ignored)
-		entries = GitEntries(root, options.git, options.cancelled);
+	{
+		BOOL timedOut = NO;
+		entries = GitEntries(root, options.git, options.cancelled, options.git_timeout, &timedOut);
+		if(timedOut)
+		{
+			// Walking instead would show everything .gitignore excludes.
+			if(options.failed)
+				options.failed([NSString stringWithFormat:@"Git took longer than %.0f seconds to list the files in “%@”.", options.git_timeout, root.lastPathComponent]);
+			return nil;
+		}
+	}
 	if(!entries && !(options.cancelled && options.cancelled()))
 		entries = WalkEntries(root, options.cancelled);
 
@@ -560,9 +576,13 @@ static void CountLeaves (CompareNode* node, NSMutableDictionary<NSNumber*, NSNum
 {
 	if(node.isFolder)
 	{
-		// A folder that is a file or link on the other side is one difference.
+		// A folder that is a file or link on the other side is one difference;
+		// what is inside it is part of that difference.
 		if(node.status == CompareStatusTypeChanged)
+		{
 			counts[@(node.status)] = @(counts[@(node.status)].unsignedIntegerValue + 1);
+			return;
+		}
 		for(CompareNode* child in node.children)
 			CountLeaves(child, counts);
 		return;

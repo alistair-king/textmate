@@ -134,3 +134,19 @@ void test_changed_range ()
 	// A changed accent stays with its base letter.
 	OAK_ASSERT(NSEqualRanges(compare::changed_range(@"café", @"cafè"), NSMakeRange(3, 2)));
 }
+
+void test_line_separators_are_shown_as_symbols ()
+{
+	// A lone CR, U+0085, U+2028 and U+2029 would start new lines in a text
+	// view; each diff line must stay one row.
+	auto diff = compare::diff_data(Data(@"a\rb\nc\u2028d\u0085e\u2029f\n"), Data(@"a\rb\nc\u2028d\u0085e\u2029f\n"));
+	OAK_ASSERT([Kinds(diff) isEqualToString:@"ss"]);
+	OAK_ASSERT([diff.left_lines[0] isEqualToString:@"a\u240Db"]);
+	OAK_ASSERT([diff.left_lines[1] isEqualToString:@"c\u2424d\u2424e\u00B6f"]);
+	NSCharacterSet* separators = [NSCharacterSet characterSetWithCharactersInString:@"\r\n\u0085\u2028\u2029"];
+	for(NSString* line in diff.left_lines)
+		OAK_ASSERT([line rangeOfCharacterFromSet:separators].location == NSNotFound);
+	// CRLF endings are still just endings.
+	auto crlf = compare::diff_data(Data(@"x\r\n"), Data(@"x\r\n"));
+	OAK_ASSERT([crlf.left_lines.firstObject isEqualToString:@"x"]);
+}

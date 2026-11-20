@@ -10,6 +10,9 @@
 // After a change was copied: stays on the same change number when it still exists.
 - (void)showNode:(CompareNode*)node keepingChange:(BOOL)keep;
 @property (nonatomic, readonly) CompareNode* node;
+// The same entry from a newer comparison, when its files are unchanged:
+// keeps what is shown, but copies use the new tree's paths.
+- (void)updateNode:(CompareNode*)node;
 - (void)showMessage:(NSString*)message;
 
 @property (nonatomic, readonly, getter = isLoading) BOOL loading;

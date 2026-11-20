@@ -30,7 +30,7 @@ Above the trees:
 - **Filter by name** narrows both trees to entries whose names contain the text (ignoring case and accents), expanding to show them. A matching folder shows everything inside it. Clearing the field restores the folders that were expanded before.
 - The refresh button (**File → Compare Again**, ⌘R) compares everything again.
 
-Comparisons stay current: when a compared file changes on disk, or a new file appears that is not ignored, Compare compares again. Changes inside `.git` and to ignored files do not trigger a comparison. Expanded folders are remembered for each pair of folders.
+If Git takes longer than a minute to list the files, the comparison fails rather than listing every file, ignored ones included. Comparisons stay current: when a compared file changes on disk, or a new file appears that is not ignored, Compare compares again. Changes inside `.git` and to ignored files do not trigger a comparison. Expanded folders are remembered for each pair of folders.
 
 Files are compared byte for byte; symbolic links by their targets. Empty folders appear when folders are walked (without Git, or with **Ignored Files**); Git's list of files has no empty folders. Submodules and nested repositories are listed but not compared. A change to a file's permissions alone is not shown as a difference.
 

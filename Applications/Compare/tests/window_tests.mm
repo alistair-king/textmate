@@ -204,7 +204,7 @@ static void TestChangedFilter (compare_fixture_t const& fixture)
 	NSOutlineView* right = [controller outlineViewForLeftSide:NO];
 
 	NSTextField* summary = [controller valueForKey:@"_summaryLabel"];
-	CHECK([summary.stringValue isEqualToString:@"5 modified · 2 only on the left · 2 only on the right · 1 changed type"]);
+	CHECK([summary.stringValue isEqualToString:@"5 modified · 2 only on the left · 1 only on the right · 1 changed type"]);
 	CHECK([controller.window.title isEqualToString:@"main ⇄ feature"]);
 
 	NSArray* names = TopLevelNames(left);
@@ -699,6 +699,22 @@ static void TestTransfers (compare_fixture_t const& fixture)
 	[undo undo];
 	SelectFilter(controller, 0);
 	[controller selectTabAtIndex:1];
+
+	// After a new comparison, an unchanged tab still copies to the right
+	// place: a change into a file that exists only on the left.
+	{
+		CompareDiffView* onlyLeft = Show(controller, @"left-only.txt");
+		[controller refresh:nil];
+		CHECK(WaitUntil(^{ return Loaded(controller); }));
+		CHECK(onlyLeft.changeCount == 1);
+		[controller copyToRight:nil];
+		CHECK(controller.lastProblem == nil);
+		CHECK([Contents(fixture.right, @"left-only.txt") isEqualToString:@"untracked on the left\n"]);
+		[undo undo];
+		CHECK(!CompareStampAtPath([fixture.right stringByAppendingPathComponent:@"left-only.txt"]).exists);
+		[controller closeTab:nil];
+		[controller selectTabAtIndex:1];
+	}
 
 	// A file tab refuses to copy over a file edited since it was shown.
 	[[Contents(fixture.right, @"multi.txt") stringByAppendingString:@"appended\n"] writeToFile:[fixture.right stringByAppendingPathComponent:@"multi.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];

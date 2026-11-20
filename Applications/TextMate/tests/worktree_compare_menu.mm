@@ -45,7 +45,9 @@ int main (int argc, char const* argv[])
 		Git = @(argv[1]);
 		[NSApplication sharedApplication];
 
-		NSString* base = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"worktree-compare-menu-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+		// Under a folder named “worktrees”: only the Git folder's own worktrees
+		// folder may trigger a lookup, not every change below this path.
+		NSString* base = [[NSTemporaryDirectory() stringByAppendingPathComponent:[@"worktree-compare-menu-" stringByAppendingString:NSUUID.UUID.UUIDString]] stringByAppendingPathComponent:@"worktrees"];
 		NSString* main    = [base stringByAppendingPathComponent:@"main checkout"];
 		NSString* feature = [base stringByAppendingPathComponent:@"feature-worktree"];
 		NSString* third   = [base stringByAppendingPathComponent:@"third"];
@@ -75,6 +77,13 @@ int main (int argc, char const* argv[])
 		CHECK(item.hidden);
 		[menu menuNeedsUpdate:item.submenu];
 		CHECK(item.submenu.numberOfItems == 1 && [item.submenu itemAtIndex:0].action == NULL); // “No Other Worktrees”
+
+		// Other Git activity (a commit) does not look the worktrees up again.
+		NSUInteger lookups = menu.discoveryCount;
+		CHECK(RunGit(main, @[ @"commit", @"-q", @"--allow-empty", @"-m", @"Activity" ]));
+		for(NSDate* until = [NSDate dateWithTimeIntervalSinceNow:2.5]; until.timeIntervalSinceNow > 0; )
+			[NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+		CHECK(menu.discoveryCount == lookups);
 
 		// A worktree added from a terminal shows the item, without activation.
 		CHECK(RunGit(main, @[ @"worktree", @"add", @"-q", @"-b", @"feature", feature ]));
@@ -119,7 +128,7 @@ int main (int argc, char const* argv[])
 		[menu updateMenuItemVisibility];
 		CHECK(item.hidden);
 
-		[NSFileManager.defaultManager removeItemAtPath:base error:nil];
+		[NSFileManager.defaultManager removeItemAtPath:base.stringByDeletingLastPathComponent error:nil];
 		if(Failures)
 			fprintf(stderr, "worktree-compare-menu: %d assertion(s) failed\n", Failures);
 		else

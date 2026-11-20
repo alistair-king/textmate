@@ -12,6 +12,22 @@ namespace compare {
 		return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding] ?: @"";
 	}
 
+	// Text views start a new line at these too, but xdiff (and Git) split
+	// only at LF: shown as symbols, each line stays one row. One UTF-16 unit
+	// each way, so highlighting ranges stay aligned.
+	static NSString* VisibleSeparators (NSString* line)
+	{
+		static NSCharacterSet* separators = [NSCharacterSet characterSetWithCharactersInString:@"\r\u0085\u2028\u2029"];
+		if([line rangeOfCharacterFromSet:separators].location == NSNotFound)
+			return line;
+		NSMutableString* visible = [line mutableCopy];
+		[visible replaceOccurrencesOfString:@"\r" withString:@"\u240D" options:0 range:NSMakeRange(0, visible.length)];     // ␍
+		[visible replaceOccurrencesOfString:@"\u0085" withString:@"\u2424" options:0 range:NSMakeRange(0, visible.length)]; // ␤
+		[visible replaceOccurrencesOfString:@"\u2028" withString:@"\u2424" options:0 range:NSMakeRange(0, visible.length)]; // ␤
+		[visible replaceOccurrencesOfString:@"\u2029" withString:@"\u00B6" options:0 range:NSMakeRange(0, visible.length)]; // ¶
+		return visible;
+	}
+
 	// Lines without terminators; a trailing line terminator does not start an
 	// extra empty line. Matches how xdiff splits records.
 	static NSArray<NSString*>* Lines (NSString* text, BOOL* missingNewline, BOOL* crlf)
@@ -27,6 +43,7 @@ namespace compare {
 		{
 			if([lines[i] hasSuffix:@"\r"])
 				lines[i] = [lines[i] substringToIndex:lines[i].length - 1];
+			lines[i] = VisibleSeparators(lines[i]);
 		}
 		return lines;
 	}

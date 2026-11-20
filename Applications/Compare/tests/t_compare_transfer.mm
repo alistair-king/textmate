@@ -424,3 +424,23 @@ void test_empty_folder_versus_file_is_a_type_change ()
 	OAK_ASSERT([changes undo:&error]);
 	OAK_ASSERT([Read(pair.right, @"x") isEqualToString:@"a file\n"]);
 }
+
+void test_undo_refuses_when_a_trashed_entry_has_left_the_trash ()
+{
+	// Copying a folder “config” over a file “config”: the file goes to the
+	// Trash, then a folder is created at the same path. With the Trash
+	// emptied, undo must refuse before changing anything.
+	pair_t pair = { Folder(), Folder() };
+	Write(pair.left,  @"config/settings.json", @"{}\n");
+	Write(pair.right, @"config",               @"a file\n");
+	CompareNode* root = CompareBuildTree(pair.left, pair.right, Options());
+	CompareChangeSet* changes = [CompareChangeSet new];
+	NSString* error = nil;
+	OAK_ASSERT(CompareCopyNode([root nodeAtRelativePath:@"config"], YES, changes, &error));
+	OAK_ASSERT(changes.trashedURLs.count == 1);
+	for(NSURL* url in changes.trashedURLs)
+		[NSFileManager.defaultManager removeItemAtURL:url error:nil];
+	OAK_ASSERT(![changes undo:&error]);
+	OAK_ASSERT([error containsString:@"no longer in the Trash"]);
+	OAK_ASSERT([Read(pair.right, @"config/settings.json") isEqualToString:@"{}\n"]); // nothing undone
+}

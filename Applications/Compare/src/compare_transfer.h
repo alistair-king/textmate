@@ -25,6 +25,8 @@
 
 // Every path this change set changed, in order.
 @property (nonatomic, readonly) NSArray<NSString*>* paths;
+// Where trashed entries went (tests empty the Trash with these).
+@property (nonatomic, readonly) NSArray<NSURL*>* trashedURLs;
 
 - (BOOL)undo:(NSString**)error;
 @end

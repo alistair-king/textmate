@@ -112,6 +112,7 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 	if([_pending containsObject:projectPath])
 		return;
 	[_pending addObject:projectPath];
+	++_discoveryCount;
 	NSString* configuredGit = _gitExecutable;
 	dispatch_async(_queue, ^{
 		NSString* gitPath = configuredGit;
@@ -154,9 +155,17 @@ static NSDictionary* WorktreeEntry (NSString* projectPath, NSDictionary<NSString
 	}
 	__weak WorktreeCompareMenu* weakSelf = self;
 	_watch.start(@[ folder ], nil, 1.0, ^(NSArray<NSString*>* paths){
+		// Only the Git folder's own worktrees folder: a repository stored under
+		// some folder named “worktrees” would otherwise match every Git change.
+		NSString* worktrees = [folder stringByAppendingPathComponent:@"worktrees"];
+		char resolved[PATH_MAX];
+		NSString* realWorktrees = realpath(folder.fileSystemRepresentation, resolved) ? [@(resolved) stringByAppendingPathComponent:@"worktrees"] : worktrees;
 		for(NSString* path in paths)
 		{
-			if([path containsString:@"/worktrees"])
+			BOOL matches = NO;
+			for(NSString* prefix in @[ worktrees, realWorktrees ])
+				matches |= [path isEqualToString:prefix] || [path hasPrefix:[prefix stringByAppendingString:@"/"]];
+			if(matches)
 			{
 				if(NSString* projectPath = weakSelf.mainProjectPath)
 					[weakSelf refreshProjectPath:projectPath];

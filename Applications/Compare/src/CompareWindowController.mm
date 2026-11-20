@@ -1151,7 +1151,11 @@ static BOOL ConfirmsChanges = YES;
 		tab.node = [_root nodeAtRelativePath:tab.relativePath];
 		// A live refresh compares again often: reload only files that changed.
 		if(previous && tab.node && previous.leftStamp == tab.node.leftStamp && previous.rightStamp == tab.node.rightStamp && tab.diffView.node)
+		{
+			// The old tree is gone: copies must use the new entry's paths.
+			[tab.diffView updateNode:tab.node];
 			continue;
+		}
 		if(tab.node)
 				[tab.diffView showNode:tab.node keepingChange:YES];
 		else	[tab.diffView showMessage:@"This file is no longer in either folder."];
@@ -1342,7 +1346,11 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 		CompareTab* tab = _tabs[i];
 		tab.node = [_root nodeAtRelativePath:tab.relativePath];
 		if(!affects(tab.relativePath))
+		{
+			if(tab.node && tab.diffView.node)
+				[tab.diffView updateNode:tab.node];
 			continue;
+		}
 		if(tab.node)
 				[tab.diffView showNode:tab.node keepingChange:YES];
 		else	[tab.diffView showMessage:@"This file is no longer in either folder."];

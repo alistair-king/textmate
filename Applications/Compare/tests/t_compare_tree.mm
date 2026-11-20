@@ -136,7 +136,7 @@ void test_leaf_counts ()
 	OAK_ASSERT_EQ([counts[@(CompareStatusIdentical)] intValue],   4); // same.txt, deep/a/c.txt, é.txt, .gitignore
 	OAK_ASSERT_EQ([counts[@(CompareStatusModified)] intValue],    5); // same-size, grown, deep/a/b, link, multi
 	OAK_ASSERT_EQ([counts[@(CompareStatusLeftOnly)] intValue],    2); // left-only.txt, gone.txt
-	OAK_ASSERT_EQ([counts[@(CompareStatusRightOnly)] intValue],   2); // newdir/x.txt, kind/inner.txt
+	OAK_ASSERT_EQ([counts[@(CompareStatusRightOnly)] intValue],   1); // newdir/x.txt (kind/inner.txt is part of the type change)
 	OAK_ASSERT_EQ([counts[@(CompareStatusTypeChanged)] intValue], 1); // kind: file on the left, folder on the right
 }
 
@@ -161,4 +161,17 @@ void test_ignored_paths ()
 	OAK_ASSERT([ignored isEqualToSet:([NSSet setWithObjects:@"build/out.o", @"build/new.o", nil])]);
 	OAK_ASSERT(CompareIgnoredPaths(Fixture().left, @[ @"same.txt" ], @COMPARE_TEST_GIT).count == 0);
 	OAK_ASSERT(CompareIgnoredPaths(Fixture().left, @[ @"build/out.o" ], nil).count == 0);
+}
+
+void test_git_timeout_fails_without_walking ()
+{
+	compare_options_t options = GitOptions();
+	options.git_timeout = 0.000001;
+	__block NSString* reason = nil;
+	options.failed = ^(NSString* why){ reason = why; };
+	OAK_ASSERT(CompareListEntries(Fixture().left, options) == nil); // not a folder walk with build/out.o
+	OAK_ASSERT([reason containsString:@"longer than"]);
+	reason = nil;
+	OAK_ASSERT(CompareBuildTree(Fixture().left, Fixture().right, options) == nil);
+	OAK_ASSERT(reason != nil);
 }

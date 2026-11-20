@@ -653,6 +653,11 @@ static CGFloat const kStripWidth = 34;
 	[self updateNavigation];
 }
 
+- (void)updateNode:(CompareNode*)node
+{
+	_node = node;
+}
+
 - (void)showNode:(CompareNode*)node
 {
 	[self showNode:node keepingChange:NO];
