@@ -32,6 +32,10 @@ NSAttributedStringKey const CompareLineTintAttributeName = @"CompareLineTint";
 	return _vertical ? NSMakeSize(1, NSViewNoIntrinsicMetric) : NSMakeSize(NSViewNoIntrinsicMetric, 1);
 }
 
+// Views do not clip to their bounds by default (macOS 14); every view here
+// that draws keeps its drawing, and so its backing layer, inside its bounds.
+- (BOOL)clipsToBounds { return YES; }
+
 - (void)drawRect:(NSRect)dirtyRect
 {
 	[NSColor.separatorColor set];
@@ -101,8 +105,11 @@ struct side_rows_t
 	return [NSFont monospacedDigitSystemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightRegular];
 }
 
+- (BOOL)clipsToBounds { return YES; }
+
 - (void)drawHashMarksAndLabelsInRect:(NSRect)rect
 {
+	rect = NSIntersectionRect(rect, self.bounds);
 	[NSColor.controlBackgroundColor set];
 	NSRectFill(rect);
 	[NSColor.separatorColor set];
@@ -331,6 +338,7 @@ static CGFloat const kStripWidth = 34;
 
 @implementation CompareChangeStrip
 - (BOOL)isFlipped { return YES; }
+- (BOOL)clipsToBounds { return YES; }
 
 - (NSSize)intrinsicContentSize
 {
@@ -347,6 +355,7 @@ static CGFloat const kStripWidth = 34;
 
 - (void)drawRect:(NSRect)dirtyRect
 {
+	dirtyRect = NSIntersectionRect(dirtyRect, self.bounds);
 	[NSColor.controlBackgroundColor set];
 	NSRectFill(dirtyRect);
 	[NSColor.separatorColor set];

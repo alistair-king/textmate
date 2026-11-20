@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#include <dlfcn.h>
 #import <Preferences/Keys.h>
 #import <OakTabBarView/OakTabBarView.h>
 #import "../src/CompareWindowController.h"
@@ -10,6 +11,14 @@
 // Drives the real CompareWindowController over the shared fixture. Failures
 // print `file:line: Assertion failed: …` and make the process exit non-zero.
 // Set COMPARE_SNAPSHOT_DIR to also write light and dark PNG snapshots.
+
+@interface CompareTreeStrip : NSView
+- (BOOL)hasArrowForRow:(NSInteger)row toRight:(BOOL)toRight;
+- (void)clickRow:(NSInteger)row toRight:(BOOL)toRight;
+- (BOOL)clickAtPoint:(NSPoint)point;
+- (NSRect)arrowRectForRow:(NSInteger)row toRight:(BOOL)toRight;
+- (NSRect)rowsArea;
+@end
 
 @interface CompareWindowController (Testing)
 - (NSOutlineView*)outlineViewForLeftSide:(BOOL)left;
@@ -109,10 +118,8 @@ static void SelectFilter (CompareWindowController* controller, NSInteger filter)
 	[controller.window layoutIfNeeded];
 }
 
-// Draws the content view into a PNG. Note: on recent macOS releases this
-// drawing path leaves the file-contents text views (inside scroll views with
-// rulers) and their header blank, although they display on screen; the
-// assertions, not the snapshot, cover that pane.
+// Draws the content view into a PNG for looking at by hand. The rendering
+// checks below use real window pixels instead.
 static void Snapshot (CompareWindowController* controller, NSString* name)
 {
 	NSString* directory = NSProcessInfo.processInfo.environment[@"COMPARE_SNAPSHOT_DIR"];
@@ -138,6 +145,54 @@ static void Snapshot (CompareWindowController* controller, NSString* name)
 		[[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{ }] writeToFile:[directory stringByAppendingPathComponent:file] atomically:YES];
 	}
 	controller.window.appearance = nil;
+}
+
+// ==================
+// = Rendered pixels =
+// ==================
+
+// The window as the window server shows it. Snapshots of the view hierarchy
+// miss what covers it (a view drawing outside its bounds once blanked most of
+// the window), so these checks read real pixels. An app may capture its own
+// windows; CGWindowListCreateImage is looked up at run time because newer SDKs
+// mark it unavailable. Returns nil when capturing is not possible.
+static NSBitmapImageRep* RenderedWindow (NSWindow* window)
+{
+	typedef CGImageRef (*capture_t)(CGRect, uint32_t, uint32_t, uint32_t);
+	static capture_t capture = (capture_t)dlsym(RTLD_DEFAULT, "CGWindowListCreateImage");
+	if(!capture)
+		return nil;
+	[window orderFrontRegardless];
+	[window displayIfNeeded];
+	for(NSDate* until = [NSDate dateWithTimeIntervalSinceNow:0.5]; until.timeIntervalSinceNow > 0; )
+		[NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+	CGImageRef image = capture(CGRectNull, 1 << 3 /* this window */, (uint32_t)window.windowNumber, 1 << 0 /* without the shadow */);
+	if(!image)
+		return nil;
+	NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithCGImage:image];
+	CGImageRelease(image);
+	return rep;
+}
+
+// The colour at the centre of `rect` (in `view`'s coordinates), in the captured window.
+static NSColor* PixelAt (NSBitmapImageRep* rendered, NSView* view, NSRect rect)
+{
+	NSWindow* window = view.window;
+	NSPoint center = [view convertPoint:NSMakePoint(NSMidX(rect), NSMidY(rect)) toView:nil];
+	CGFloat scale = rendered.pixelsWide / NSWidth(window.frame);
+	NSInteger x = (NSInteger)(center.x * scale);
+	NSInteger y = (NSInteger)((NSHeight(window.frame) - center.y) * scale); // image rows start at the top
+	return [[rendered colorAtX:x y:y] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+}
+
+static BOOL SameColor (NSColor* lhs, NSColor* rhs)
+{
+	return lhs && rhs && fabs(lhs.redComponent - rhs.redComponent) < 0.03 && fabs(lhs.greenComponent - rhs.greenComponent) < 0.03 && fabs(lhs.blueComponent - rhs.blueComponent) < 0.03;
+}
+
+static BOOL White (NSColor* color)
+{
+	return color && color.redComponent > 0.97 && color.greenComponent > 0.97 && color.blueComponent > 0.97;
 }
 
 static void TestChangedFilter (compare_fixture_t const& fixture)
@@ -168,7 +223,12 @@ static void TestChangedFilter (compare_fixture_t const& fixture)
 	// Background tints per side.
 	CHECK(TintAt(left, @"grown.txt") == compare::modified_color());
 	CHECK(TintAt(right, @"grown.txt") == compare::modified_color());
-	CHECK(TintAt(left, @"deep") == compare::folder_color());
+	// A folder on both sides is not itself a difference: default background,
+	// with a dot because something inside it differs.
+	CHECK(TintAt(left, @"deep") == nil && TintAt(right, @"deep") == nil);
+	CHECK([[[left rowViewAtRow:RowFor(left, @"deep") makeIfNecessary:YES] valueForKey:@"marker"] boolValue]);
+	CHECK(![[[left rowViewAtRow:RowFor(left, @"grown.txt") makeIfNecessary:YES] valueForKey:@"marker"] boolValue]);
+	CHECK(![[[left rowViewAtRow:RowFor(left, @"newdir") makeIfNecessary:YES] valueForKey:@"marker"] boolValue]); // one-sided: tinted instead
 	CHECK(TintAt(left, @"left-only.txt") == compare::added_color());
 	CHECK(TintAt(right, @"left-only.txt") == compare::placeholder_color());
 	CHECK(TintAt(left, @"newdir/x.txt") == compare::placeholder_color());
@@ -249,6 +309,25 @@ static void TestFileTabs (compare_fixture_t const& fixture)
 	[controller.window layoutIfNeeded];
 	NSOutlineView* left = [controller outlineViewForLeftSide:YES];
 
+	// Both trees are on screen, also after showing a file tab: the same
+	// modified row has the same tint on both sides.
+	controller.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+	if(NSBitmapImageRep* rendered = RenderedWindow(controller.window))
+	{
+		NSOutlineView* right = [controller outlineViewForLeftSide:NO];
+		NSInteger row = RowFor(left, @"grown.txt");
+		NSRect leftRow = [left rectOfRow:row], rightRow = [right rectOfRow:row];
+		leftRow.size.width = rightRow.size.width = 8; // the row's leading edge, away from text
+		NSColor* leftColor  = PixelAt(rendered, left, leftRow);
+		NSColor* rightColor = PixelAt(rendered, right, rightRow);
+		CHECK(SameColor(leftColor, rightColor));
+		CHECK(!White(leftColor));
+	}
+	else
+	{
+		fprintf(stderr, "compare-window: window capture unavailable, rendering checks skipped\n");
+	}
+
 	// Only the tree tab to begin with; it shows the trees.
 	CHECK(controller.tabCount == 1);
 	CHECK(controller.selectedDiffView == nil);
@@ -267,6 +346,24 @@ static void TestFileTabs (compare_fixture_t const& fixture)
 	CHECK(AttributeAt(diff.rightTextView, CompareLineTintAttributeName, 0) == compare::modified_color());
 	CHECK(diff.changeCount == 1 && diff.currentChange == 0);
 	CHECK([diff.statusText hasPrefix:@"1 change · 1 line modified"]);
+	if(NSBitmapImageRep* rendered = RenderedWindow(controller.window))
+	{
+		// The changed line's tint, past the end of the text on both sides.
+		NSRect leftLine  = NSMakeRect(NSMaxX(diff.leftTextView.visibleRect) - 20, 4, 4, 4);
+		NSRect rightLine = NSMakeRect(NSMaxX(diff.rightTextView.visibleRect) - 20, 4, 4, 4);
+		NSColor* leftColor  = PixelAt(rendered, diff.leftTextView, leftLine);
+		NSColor* rightColor = PixelAt(rendered, diff.rightTextView, rightLine);
+		CHECK(!White(leftColor) && SameColor(leftColor, rightColor));
+		// Back on the Files tab, the trees are drawn again.
+		[controller selectTabAtIndex:0];
+		if(NSBitmapImageRep* trees = RenderedWindow(controller.window))
+		{
+			NSRect row = [left rectOfRow:RowFor(left, @"grown.txt")];
+			row.size.width = 8;
+			CHECK(!White(PixelAt(trees, left, row)));
+		}
+		[controller selectTabAtIndex:1];
+	}
 
 	// Opening it again selects the existing tab.
 	CHECK(Show(controller, @"grown.txt") == diff);
@@ -478,6 +575,41 @@ static void TestTransfers (compare_fixture_t const& fixture)
 	CHECK(WaitUntil(^{ return (BOOL)!diff.loading; }));
 	CHECK(diff.changeCount == 2);
 	CHECK(![Contents(fixture.left, @"multi.txt") containsString:@"changed"]);
+
+	// The arrows between the trees: only where there is something to copy that way.
+	[controller selectTabAtIndex:0];
+	SelectFilter(controller, 3);
+	CompareTreeStrip* strip = [controller valueForKey:@"_treeStrip"];
+	CHECK([strip hasArrowForRow:RowFor(left, @"grown.txt") toRight:YES] && [strip hasArrowForRow:RowFor(left, @"grown.txt") toRight:NO]);
+	CHECK([strip hasArrowForRow:RowFor(left, @"left-only.txt") toRight:YES] && ![strip hasArrowForRow:RowFor(left, @"left-only.txt") toRight:NO]);
+	CHECK(![strip hasArrowForRow:RowFor(left, @"newdir") toRight:YES] && [strip hasArrowForRow:RowFor(left, @"newdir") toRight:NO]);
+	CHECK(![strip hasArrowForRow:RowFor(left, @"same.txt") toRight:YES] && ![strip hasArrowForRow:RowFor(left, @"same.txt") toRight:NO]);
+	[controller.window layoutIfNeeded];
+	NSOutlineView* right = [controller outlineViewForLeftSide:NO];
+	NSRect leftPane  = [left.enclosingScrollView convertRect:left.enclosingScrollView.bounds toView:nil];
+	NSRect rightPane = [right.enclosingScrollView convertRect:right.enclosingScrollView.bounds toView:nil];
+	NSRect stripRect = [strip convertRect:strip.bounds toView:nil];
+	CHECK(NSWidth(leftPane) > 400 && NSWidth(leftPane) == NSWidth(rightPane));
+	CHECK(NSWidth(stripRect) == 34 && NSMinX(stripRect) == NSMaxX(leftPane) && NSMaxX(stripRect) == NSMinX(rightPane));
+	CHECK(NSMinY(stripRect) <= NSMinY(leftPane) && NSMaxY(stripRect) >= NSMaxY(leftPane));
+	NSRect grownRow = [left convertRect:[left rectOfRow:RowFor(left, @"grown.txt")] toView:nil];
+	CHECK(NSIntersectsRect(grownRow, leftPane)); // visible, so its arrows are drawn
+	CHECK(left.window == controller.window && strip.window == controller.window);
+	Snapshot(controller, @"arrows");
+	CHECK(!NSIsEmptyRect(strip.rowsArea));
+	CHECK(NSIntersectsRect([strip arrowRectForRow:RowFor(left, @"grown.txt") toRight:YES], strip.rowsArea));
+	// Clicking where nothing can be copied does nothing.
+	NSRect sameArrow = [strip arrowRectForRow:RowFor(left, @"same.txt") toRight:YES];
+	CHECK(![strip clickAtPoint:NSMakePoint(NSMidX(sameArrow), NSMidY(sameArrow))]);
+	// Clicking the → beside grown.txt, as a mouse click would.
+	NSRect arrow = [strip arrowRectForRow:RowFor(left, @"grown.txt") toRight:YES];
+	CHECK([strip clickAtPoint:NSMakePoint(NSMidX(arrow), NSMidY(arrow))]);
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:@"short\n"]);
+	CHECK(![strip hasArrowForRow:RowFor(left, @"grown.txt") toRight:YES]);
+	[undo undo];
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:@"much longer contents\n"]);
+	SelectFilter(controller, 0);
+	[controller selectTabAtIndex:1];
 
 	// A file tab refuses to copy over a file edited since it was shown.
 	[[Contents(fixture.right, @"multi.txt") stringByAppendingString:@"appended\n"] writeToFile:[fixture.right stringByAppendingPathComponent:@"multi.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];

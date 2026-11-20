@@ -10,15 +10,15 @@ From the command line, run `tm-compare <left-folder> <right-folder>`, optionally
 
 ## Files tab
 
-The first tab, **Files**, shows the two folders side by side as trees that look like TextMate's file browser. Every row lines up across the two sides: an entry missing on one side shows as a dimmed placeholder there. Expanding, collapsing, selecting and scrolling on one side does the same on the other. Each header shows the folder's name, its branch and its location.
+The first tab, **Files**, shows the two folders side by side as trees that look like TextMate's file browser, with copy arrows between them (see [Copying changes](#copying-changes)). Every row lines up across the two sides: an entry missing on one side shows as a dimmed placeholder there. Expanding, collapsing, selecting and scrolling on one side does the same on the other. Each header shows the folder's name, its branch and its location.
 
-Row backgrounds show what differs:
+Only differences get a background color, so they stand out; everything else keeps the default background:
 
-| Color | Meaning |
+| Row | Meaning |
 |---|---|
-| None | Identical |
+| Default background | Identical |
+| Default background, amber dot at the end | A folder on both sides with differences somewhere inside it |
 | Amber | File contents differ |
-| Light amber | Folder contains differences |
 | Green | Only on this side (the other side shows a grey placeholder) |
 | Red | A file on one side and a folder or link on the other |
 
@@ -53,7 +53,7 @@ Binary files, files over 8 MB, folders, symbolic links (their targets are descri
 
 Changes can be copied in either direction.
 
-- **In the Files tab**, select entries and choose **Edit → Copy to the Right** (⌥⌘→) or **Copy to the Left** (⌥⌘←), or use the same commands in either tree's context menu. A file or link replaces the other side's entry. A folder copies every differing entry inside it; entries only on the destination side are left alone. Where the destination has a folder in place of a file, or a file in place of a folder, that entry is moved to the Trash first. Copying more than one item, or replacing a folder or file of the other kind, asks for confirmation first.
+- **In the Files tab**, click the → or ← arrow between the two trees, beside an entry, to copy that entry to the right or to the left; arrows appear only where there is something to copy in that direction. To copy several entries, select them and choose **Edit → Copy to the Right** (⌥⌘→) or **Copy to the Left** (⌥⌘←), or use the same commands in either tree's context menu. A file or link replaces the other side's entry. A folder copies every differing entry inside it; entries only on the destination side are left alone. Where the destination has a folder in place of a file, or a file in place of a folder, that entry is moved to the Trash first. Copying more than one item, or replacing a folder or file of the other kind, asks for confirmation first.
 - **Move to Trash** in a tree's context menu moves that side's entries to the Trash.
 - **In a file tab**, the arrows between the two sides, next to each change, copy that change to the right (→) or to the left (←). **Edit → Copy Change to the Right** and **Copy Change to the Left** copy the current change. The tab stays on the same change number afterwards.
 
@@ -85,6 +85,8 @@ Tests (see CLAUDE.md for running them):
 | `compare-launch` | The signed app binary starts (library validation) |
 | `tm-compare-help`, `tm-compare-rejects-missing-folder` | The launcher |
 
-`compare-window` needs a GUI session. With `COMPARE_SNAPSHOT_DIR` set it also writes light and dark PNG snapshots; these do not show the file tab's text views, which only draw on screen.
+`compare-window` needs a GUI session. It also checks real window pixels (the same row's tint on both sides, a changed line's tint), which catches views covered by others; snapshots of the view hierarchy do not. With `COMPARE_SNAPSHOT_DIR` set it writes light and dark PNG snapshots for looking at.
+
+Custom-drawn views (`CompareTreeStrip`, `CompareChangeStrip`, the line-number ruler, separators, row views) return YES from `clipsToBounds` and fill only within their bounds. Views do not clip by default since macOS 14, and a strip that filled its whole dirty rect once grew its backing layer to the window and covered everything drawn before it.
 
 Compare.app links the FileBrowser and OakTabBarView static libraries and bundles their images and TMFileReference's file-type icons, which static libraries cannot carry. FileBrowser pulls in `libOakSwiftUI.dylib`, so ad-hoc signed builds need `com.apple.security.cs.disable-library-validation`, as ThemeEditor does.

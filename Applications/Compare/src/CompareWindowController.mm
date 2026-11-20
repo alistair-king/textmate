@@ -47,14 +47,25 @@ static CompareStatus MaskForFilter (CompareFilter filter)
 
 @interface CompareRowView : NSTableRowView
 @property (nonatomic) NSColor* tintColor;
+@property (nonatomic) BOOL marker; // a dot at the trailing end: something inside differs
 @end
 
 @implementation CompareRowView
+- (BOOL)clipsToBounds { return YES; }
+
 - (void)setTintColor:(NSColor*)color
 {
 	if(_tintColor == color)
 		return;
 	_tintColor = color;
+	self.needsDisplay = YES;
+}
+
+- (void)setMarker:(BOOL)flag
+{
+	if(_marker == flag)
+		return;
+	_marker = flag;
 	self.needsDisplay = YES;
 }
 
@@ -66,6 +77,138 @@ static CompareStatus MaskForFilter (CompareFilter filter)
 		[_tintColor set];
 		NSRectFillUsingOperation(NSIntersectionRect(self.bounds, dirtyRect), NSCompositingOperationSourceOver);
 	}
+}
+
+// Drawn after the selection so it stays visible on a selected row.
+- (void)drawRect:(NSRect)dirtyRect
+{
+	[super drawRect:dirtyRect];
+	if(_marker)
+	{
+		CGFloat const size = 7;
+		NSRect dot = NSMakeRect(NSMaxX(self.bounds) - 14 - size, round(NSMidY(self.bounds) - size / 2), size, size);
+		[(self.isSelected && self.isEmphasized ? NSColor.alternateSelectedControlTextColor : compare::marker_color()) set];
+		[[NSBezierPath bezierPathWithOvalInRect:dot] fill];
+	}
+}
+@end
+
+// =============================================
+// = Copy arrows between the trees, one per row =
+// =============================================
+
+// Sits between the two trees. Rows line up across the trees, so the left
+// tree's row rectangles position the arrows: → copies the row's entry to the
+// right, ← to the left, shown only where there is something to copy.
+@interface CompareTreeStrip : NSView
+@property (nonatomic, weak) NSOutlineView* outlineView;
+@property (nonatomic, copy) BOOL (^canCopy)(CompareNode* node, BOOL toRight);
+@property (nonatomic, copy) void (^copyHandler)(CompareNode* node, BOOL toRight);
+- (BOOL)hasArrowForRow:(NSInteger)row toRight:(BOOL)toRight;
+- (void)clickRow:(NSInteger)row toRight:(BOOL)toRight;
+- (BOOL)clickAtPoint:(NSPoint)point;
+- (NSRect)arrowRectForRow:(NSInteger)row toRight:(BOOL)toRight;
+@end
+
+static CGFloat const kTreeStripWidth = 34;
+
+@implementation CompareTreeStrip
+- (BOOL)isFlipped { return YES; }
+
+// Views do not clip to their bounds by default (macOS 14): without this the
+// backing layer grows to whatever is drawn and covers the rest of the window.
+- (BOOL)clipsToBounds { return YES; }
+
+- (NSSize)intrinsicContentSize
+{
+	return NSMakeSize(kTreeStripWidth, NSViewNoIntrinsicMetric);
+}
+
+// The band where the tree's rows are visible, in this view's coordinates:
+// the tree is beside this view, so only its vertical extent counts.
+- (NSRect)rowsArea
+{
+	NSClipView* clip = _outlineView.enclosingScrollView.contentView;
+	if(!clip)
+		return NSZeroRect;
+	NSRect visible = [self convertRect:clip.bounds fromView:clip];
+	return NSIntersectionRect(self.bounds, NSMakeRect(0, NSMinY(visible), NSWidth(self.bounds), NSHeight(visible)));
+}
+
+// The tree rows beside `rect` (in this view's coordinates).
+- (NSRange)rowsBeside:(NSRect)rect
+{
+	NSRect inTree = [_outlineView convertRect:rect fromView:self];
+	return [_outlineView rowsInRect:NSMakeRect(0, NSMinY(inTree), NSWidth(_outlineView.bounds), NSHeight(inTree))];
+}
+
+- (NSRect)arrowRectForRow:(NSInteger)row toRight:(BOOL)toRight
+{
+	NSRect rowRect = [self convertRect:[_outlineView rectOfRow:row] fromView:_outlineView];
+	return NSMakeRect(toRight ? 1 : kTreeStripWidth / 2, NSMinY(rowRect), kTreeStripWidth / 2 - 1, NSHeight(rowRect));
+}
+
+- (BOOL)hasArrowForRow:(NSInteger)row toRight:(BOOL)toRight
+{
+	CompareNode* node = row >= 0 && row < _outlineView.numberOfRows ? [_outlineView itemAtRow:row] : nil;
+	return node && _canCopy && _canCopy(node, toRight);
+}
+
+- (void)clickRow:(NSInteger)row toRight:(BOOL)toRight
+{
+	if([self hasArrowForRow:row toRight:toRight] && _copyHandler)
+		_copyHandler([_outlineView itemAtRow:row], toRight);
+}
+
+- (void)drawRect:(NSRect)dirtyRect
+{
+	dirtyRect = NSIntersectionRect(dirtyRect, self.bounds);
+	[NSColor.controlBackgroundColor set];
+	NSRectFill(dirtyRect);
+	[NSColor.separatorColor set];
+	NSRectFill(NSMakeRect(0, NSMinY(dirtyRect), 1, NSHeight(dirtyRect)));
+	NSRectFill(NSMakeRect(NSMaxX(self.bounds) - 1, NSMinY(dirtyRect), 1, NSHeight(dirtyRect)));
+
+	NSRect area = self.rowsArea;
+	if(NSIsEmptyRect(area))
+		return;
+	[NSGraphicsContext saveGraphicsState];
+	NSRectClip(area);
+	NSRange rows = [self rowsBeside:area];
+	for(NSInteger row = rows.location; row < (NSInteger)NSMaxRange(rows); ++row)
+	{
+		for(BOOL toRight : { YES, NO })
+		{
+			if(![self hasArrowForRow:row toRight:toRight])
+				continue;
+			NSRect cell = [self arrowRectForRow:row toRight:toRight];
+			NSImageSymbolConfiguration* configuration = [[NSImageSymbolConfiguration configurationWithPointSize:MIN(NSHeight(cell) * 0.5, 12) weight:NSFontWeightSemibold] configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:NSColor.secondaryLabelColor]];
+			NSImage* image = [[NSImage imageWithSystemSymbolName:toRight ? @"arrow.right" : @"arrow.left" accessibilityDescription:toRight ? @"Copy to the right" : @"Copy to the left"] imageWithSymbolConfiguration:configuration];
+			NSSize size = image.size;
+			[image drawInRect:NSMakeRect(round(NSMidX(cell) - size.width / 2), round(NSMidY(cell) - size.height / 2), size.width, size.height) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+		}
+	}
+	[NSGraphicsContext restoreGraphicsState];
+}
+
+- (void)mouseDown:(NSEvent*)event
+{
+	[self clickAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
+}
+
+// Returns YES when the point hit an arrow.
+- (BOOL)clickAtPoint:(NSPoint)point
+{
+	if(!NSPointInRect(point, self.rowsArea))
+		return NO;
+	NSRange rows = [self rowsBeside:NSMakeRect(0, point.y, 1, 1)];
+	if(!rows.length)
+		return NO;
+	BOOL toRight = point.x < kTreeStripWidth / 2;
+	if(![self hasArrowForRow:rows.location toRight:toRight])
+		return NO;
+	[self clickRow:rows.location toRight:toRight];
+	return YES;
 }
 @end
 
@@ -142,6 +285,7 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	BOOL _comparing;
 	BOOL _refreshPending;
 
+	CompareTreeStrip* _treeStrip;
 	OakTabBarView* _tabBar;
 	NSView* _tabContent;
 	NSMutableArray<CompareTab*>* _tabs;
@@ -178,11 +322,32 @@ static BOOL ConfirmsChanges = YES;
 		_sides[0] = [self makeSideForRoot:left left:YES];
 		_sides[1] = [self makeSideForRoot:right left:NO];
 
-		NSSplitView* split = [NSSplitView new];
-		split.vertical     = YES;
-		split.dividerStyle = NSSplitViewDividerStyleThin;
-		[split addArrangedSubview:_sides[0].view];
-		[split addArrangedSubview:_sides[1].view];
+		// Two equal trees with the copy arrows between them.
+		_treeStrip = [[CompareTreeStrip alloc] initWithFrame:NSZeroRect];
+		_treeStrip.outlineView = _sides[0].outlineView;
+		_treeStrip.canCopy = ^BOOL(CompareNode* node, BOOL toRight){
+			return CompareCountCopies(node, toRight) > 0;
+		};
+		__weak CompareWindowController* weakController = self;
+		_treeStrip.copyHandler = ^(CompareNode* node, BOOL toRight){
+			[weakController copyEntriesAtRelativePaths:@[ node.relativePath ] toRight:toRight];
+		};
+		NSView* split = [NSView new];
+		for(NSView* view in @[ _sides[0].view, _treeStrip, _sides[1].view ])
+		{
+			view.translatesAutoresizingMaskIntoConstraints = NO;
+			[split addSubview:view];
+			[view.topAnchor constraintEqualToAnchor:split.topAnchor].active = YES;
+			[view.bottomAnchor constraintEqualToAnchor:split.bottomAnchor].active = YES;
+		}
+		[_treeStrip setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+		[NSLayoutConstraint activateConstraints:@[
+			[_sides[0].view.leadingAnchor constraintEqualToAnchor:split.leadingAnchor],
+			[_treeStrip.leadingAnchor constraintEqualToAnchor:_sides[0].view.trailingAnchor],
+			[_sides[1].view.leadingAnchor constraintEqualToAnchor:_treeStrip.trailingAnchor],
+			[_sides[1].view.trailingAnchor constraintEqualToAnchor:split.trailingAnchor],
+			[_sides[0].view.widthAnchor constraintEqualToAnchor:_sides[1].view.widthAnchor],
+		]];
 
 		// The tree tab: filter bar above the two trees.
 		CompareSeparatorView* divider = [[CompareSeparatorView alloc] initVertical:NO];
@@ -232,7 +397,6 @@ static BOOL ConfirmsChanges = YES;
 		[window center];
 		[window setFrameAutosaveName:@"CompareWindow"];
 		[content layoutSubtreeIfNeeded];
-		[split setPosition:NSWidth(split.bounds) / 2 ofDividerAtIndex:0];
 
 		for(CompareSide* side : _sides)
 		{
@@ -476,6 +640,7 @@ static BOOL ConfirmsChanges = YES;
 
 	_summaryLabel = Label(@"", [NSFont systemFontOfSize:NSFont.smallSystemFontSize], NSColor.secondaryLabelColor);
 	_summaryLabel.alignment = NSTextAlignmentRight;
+	_summaryLabel.lineBreakMode = NSLineBreakByTruncatingTail; // keep the first counts readable
 
 	_spinner = [NSProgressIndicator new];
 	_spinner.style = NSProgressIndicatorStyleSpinning;
@@ -575,6 +740,8 @@ static BOOL ConfirmsChanges = YES;
 	pane.orientation = NSUserInterfaceLayoutOrientationVertical;
 	pane.alignment   = NSLayoutAttributeWidth;
 	pane.spacing     = 0;
+	// The header spans the pane, its text at the leading edge.
+	[header.widthAnchor constraintEqualToAnchor:pane.widthAnchor].active = YES;
 	[scrollView setContentHuggingPriority:NSLayoutPriorityDefaultLow - 1 forOrientation:NSLayoutConstraintOrientationVertical];
 	side.view = pane;
 	return side;
@@ -690,6 +857,7 @@ static BOOL ConfirmsChanges = YES;
 
 - (void)reloadOutlines
 {
+	_treeStrip.needsDisplay = YES;
 	[_visibleChildren removeAllObjects];
 	for(CompareSide* side : _sides)
 	{
@@ -876,6 +1044,8 @@ static BOOL ConfirmsChanges = YES;
 	CompareRowView* rowView = [outlineView makeViewWithIdentifier:@"compareRow" owner:self] ?: [CompareRowView new];
 	rowView.identifier = @"compareRow";
 	rowView.tintColor  = compare::row_color(item, [self sideForOutlineView:outlineView].left);
+	rowView.marker     = compare::contains_differences(item);
+	rowView.toolTip    = rowView.marker ? @"Something inside this folder differs" : nil;
 	return rowView;
 }
 
@@ -885,6 +1055,7 @@ static BOOL ConfirmsChanges = YES;
 
 - (void)outlineViewItemDidExpand:(NSNotification*)notification
 {
+	_treeStrip.needsDisplay = YES;
 	if(_synchronizing)
 		return;
 	_synchronizing = YES;
@@ -894,6 +1065,7 @@ static BOOL ConfirmsChanges = YES;
 
 - (void)outlineViewItemDidCollapse:(NSNotification*)notification
 {
+	_treeStrip.needsDisplay = YES;
 	if(_synchronizing)
 		return;
 	_synchronizing = YES;
@@ -1361,6 +1533,7 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 
 - (void)clipViewBoundsDidChange:(NSNotification*)notification
 {
+	_treeStrip.needsDisplay = YES;
 	if(_synchronizing)
 		return;
 	NSClipView* source = notification.object;
