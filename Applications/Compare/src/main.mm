@@ -3,6 +3,7 @@
 #import "compare_url.h"
 #import "compare_syntax.h"
 #import "compare_menu.h"
+#import "CompareSettings.h"
 #import <mach-o/dyld.h>
 #import <OakSystem/application.h>
 #import <Preferences/Keys.h>
@@ -118,12 +119,19 @@ static BOOL IsDirectory (NSString* path)
 	}
 }
 
+- (IBAction)showSettings:(id)sender
+{
+	[CompareSettingsWindowController.sharedController showWindow:self];
+}
+
 - (void)createMenu
 {
 	NSMenu* menu = [NSMenu new];
 
 	NSMenuItem* app = [NSMenuItem new];
 	app.submenu = [NSMenu new];
+	[app.submenu addItemWithTitle:@"Settings…" action:@selector(showSettings:) keyEquivalent:@","];
+	[app.submenu addItem:NSMenuItem.separatorItem];
 	[app.submenu addItemWithTitle:@"Hide Compare" action:@selector(hide:) keyEquivalent:@"h"];
 	[app.submenu addItem:NSMenuItem.separatorItem];
 	[app.submenu addItemWithTitle:@"Quit Compare" action:@selector(terminate:) keyEquivalent:@"q"];
@@ -135,7 +143,8 @@ static BOOL IsDirectory (NSString* path)
 	[file.submenu addItemWithTitle:@"Compare Again" action:@selector(refresh:) keyEquivalent:@"r"];
 	[file.submenu addItem:NSMenuItem.separatorItem];
 	[file.submenu addItemWithTitle:@"Close Tab" action:@selector(closeTab:) keyEquivalent:@"w"];
-	[file.submenu addItemWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"W"];
+	[file.submenu addItem:NSMenuItem.separatorItem];
+	[file.submenu addItemWithTitle:@"Quit" action:@selector(terminate:) keyEquivalent:@"q"]; // as Compare → Quit Compare
 	[menu addItem:file];
 
 	NSMenuItem* edit = [NSMenuItem new];

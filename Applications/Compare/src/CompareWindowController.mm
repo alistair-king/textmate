@@ -4,6 +4,7 @@
 #import "CompareDiffView.h"
 #import "compare_transfer.h"
 #import "compare_watch.h"
+#import "CompareSettings.h"
 #include <stdlib.h>
 #import <FileBrowser/FileItem.h>
 #import <FileBrowser/FileBrowserOutlineView.h>
@@ -405,6 +406,7 @@ static BOOL ConfirmsChanges = YES;
 		}
 
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(displayDidChange:) name:CompareDisplayDidChangeNotification object:nil];
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(settingsDidChange:) name:CompareSettingsDidChangeNotification object:nil];
 		[self refresh:self];
 		[self startWatching];
 	}
@@ -501,8 +503,10 @@ static BOOL ConfirmsChanges = YES;
 // ignored; build output and Git's own files do not count.
 - (void)filesDidChange:(NSArray<NSString*>*)paths
 {
+	_fileEventCount += paths.count;
 	if(!_root)
 		return;
+	compare_excludes_t const excludes(CompareSettings.excludedNames);
 	NSMutableArray<NSString*>* unknown[2] = { [NSMutableArray array], [NSMutableArray array] };
 	for(NSString* path in paths)
 	{
@@ -513,6 +517,8 @@ static BOOL ConfirmsChanges = YES;
 		NSArray* components = relativePath.pathComponents;
 		if([components containsObject:@".git"] || ([relativePath.lastPathComponent hasPrefix:@"."] && [relativePath.lastPathComponent containsString:@".tm-compare-"]))
 			continue;
+		if(excludes.matches(relativePath))
+			continue; // Settings → Ignore folders and files (node_modules churn)
 		if(_includeIgnored || [_root nodeAtRelativePath:relativePath])
 		{
 			[self scheduleLiveRefresh];
@@ -619,6 +625,12 @@ static BOOL ConfirmsChanges = YES;
 			return YES;
 	}
 	return NO;
+}
+
+// Settings → Ignore folders and files changed: compare again.
+- (void)settingsDidChange:(NSNotification*)notification
+{
+	[self refresh:self];
 }
 
 // Another window's View menu choice.
@@ -798,6 +810,7 @@ static BOOL ConfirmsChanges = YES;
 	_comparing = YES;
 	_refreshPending = NO;
 	BOOL includeIgnored = _includeIgnored;
+	compare_excludes_t const excludes(CompareSettings.excludedNames);
 
 	NSString* left  = _leftPath;
 	NSString* right = _rightPath;
@@ -808,6 +821,7 @@ static BOOL ConfirmsChanges = YES;
 		options.git           = git;
 		options.folders_first   = foldersFirst;
 		options.include_ignored = includeIgnored;
+		options.excludes        = excludes;
 		options.cancelled       = ^BOOL{ return loading.isCancelled; };
 		CompareNode* root     = CompareBuildTree(left, right, options);
 		NSString* leftBranch  = root ? CompareBranchLabel(left, git) : nil;
@@ -1270,6 +1284,7 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 	compare_options_t options;
 	options.git             = CompareWindowController.gitExecutable;
 	options.include_ignored = _includeIgnored;
+	options.excludes        = compare_excludes_t(CompareSettings.excludedNames);
 	options.folders_first = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsFoldersOnTopKey];
 	return options;
 }

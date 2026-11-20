@@ -58,6 +58,14 @@ Each side is shown as TextMate's editor would show that file: the file type it d
 
 **File → Close Tab** (⌘W) closes the selected file tab; on the Files tab it closes the window. The Files tab cannot be closed and has no close button. **Window → Select Next Tab** (⇧⌘]) and **Select Previous Tab** (⇧⌘[) move between tabs. Tabs for files with the same name show their parent folder.
 
+## Settings
+
+**Compare → Settings…** (⌘,) opens Compare's settings.
+
+- **Ignore folders and files** is a comma-separated list of folder and file names that never appear in a comparison, on either side, together with everything inside them. The default is `node_modules`. Names may use the wildcards `*`, `?` and `[abc]`, so `*.log` hides every log file. A name with a slash, such as `docs/build` or `packages/*/dist`, matches a path from the top of the compared folders instead of a name at any depth. Case is ignored. Ignored entries are not listed, counted, copied as part of a folder, or watched: changes inside them do not compare again. They stay hidden with **Show Ignored Files** on, which concerns `.gitignore`. Leave the field empty to show everything.
+
+A change takes effect when you press Return, leave the field, or close the window, and every open comparison compares again.
+
 ## Copying changes
 
 Changes can be copied in either direction.
@@ -76,23 +84,25 @@ Every write replaces the file atomically and keeps its permissions. **Edit → U
 
 | File | Contents |
 |---|---|
-| `src/compare_tree.{h,mm}` | Listing (`git ls-files`, or a folder walk), classification, stamps, re-reading changed entries, `git check-ignore` |
+| `src/compare_tree.{h,mm}` | Listing (`git ls-files`, or a folder walk), the Ignore folders and files patterns (`compare_excludes_t`), classification, stamps, re-reading changed entries, `git check-ignore` |
 | `src/compare_diff.{h,mm}` | Line diff (xdiff histogram) as aligned rows and hunks |
 | `src/compare_transfer.{h,mm}` | Undoable change sets, tree copies and moves to the Trash, applying one change |
 | `src/compare_watch.h` | FSEvents wrapper, also used by TextMate's menu |
 | `src/compare_syntax.{h,mm}` | Syntax highlighting as TextMate's editor chooses it: file type, settings, font, theme, grammar parsed line by line |
 | `src/CompareWindowController.mm` | Window, tabs (`OakTabBarView`), trees (`FileBrowserOutlineView`, `FileItemTableCellView`), transfers and undo |
 | `src/CompareDiffView.mm` | File tab: text views, full-width line tints, line numbers, change arrows |
+| `src/CompareSettings.mm` | Settings (stored in Compare's defaults, `compareExcludedNames`) and the Settings window |
+| `src/compare_menu.h` | The View menu, shared with the tests |
 
 Tests (see CLAUDE.md for running them):
 
 | Suite | Covers |
 |---|---|
 | `compare` | URL encoding, hunk model |
-| `compare-tree` | Listing and classification against a repository with a linked worktree, `check-ignore`, branch labels |
+| `compare-tree` | Listing and classification against a repository with a linked worktree, `check-ignore`, branch labels, ignore patterns |
 | `compare-syntax` | Highlighting with a test bundle: file type, theme colors and font traits, parser state across lines, UTF-16 ranges, dark theme, files without a grammar, size limit |
 | `compare-transfer` | Applying changes, change sets and undo, tree copies, type changes, refused copies, the Trash |
-| `compare-window` | The real window: alignment, tints, sync, filters, focus, tabs, transfers with undo, live refresh, search, remembered expansion |
+| `compare-window` | The real window: alignment, tints, sync, filters, focus, tabs, transfers with undo, live refresh, search, remembered expansion, the Settings window |
 | `compare-launch` | The signed app binary starts (library validation) |
 | `tm-compare-help`, `tm-compare-rejects-missing-folder` | The launcher |
 | `worktree-compare-menu` | TextMate's **Compare To** menu: hidden without other worktrees, entries and the URL they open, following worktrees added or removed by Git |

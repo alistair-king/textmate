@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <fnmatch.h>
 #include <vector>
 
 @interface CompareNode ()
@@ -156,7 +157,71 @@ static NSArray<NSString*>* GitEntries (NSString* root, NSString* git, BOOL (^can
 	return entries.array;
 }
 
-static NSArray<NSString*>* WalkEntries (NSString* root, BOOL (^cancelled)())
+// ============
+// = Excludes =
+// ============
+
+compare_excludes_t::compare_excludes_t (NSString* list)
+{
+	for(NSString* item in [list componentsSeparatedByString:@","])
+	{
+		NSString* pattern = [item stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].precomposedStringWithCanonicalMapping;
+		while([pattern hasPrefix:@"/"])
+			pattern = [pattern substringFromIndex:1];
+		while([pattern hasSuffix:@"/"])
+			pattern = [pattern substringToIndex:pattern.length - 1];
+		if(!pattern.length)
+			continue;
+		([pattern containsString:@"/"] ? _paths : _names).emplace_back(pattern.UTF8String);
+	}
+}
+
+NSArray<NSString*>* compare_excludes_t::patterns () const
+{
+	NSMutableArray* result = [NSMutableArray array];
+	for(auto const* list : { &_names, &_paths })
+	{
+		for(auto const& pattern : *list)
+			[result addObject:@(pattern.c_str())];
+	}
+	return result;
+}
+
+bool compare_excludes_t::matches (NSString* relativePath) const
+{
+	if(empty() || !relativePath.length)
+		return false;
+	std::string path = relativePath.precomposedStringWithCanonicalMapping.UTF8String;
+	for(size_t from = 0; from <= path.size(); )
+	{
+		size_t to = path.find('/', from);
+		if(to == std::string::npos)
+			to = path.size();
+		std::string const name = path.substr(from, to - from);
+		for(auto const& pattern : _names)
+		{
+			if(fnmatch(pattern.c_str(), name.c_str(), FNM_CASEFOLD) == 0)
+				return true;
+		}
+		std::string const prefix = path.substr(0, to);
+		for(auto const& pattern : _paths)
+		{
+			if(fnmatch(pattern.c_str(), prefix.c_str(), FNM_PATHNAME|FNM_CASEFOLD) == 0)
+				return true;
+		}
+		from = to + 1;
+	}
+	return false;
+}
+
+// `base` is where `root` sits below the compared roots ("" for a root), so
+// path patterns match from the top.
+static NSString* JoinRelative (NSString* base, NSString* path)
+{
+	return base.length ? [base stringByAppendingFormat:@"/%@", path] : path;
+}
+
+static NSArray<NSString*>* WalkEntries (NSString* root, BOOL (^cancelled)(), compare_excludes_t const& excludes, NSString* base)
 {
 	// The path-based enumerator yields paths relative to `root`, whatever
 	// spelling (/var vs /private/var) the root was given in, and does not
@@ -167,7 +232,7 @@ static NSArray<NSString*>* WalkEntries (NSString* root, BOOL (^cancelled)())
 	{
 		if(cancelled && cancelled())
 			return nil;
-		if([path.lastPathComponent isEqualToString:@".git"])
+		if([path.lastPathComponent isEqualToString:@".git"] || excludes.matches(JoinRelative(base, path)))
 		{
 			[enumerator skipDescendants];
 			continue;
@@ -229,7 +294,7 @@ static CompareKind KindAtPath (NSString* path)
 	return CompareKindOther;
 }
 
-NSArray<NSString*>* CompareListEntries (NSString* root, compare_options_t const& options)
+static NSArray<NSString*>* ListEntries (NSString* root, compare_options_t const& options, NSString* base)
 {
 	NSArray<NSString*>* entries = nil;
 	if(options.git && !options.include_ignored)
@@ -245,15 +310,22 @@ NSArray<NSString*>* CompareListEntries (NSString* root, compare_options_t const&
 		}
 	}
 	if(!entries && !(options.cancelled && options.cancelled()))
-		entries = WalkEntries(root, options.cancelled);
+		entries = WalkEntries(root, options.cancelled, options.excludes, base);
 
 	NSMutableArray<NSString*>* existing = [NSMutableArray arrayWithCapacity:entries.count];
 	for(NSString* entry in entries)
 	{
+		if(options.excludes.matches(JoinRelative(base, entry)))
+			continue; // Git lists them unless .gitignore excludes them
 		if(KindAtPath([root stringByAppendingPathComponent:entry]) != CompareKindNone)
 			[existing addObject:entry];
 	}
 	return entries ? existing : nil;
+}
+
+NSArray<NSString*>* CompareListEntries (NSString* root, compare_options_t const& options)
+{
+	return ListEntries(root, options, @"");
 }
 
 // =================
@@ -559,13 +631,15 @@ void CompareRestatPaths (CompareNode* root, NSArray<NSString*>* relativePaths, c
 {
 	for(NSString* relativePath in relativePaths)
 	{
+		if(options.excludes.matches(relativePath))
+			continue; // never listed, so never in the tree (a settings change rebuilds it)
 		CompareNode* node = EnsureNode(root, relativePath);
 		for(BOOL left : { YES, NO })
 		{
 			NSString* path = [node pathOnLeft:left];
 			if(!S_ISDIR(CompareStampAtPath(path).mode))
 				continue;
-			for(NSString* entry in CompareListEntries(path, options))
+			for(NSString* entry in ListEntries(path, options, node.relativePath))
 				EnsureNode(root, node.relativePath.length ? [node.relativePath stringByAppendingPathComponent:entry] : entry);
 		}
 		CompareRestat(node, options);

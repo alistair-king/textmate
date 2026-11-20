@@ -18,6 +18,7 @@
 
 - (IBAction)refresh:(id)sender;
 @property (nonatomic, readonly) NSUInteger comparisonCount; // finished comparisons, for tests
+@property (nonatomic, readonly) NSUInteger fileEventCount;  // file system events received, for tests
 // Remembers expanded folders for this pair of folders (also done on close).
 - (void)saveState;
 

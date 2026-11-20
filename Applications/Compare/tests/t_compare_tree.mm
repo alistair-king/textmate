@@ -175,3 +175,114 @@ void test_git_timeout_fails_without_walking ()
 	OAK_ASSERT(CompareBuildTree(Fixture().left, Fixture().right, options) == nil);
 	OAK_ASSERT(reason != nil);
 }
+
+// ==============================================
+// = Settings → Ignore folders and files       =
+// ==============================================
+
+void test_excludes_parse_comma_separated_patterns ()
+{
+	compare_excludes_t excludes(@" node_modules, *.log ,, /docs/build/ ,");
+	OAK_ASSERT([excludes.patterns() isEqual:(@[ @"node_modules", @"*.log", @"docs/build" ])]);
+	OAK_ASSERT(compare_excludes_t(@"").empty());
+	OAK_ASSERT(compare_excludes_t(@" , ").empty());
+	OAK_ASSERT(!compare_excludes_t(@"").matches(@"node_modules"));
+}
+
+void test_excludes_match_names_at_any_depth ()
+{
+	compare_excludes_t excludes(@"node_modules, *.log, cache?, [Tt]mp");
+	OAK_ASSERT(excludes.matches(@"node_modules"));
+	OAK_ASSERT(excludes.matches(@"node_modules/react/index.js")); // everything inside
+	OAK_ASSERT(excludes.matches(@"web/app/node_modules"));
+	OAK_ASSERT(excludes.matches(@"Node_Modules"));               // case is ignored
+	OAK_ASSERT(excludes.matches(@"logs/debug.log"));
+	OAK_ASSERT(excludes.matches(@"cache1/x.txt"));
+	OAK_ASSERT(excludes.matches(@"src/tmp"));
+	OAK_ASSERT(!excludes.matches(@"node_modules_backup"));
+	OAK_ASSERT(!excludes.matches(@"src/node_modules.txt"));
+	OAK_ASSERT(!excludes.matches(@"cache12"));
+	OAK_ASSERT(!excludes.matches(@"debug.log.txt"));
+	OAK_ASSERT(!excludes.matches(@"src/main.cc"));
+}
+
+void test_excludes_with_a_slash_match_paths_from_the_top ()
+{
+	compare_excludes_t excludes(@"docs/build, packages/*/dist");
+	OAK_ASSERT(excludes.matches(@"docs/build"));
+	OAK_ASSERT(excludes.matches(@"docs/build/index.html"));
+	OAK_ASSERT(excludes.matches(@"packages/ui/dist/ui.js"));
+	OAK_ASSERT(!excludes.matches(@"other/docs/build"));   // anchored at the roots
+	OAK_ASSERT(!excludes.matches(@"build"));
+	OAK_ASSERT(!excludes.matches(@"packages/ui/src/dist.ts"));
+	OAK_ASSERT(!excludes.matches(@"packages/a/b/dist"));  // * does not cross a slash
+}
+
+// A pair of folders where node_modules is untracked but not gitignored, so
+// Git lists it, and a walk would enter it.
+static fixture_t const& ExcludesFixture ()
+{
+	static fixture_t fixture = []{
+		NSString* base = [[NSTemporaryDirectory() stringByAppendingPathComponent:[@"compare-excludes-" stringByAppendingString:NSUUID.UUID.UUIDString]] stringByResolvingSymlinksInPath];
+		NSString* left  = [base stringByAppendingPathComponent:@"left"];
+		NSString* right = [base stringByAppendingPathComponent:@"right"];
+		for(NSString* root in @[ left, right ])
+		{
+			OAK_ASSERT(compare_fixture::write(root, @"src/app.js", [root isEqualToString:left] ? @"left\n" : @"right\n") == nil);
+			OAK_ASSERT(compare_fixture::write(root, @"node_modules/react/index.js", [root isEqualToString:left] ? @"v18\n" : @"v19\n") == nil);
+			OAK_ASSERT(compare_fixture::write(root, @"web/node_modules/x.js", @"x\n") == nil);
+			OAK_ASSERT(compare_fixture::write(root, @"docs/build/index.html", @"<p>\n") == nil);
+			OAK_ASSERT(compare_fixture::write(root, @"other/docs/build/keep.html", @"<p>\n") == nil);
+		}
+		OAK_ASSERT(compare_fixture::write(left, @"debug.log", @"only on the left\n") == nil);
+		OAK_ASSERT(compare_fixture::run_git(@COMPARE_TEST_GIT, left, @[ @"init", @"-q", @"-b", @"main" ]) == nil);
+		return fixture_t{ left, right };
+	}();
+	return fixture;
+}
+
+void test_excluded_entries_are_not_listed ()
+{
+	fixture_t const& fixture = ExcludesFixture();
+	compare_options_t options = GitOptions();
+	options.excludes = compare_excludes_t(@"node_modules, *.log, docs/build");
+	for(BOOL git : { YES, NO }) // Git's list (left) and a walk (both sides)
+	{
+		options.git = git ? @COMPARE_TEST_GIT : nil;
+		NSArray* entries = [CompareListEntries(fixture.left, options) sortedArrayUsingSelector:@selector(compare:)];
+		OAK_ASSERT([entries isEqual:(@[ @"other/docs/build/keep.html", @"src/app.js" ])]);
+	}
+	OAK_ASSERT_EQ(CompareListEntries(fixture.left, GitOptions()).count, 6); // Git does list them
+
+}
+
+void test_excluded_folders_are_hidden_on_both_sides ()
+{
+	fixture_t const& fixture = ExcludesFixture();
+	compare_options_t options = GitOptions();
+	options.excludes = compare_excludes_t(@"node_modules");
+	CompareNode* root = CompareBuildTree(fixture.left, fixture.right, options);
+	OAK_ASSERT(root != nil);
+	OAK_ASSERT([root nodeAtRelativePath:@"node_modules"] == nil);
+	OAK_ASSERT([root nodeAtRelativePath:@"web/node_modules"] == nil);
+	OAK_ASSERT([root nodeAtRelativePath:@"src/app.js"] != nil);
+	OAK_ASSERT([root nodeAtRelativePath:@"web"] == nil); // nothing left inside it
+
+	// Without the setting they are compared like anything else.
+	CompareNode* all = CompareBuildTree(fixture.left, fixture.right, GitOptions());
+	OAK_ASSERT_EQ((int)[all nodeAtRelativePath:@"node_modules/react/index.js"].status, (int)CompareStatusModified);
+}
+
+void test_rereading_paths_skips_excluded_entries ()
+{
+	fixture_t const& fixture = ExcludesFixture();
+	compare_options_t options = compare_options_t();
+	options.excludes = compare_excludes_t(@"node_modules, docs/build");
+	CompareNode* root = CompareBuildTree(fixture.left, fixture.right, options);
+	OAK_ASSERT(root != nil);
+	// Re-reading a folder lists it with path patterns still anchored at the roots.
+	CompareRestatPaths(root, @[ @"other", @"docs", @"node_modules/react/index.js" ], options);
+	OAK_ASSERT([root nodeAtRelativePath:@"other/docs/build/keep.html"] != nil);
+	OAK_ASSERT([root nodeAtRelativePath:@"docs/build"] == nil);
+	OAK_ASSERT([root nodeAtRelativePath:@"node_modules"] == nil);
+}

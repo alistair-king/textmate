@@ -9,6 +9,7 @@
 #import "compare_fixture.h"
 #import "syntax_fixture.h"
 #import "../src/compare_menu.h"
+#import "../src/CompareSettings.h"
 
 // Drives the real CompareWindowController over the shared fixture. Failures
 // print `file:line: Assertion failed: …` and make the process exit non-zero.
@@ -122,7 +123,7 @@ static void SelectFilter (CompareWindowController* controller, NSInteger filter)
 
 // Draws the content view into a PNG for looking at by hand. The rendering
 // checks below use real window pixels instead.
-static void Snapshot (CompareWindowController* controller, NSString* name)
+static void Snapshot (NSWindowController* controller, NSString* name)
 {
 	NSString* directory = NSProcessInfo.processInfo.environment[@"COMPARE_SNAPSHOT_DIR"];
 	if(!directory.length)
@@ -759,6 +760,20 @@ static void Spin (NSTimeInterval seconds)
 		[NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
 }
 
+// After a change that must not compare again: waits for the window to receive
+// its file system event (which can take seconds), then long enough for a
+// comparison it would start, and says whether none did.
+static BOOL IgnoresChange (CompareWindowController* controller, void (^change)())
+{
+	NSUInteger events = controller.fileEventCount;
+	NSUInteger count  = controller.comparisonCount;
+	change();
+	if(!WaitUntil(^{ return (BOOL)(controller.fileEventCount > events); }))
+		return NO;
+	Spin(1.5);
+	return controller.comparisonCount == count && Loaded(controller);
+}
+
 static void Search (CompareWindowController* controller, NSString* text)
 {
 	NSSearchField* field = [controller valueForKey:@"_searchField"];
@@ -780,10 +795,9 @@ static void TestLiveRefreshAndSearch (compare_fixture_t const& fixture)
 	CHECK(RowFor(left, @"same.txt") != -1);
 
 	// Ignored build output does not.
-	count = controller.comparisonCount;
-	[@"object\n" writeToFile:[fixture.left stringByAppendingPathComponent:@"build/new.o"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
-	Spin(2.5);
-	CHECK(controller.comparisonCount == count);
+	CHECK(IgnoresChange(controller, ^{
+		[@"object\n" writeToFile:[fixture.left stringByAppendingPathComponent:@"build/new.o"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	}));
 
 	// A new file that is not ignored appears.
 	[@"hello\n" writeToFile:[fixture.right stringByAppendingPathComponent:@"brand-new.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
@@ -939,6 +953,76 @@ static void TestViewMenuShortcuts ()
 	CHECK([[menu itemAtIndex:menu.numberOfItems - 1].toolTip containsString:@".gitignore"]);
 }
 
+// Settings → Ignore folders and files: node_modules is hidden by default, on
+// both sides and from live refresh; changing the setting in the Settings
+// window compares every open window again.
+static void TestIgnoreSetting (compare_fixture_t const& fixture)
+{
+	CHECK([CompareSettings.excludedNames isEqualToString:@"node_modules"]);
+	for(NSString* root in @[ fixture.left, fixture.right ]) // untracked and not gitignored: Git lists it
+		CHECK(compare_fixture::write(root, @"node_modules/pkg/index.js", [root isEqualToString:fixture.left] ? @"v1\n" : @"v2\n") == nil);
+	CHECK(compare_fixture::write(fixture.left, @"app/node_modules/only-left.js", @"x\n") == nil);
+
+	CompareWindowController* controller = Open(fixture, nil);
+	CompareWindowController* other      = Open(fixture, nil);
+	NSOutlineView* left  = [controller outlineViewForLeftSide:YES];
+	NSOutlineView* right = [controller outlineViewForLeftSide:NO];
+	SelectFilter(controller, 3); // All Files: even identical entries would show
+	CHECK(RowFor(left, @"same.txt") != -1);
+	CHECK(RowFor(left, @"node_modules") == -1 && RowFor(right, @"node_modules") == -1);
+	CHECK(RowFor(left, @"app") == -1); // nothing else inside it
+
+	// Changes inside node_modules (npm install) do not compare again.
+	CHECK(IgnoresChange(controller, ^{ compare_fixture::write(fixture.right, @"node_modules/pkg/new.js", @"new\n"); }));
+	NSUInteger count;
+
+	// The Settings window: a standard one, showing the current list.
+	CompareSettingsWindowController* settings = CompareSettingsWindowController.sharedController;
+	[settings showWindow:nil];
+	CHECK(settings.window.isVisible);
+	CHECK(settings.window.toolbarStyle == NSWindowToolbarStylePreference);
+	CHECK([settings.window.title isEqualToString:@"General"]);
+	CHECK([settings.window.toolbar.selectedItemIdentifier isEqualToString:@"general"]);
+	CHECK([settings.excludedNamesField.stringValue isEqualToString:@"node_modules"]);
+	Snapshot(settings, @"settings");
+
+	// Clearing it shows node_modules in every open window.
+	count = controller.comparisonCount;
+	NSUInteger otherCount = other.comparisonCount;
+	settings.excludedNamesField.stringValue = @"";
+	[settings commitEditing];
+	CHECK([CompareSettings.excludedNames isEqualToString:@""]);
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller) && other.comparisonCount > otherCount && Loaded(other)); }));
+	[controller.window layoutIfNeeded];
+	CHECK(RowFor(left, @"node_modules") != -1);
+	CHECK(RowFor([other outlineViewForLeftSide:YES], @"node_modules") != -1);
+	[left expandItem:[left itemAtRow:RowFor(left, @"node_modules")] expandChildren:YES];
+	CHECK(RowFor(left, @"node_modules/pkg/index.js") != -1);
+
+	// Patterns: wildcards and paths from the top.
+	count = controller.comparisonCount;
+	settings.excludedNamesField.stringValue = @"node_*, multi.*";
+	[settings commitEditing];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	CHECK(RowFor(left, @"node_modules") == -1 && RowFor(left, @"multi.txt") == -1);
+	CHECK(RowFor(left, @"same.txt") != -1);
+
+	// Unchanged text does not compare again; closing the window saves edits.
+	count = controller.comparisonCount;
+	[settings commitEditing];
+	Spin(0.5);
+	CHECK(controller.comparisonCount == count);
+	settings.excludedNamesField.stringValue = @"node_modules";
+	[settings.window close];
+	CHECK([CompareSettings.excludedNames isEqualToString:@"node_modules"]);
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	CHECK(RowFor(left, @"node_modules") == -1 && RowFor(left, @"multi.txt") != -1);
+
+	SelectFilter(controller, 0);
+	[controller close];
+	[other close];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -966,6 +1050,9 @@ int main (int argc, char const* argv[])
 		CHECK(syntax_fixture::install(@{ @"compareFilter": @0, @"compareIncludeIgnored": @NO, @"themeAppearance": @"auto", kUserDefaultsFoldersOnTopKey: @YES }));
 		CompareWindowController.gitExecutable = @COMPARE_TEST_GIT;
 		CompareWindowController.confirmsChanges = NO;
+		// Settings change while windows are open, so not in the argument domain;
+		// start from the default.
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:CompareExcludedNamesDefaultsKey];
 
 		compare_fixture_t fixture = compare_fixture::create(@COMPARE_TEST_GIT);
 		CHECK(fixture.error == nil);
@@ -987,6 +1074,11 @@ int main (int argc, char const* argv[])
 			CHECK(live.error == nil);
 			if(!live.error)
 				TestLiveRefreshAndSearch(live);
+
+			compare_fixture_t ignoring = compare_fixture::create(@COMPARE_TEST_GIT);
+			CHECK(ignoring.error == nil);
+			if(!ignoring.error)
+				TestIgnoreSetting(ignoring);
 			TestFocus(fixture);
 		}
 

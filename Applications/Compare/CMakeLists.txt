@@ -1,4 +1,4 @@
-add_executable(Compare MACOSX_BUNDLE src/main.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm)
+add_executable(Compare MACOSX_BUNDLE src/main.mm src/CompareSettings.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm)
 # Static frameworks cannot carry resources: bundle the tab bar's images and the
 # file-type icons TMFileReference uses, as TextMate's app bundle does.
 file(GLOB _compare_resources CONFIGURE_DEPENDS
@@ -85,7 +85,7 @@ if(BUILD_TESTING)
 
     # Drives the real window over the fixture; needs a GUI session.
     add_executable(compare_window_tests MACOSX_BUNDLE
-      tests/window_tests.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm
+      tests/window_tests.mm src/CompareSettings.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm
       ${_compare_resources} ${_compare_doctypes})
     set_target_properties(compare_window_tests PROPERTIES
       MACOSX_BUNDLE_GUI_IDENTIFIER "com.macromates.TextMate.Compare.Tests"

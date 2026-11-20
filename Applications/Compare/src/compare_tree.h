@@ -3,6 +3,8 @@
 
 #import <Foundation/Foundation.h>
 #include <sys/stat.h>
+#include <string>
+#include <vector>
 
 // What a path is on one side of the comparison.
 typedef NS_ENUM(uint8_t, CompareKind) {
@@ -66,8 +68,28 @@ compare_stamp_t CompareStampAtPath (NSString* path); // lstat: links are not fol
 - (NSString*)pathOnLeft:(BOOL)left;
 @end
 
+// Names (and paths) never shown in a comparison: Settings → “Ignore folders
+// and files”, a comma-separated list of fnmatch patterns (* ? [abc]), matched
+// ignoring case. A pattern without a slash matches any file or folder name at
+// any depth; with a slash it matches a relative path from the roots (leading
+// and trailing slashes are dropped). A matched folder hides everything in it.
+struct compare_excludes_t
+{
+	compare_excludes_t () = default;
+	explicit compare_excludes_t (NSString* list);
+	bool empty () const { return _names.empty() && _paths.empty(); }
+	// `relativePath` is relative to the roots, “/”-separated.
+	bool matches (NSString* relativePath) const;
+	NSArray<NSString*>* patterns () const; // as parsed, for display and tests
+
+private:
+	std::vector<std::string> _names;
+	std::vector<std::string> _paths;
+};
+
 struct compare_options_t
 {
+	compare_excludes_t excludes;
 	NSString* git          = nil; // nil: compare plain folder listings
 	BOOL include_ignored   = NO;
 	BOOL folders_first     = YES;
@@ -79,7 +101,8 @@ struct compare_options_t
 // Relative paths of every non-folder entry below `root`. Uses
 // `git ls-files --cached --others --exclude-standard` when `git` is set and
 // `root` is inside a work tree (unless ignored files are included), otherwise
-// walks the folder. `.git` is never listed. Entries that no longer exist on
+// walks the folder. `.git` and entries matching `options.excludes` are never
+// listed (a walk does not enter excluded folders). Entries that no longer exist on
 // disk (deleted but still tracked) are skipped. When Git takes longer than
 // `git_timeout` the listing fails (nil, and `failed` is told why) rather than
 // walking the folder, which would include ignored files.
