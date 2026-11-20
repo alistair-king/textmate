@@ -531,3 +531,51 @@ void test_copy_siblings_over_a_file_in_one_batch ()
 	OAK_ASSERT([changes undo:&error]);
 	OAK_ASSERT([Read(pair.right, @"config") isEqualToString:@"a file\n"]);
 }
+
+// ======================
+// = Third review round =
+// ======================
+
+void test_undo_never_restores_through_a_link_that_replaced_a_folder ()
+{
+	NSString* root    = Folder();
+	NSString* outside = Folder();
+	Write(root, @"a/f.txt", @"old\n");
+	CompareChangeSet* changes = [CompareChangeSet new];
+	changes.roots = @[ root ];
+	NSString* error = nil;
+	OAK_ASSERT([changes writeData:Data(@"new\n") toPath:[root stringByAppendingPathComponent:@"a/f.txt"] mode:0644 error:&error]);
+
+	// The parent moves out of the comparison and a link takes its place: the
+	// file still looks as the change left it, but lies elsewhere now.
+	NSString* moved = [outside stringByAppendingPathComponent:@"a"];
+	OAK_ASSERT([NSFileManager.defaultManager moveItemAtPath:[root stringByAppendingPathComponent:@"a"] toPath:moved error:nil]);
+	OAK_ASSERT([NSFileManager.defaultManager createSymbolicLinkAtPath:[root stringByAppendingPathComponent:@"a"] withDestinationPath:moved error:nil]);
+	OAK_ASSERT(![changes undo:&error]);
+	OAK_ASSERT([error containsString:@"no longer a folder"]);
+	OAK_ASSERT([Read(outside, @"a/f.txt") isEqualToString:@"new\n"]);
+}
+
+void test_trash_refuses_a_changed_file_whose_other_side_is_a_folder ()
+{
+	pair_t pair = { Folder(), Folder() };
+	Write(pair.left,  @"config",          @"a file\n");
+	Write(pair.right, @"config/inner.txt", @"a folder\n");
+	CompareNode* root = CompareBuildTree(pair.left, pair.right, Options());
+	CompareNode* node = [root nodeAtRelativePath:@"config"];
+	OAK_ASSERT(node != nil && node.isFolder);
+
+	Write(pair.left, @"config", @"edited after comparing\n");
+	CompareChangeSet* changes = [CompareChangeSet new];
+	NSString* error = nil;
+	OAK_ASSERT(!CompareTrashNode(node, YES, changes, &error));
+	OAK_ASSERT(error != nil);
+	OAK_ASSERT([Read(pair.left, @"config") isEqualToString:@"edited after comparing\n"]);
+
+	// The folder side is still trashed by its own entry.
+	Write(pair.right, @"config/added.txt", @"new\n");
+	OAK_ASSERT(CompareTrashNode(node, NO, changes, &error));
+	OAK_ASSERT(!Exists(pair.right, @"config"));
+	OAK_ASSERT([changes undo:&error]);
+	OAK_ASSERT(Exists(pair.right, @"config/added.txt"));
+}

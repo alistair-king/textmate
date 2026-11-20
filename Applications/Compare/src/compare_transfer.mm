@@ -372,6 +372,13 @@ namespace {
 		for(NSString* folder : change.folders)
 			[createdFolders addObject:folder];
 	}
+	// Still inside the roots, through real folders: a parent replaced by a link
+	// since would make the undo restore or delete something elsewhere.
+	for(auto const& change : _changes)
+	{
+		if(![self checkConfined:change.path error:error])
+			return NO;
+	}
 	// Every trashed entry must still be in the Trash, also where a later change
 	// wrote the same path: restoring it is the last step of the undo.
 	for(auto const& change : _changes)
@@ -631,9 +638,11 @@ BOOL CompareTrashNode (CompareNode* node, BOOL leftSide, CompareChangeSet* chang
 	if((leftSide ? node.leftKind : node.rightKind) == CompareKindNone || !node.parent)
 		return YES;
 	NSString* path = [node pathOnLeft:leftSide];
-	// Folders are checked by their own entry only; their contents may have
-	// been listed without every file (ignored files are not compared).
-	if(CompareStampAtPath(path) != (leftSide ? node.leftStamp : node.rightStamp) && !node.isFolder)
+	// A folder on this side is checked by its own entry only; its contents may
+	// have been listed without every file (ignored files are not compared). A
+	// file here is checked even when the other side has a folder.
+	BOOL folderHere = (leftSide ? node.leftKind : node.rightKind) == CompareKindDirectory;
+	if(!folderHere && CompareStampAtPath(path) != (leftSide ? node.leftStamp : node.rightStamp))
 	{
 		if(error)
 			*error = ChangedError(node, leftSide);
