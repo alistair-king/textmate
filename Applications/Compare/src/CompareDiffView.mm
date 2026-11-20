@@ -76,6 +76,7 @@ struct side_rows_t
 {
 	std::vector<NSUInteger> starts; // character index where each row begins
 	std::vector<long> lines;        // 0-based line shown on each row, -1 for gaps
+	std::vector<NSColor*> tints;    // each row's background, nil for unchanged rows
 };
 
 @interface CompareLineNumberRuler : NSRulerView
@@ -123,12 +124,19 @@ struct side_rows_t
 	NSDictionary* attributes = @{ NSFontAttributeName: self.font, NSForegroundColorAttributeName: NSColor.secondaryLabelColor };
 	auto const& starts = _rows->starts;
 	auto const& lines  = _rows->lines;
+	auto const& tints  = _rows->tints;
 	[layoutManager enumerateLineFragmentsForGlyphRange:glyphs usingBlock:^(NSRect fragment, NSRect usedRect, NSTextContainer* container, NSRange glyphRange, BOOL* stop){
 		NSUInteger index = [layoutManager characterIndexForGlyphAtIndex:glyphRange.location];
 		auto it = std::upper_bound(starts.begin(), starts.end(), index);
 		if(it == starts.begin())
 			return;
 		size_t row = it - starts.begin() - 1;
+		// The row's difference tint continues into the gutter (left of the separator).
+		if(row < tints.size() && tints[row])
+		{
+			NSRect band = [self convertRect:NSMakeRect(0, NSMinY(fragment) + textView.textContainerOrigin.y, 1, NSHeight(fragment)) fromView:textView];
+			compare::fill_row(tints[row], NSIntersectionRect(rect, NSMakeRect(0, NSMinY(band), self.ruleThickness - 1, NSHeight(band))));
+		}
 		if(row >= lines.size() || lines[row] < 0)
 			return;
 		NSString* label = [NSString stringWithFormat:@"%ld", lines[row] + 1];
@@ -220,6 +228,7 @@ static prepared_diff_t Prepare (compare::text_diff_t const& diff, compare::side_
 	auto append = [&](NSMutableAttributedString* text, size_t side, side_rows_t& rows, long line, NSArray<NSString*>* lines, NSColor* tint, NSString* other){
 		rows.starts.push_back(text.length);
 		rows.lines.push_back(line);
+		rows.tints.push_back(tint);
 		NSString* content = line >= 0 ? lines[line] : @"";
 		NSUInteger start = text.length;
 		[text appendAttributedString:[[NSAttributedString alloc] initWithString:[content stringByAppendingString:@"\n"] attributes:bases[side]]];

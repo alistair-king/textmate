@@ -398,6 +398,21 @@ static void TestFileTabs (compare_fixture_t const& fixture)
 	CHECK(diff.currentChange == 0);
 	CHECK([diff.leftTextView.string componentsSeparatedByString:@"\n"].count == 21);
 	CHECK(AttributeAt(diff.leftTextView, CompareLineTintAttributeName, 0) == nil);
+	// The line-number gutter carries the row tints too: line 3 changed, line 1 not.
+	if(NSBitmapImageRep* rendered = RenderedWindow(controller.window))
+	{
+		NSTextView* text = diff.leftTextView;
+		NSView* ruler = text.enclosingScrollView.verticalRulerView;
+		auto gutterPixel = ^NSColor*(NSInteger row){
+			NSPoint inText = NSMakePoint(0, text.textContainerOrigin.y + (row + 0.5) * diff.rowHeight);
+			NSPoint inRuler = [ruler convertPoint:inText fromView:text];
+			return PixelAt(rendered, ruler, NSMakeRect(3, inRuler.y, 0, 0));
+		};
+		NSColor* unchanged = gutterPixel(0);
+		NSColor* changed   = gutterPixel(2);
+		CHECK(!SameColor(unchanged, changed));
+		CHECK(SameColor(unchanged, gutterPixel(1)));
+	}
 	NSMenuItem* next = [[NSMenuItem alloc] initWithTitle:@"Next" action:@selector(nextChange:) keyEquivalent:@""];
 	NSMenuItem* previous = [[NSMenuItem alloc] initWithTitle:@"Previous" action:@selector(previousChange:) keyEquivalent:@""];
 	CHECK([controller validateMenuItem:next] && ![controller validateMenuItem:previous]);
