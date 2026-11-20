@@ -180,6 +180,7 @@ add_subdirectory(Applications/PrivilegedTool)
 add_subdirectory(Applications/QuickLookGenerator)
 add_subdirectory(Applications/NewApplication)
 add_subdirectory(Applications/ThemeEditor)
+add_subdirectory(Applications/Compare)
 add_subdirectory(Applications/TextMate)
 
 # === PlugIns (submodules) ===

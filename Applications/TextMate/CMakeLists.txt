@@ -146,6 +146,11 @@ textmate_embed(TextMate ThemeEditor "Helpers" DIRECTORY)
 # Refresh the embedded app when only the theme editor or launcher changes.
 set_property(TARGET TextMate APPEND PROPERTY LINK_DEPENDS
   "$<TARGET_FILE:ThemeEditor>" "$<TARGET_FILE:tm-theme-editor>")
+textmate_embed(TextMate tm-compare "MacOS")
+textmate_embed(TextMate Compare "Helpers" DIRECTORY)
+# Refresh the embedded app when only the compare helper or launcher changes.
+set_property(TARGET TextMate APPEND PROPERTY LINK_DEPENDS
+  "$<TARGET_FILE:Compare>" "$<TARGET_FILE:tm-compare>")
 textmate_embed(TextMate textmate-mcp "MacOS")
 textmate_embed(TextMate tm-codex "MacOS")
 textmate_embed(TextMate tm-claude "MacOS")
@@ -169,6 +174,8 @@ textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-pi")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-theme-editor")
+textmate_codesign_file(TextMate "${CS_IDENTITY}"
+  "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-compare")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-opencode")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
