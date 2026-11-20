@@ -5,6 +5,9 @@
 @interface CompareWindowController : NSWindowController <NSWindowDelegate>
 // Git used for listing files and branch names; nil compares plain folders.
 @property (class, nonatomic, copy) NSString* gitExecutable;
+// NO skips confirmation alerts and shows problems only in `lastProblem` (tests).
+@property (class, nonatomic) BOOL confirmsChanges;
+@property (nonatomic, readonly) NSString* lastProblem;
 
 - (instancetype)initWithLeftPath:(NSString*)left rightPath:(NSString*)right focus:(NSString*)focus;
 @property (nonatomic, readonly) NSString* leftPath;
@@ -14,4 +17,8 @@
 @property (nonatomic, copy) NSString* focus;
 
 - (IBAction)refresh:(id)sender;
+
+// The tree tab copies the selected entries; a file tab copies its current change.
+- (IBAction)copyToRight:(id)sender;
+- (IBAction)copyToLeft:(id)sender;
 @end

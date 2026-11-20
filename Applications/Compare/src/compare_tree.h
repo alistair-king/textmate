@@ -2,6 +2,7 @@
 #define COMPARE_TREE_H_R3N8VZ1D
 
 #import <Foundation/Foundation.h>
+#include <sys/stat.h>
 
 // What a path is on one side of the comparison.
 typedef NS_ENUM(uint8_t, CompareKind) {
@@ -24,6 +25,27 @@ typedef NS_OPTIONS(uint8_t, CompareStatus) {
 
 static CompareStatus const CompareStatusDifferent = CompareStatusModified|CompareStatusLeftOnly|CompareStatusRightOnly|CompareStatusTypeChanged;
 
+// What an entry looked like on disk when it was compared; used to refuse
+// overwriting anything that has changed since. `exists` is false for a
+// missing entry.
+struct compare_stamp_t
+{
+	bool exists = false;
+	dev_t dev = 0;
+	ino_t ino = 0;
+	off_t size = 0;
+	mode_t mode = 0;
+	long mtime = 0, mtime_ns = 0;
+
+	bool operator== (compare_stamp_t const& rhs) const
+	{
+		return exists == rhs.exists && (!exists || (dev == rhs.dev && ino == rhs.ino && size == rhs.size && mode == rhs.mode && mtime == rhs.mtime && mtime_ns == rhs.mtime_ns));
+	}
+	bool operator!= (compare_stamp_t const& rhs) const { return !(*this == rhs); }
+};
+
+compare_stamp_t CompareStampAtPath (NSString* path); // lstat: links are not followed
+
 @interface CompareNode : NSObject
 @property (nonatomic, readonly) NSString* name;
 @property (nonatomic, readonly) NSString* relativePath;  // precomposed; @"" for the root
@@ -31,12 +53,17 @@ static CompareStatus const CompareStatusDifferent = CompareStatusModified|Compar
 @property (nonatomic, readonly) NSString* rightPath;     // absolute on-disk path; nil when missing
 @property (nonatomic, readonly) CompareKind leftKind;
 @property (nonatomic, readonly) CompareKind rightKind;
+@property (nonatomic, readonly) compare_stamp_t leftStamp;
+@property (nonatomic, readonly) compare_stamp_t rightStamp;
 @property (nonatomic, readonly) CompareStatus status;
 @property (nonatomic, readonly) CompareStatus mask;      // status | all descendants' statuses
 @property (nonatomic, readonly) NSArray<CompareNode*>* children; // nil for leaves; folders first, then by name
 @property (nonatomic, readonly, weak) CompareNode* parent;
 @property (nonatomic, readonly, getter = isFolder) BOOL folder;
 - (CompareNode*)nodeAtRelativePath:(NSString*)relativePath;
+- (CompareNode*)root;
+// The entry's path on one side; for a missing entry, where it would be.
+- (NSString*)pathOnLeft:(BOOL)left;
 @end
 
 struct compare_options_t
@@ -57,6 +84,17 @@ NSArray<NSString*>* CompareListEntries (NSString* root, compare_options_t const&
 // Compares the two roots. Runs synchronously; call it from a worker queue.
 // Returns nil when cancelled.
 CompareNode* CompareBuildTree (NSString* left, NSString* right, compare_options_t const& options);
+
+// Re-reads `node` (and everything below it) from disk after it was changed,
+// re-classifies it, removes entries now missing on both sides and updates
+// the folders above it. Reads file contents, so use it for the changed
+// entries only.
+void CompareRestat (CompareNode* node, compare_options_t const& options);
+
+// Like CompareRestat for entries given by relative path below `root`,
+// including entries that reappeared (an undone move to the Trash): missing
+// nodes are created, and a folder's contents are listed again.
+void CompareRestatPaths (CompareNode* root, NSArray<NSString*>* relativePaths, compare_options_t const& options);
 
 // The branch checked out at `root` (“detached 1a2b3c4” without one), or nil
 // when `root` is not in a Git work tree.

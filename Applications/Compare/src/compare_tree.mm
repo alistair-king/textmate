@@ -12,6 +12,8 @@
 @property (nonatomic, readwrite) NSString* rightPath;
 @property (nonatomic, readwrite) CompareKind leftKind;
 @property (nonatomic, readwrite) CompareKind rightKind;
+@property (nonatomic, readwrite) compare_stamp_t leftStamp;
+@property (nonatomic, readwrite) compare_stamp_t rightStamp;
 @property (nonatomic, readwrite) CompareStatus status;
 @property (nonatomic, readwrite) CompareStatus mask;
 @property (nonatomic, readwrite) NSArray<CompareNode*>* children;
@@ -34,6 +36,23 @@
 			return nil;
 	}
 	return node;
+}
+
+- (CompareNode*)root
+{
+	CompareNode* node = self;
+	while(node.parent)
+		node = node.parent;
+	return node;
+}
+
+- (NSString*)pathOnLeft:(BOOL)left
+{
+	if(NSString* path = left ? _leftPath : _rightPath)
+		return path;
+	CompareNode* root = self.root;
+	NSString* base = left ? root.leftPath : root.rightPath;
+	return _relativePath.length ? [base stringByAppendingPathComponent:_relativePath] : base;
 }
 
 - (NSString*)description
@@ -139,6 +158,36 @@ static NSArray<NSString*>* WalkEntries (NSString* root, BOOL (^cancelled)())
 			[entries addObject:path];
 	}
 	return entries;
+}
+
+compare_stamp_t CompareStampAtPath (NSString* path)
+{
+	compare_stamp_t stamp;
+	struct stat st;
+	if(path && lstat(path.fileSystemRepresentation, &st) == 0)
+	{
+		stamp.exists   = true;
+		stamp.dev      = st.st_dev;
+		stamp.ino      = st.st_ino;
+		stamp.size     = st.st_size;
+		stamp.mode     = st.st_mode;
+		stamp.mtime    = st.st_mtimespec.tv_sec;
+		stamp.mtime_ns = st.st_mtimespec.tv_nsec;
+	}
+	return stamp;
+}
+
+static CompareKind KindForStamp (compare_stamp_t const& stamp, BOOL folderNode)
+{
+	if(!stamp.exists)
+		return CompareKindNone;
+	if(S_ISREG(stamp.mode))
+		return CompareKindFile;
+	if(S_ISLNK(stamp.mode))
+		return CompareKindSymlink;
+	if(S_ISDIR(stamp.mode))
+		return folderNode ? CompareKindDirectory : CompareKindOther;
+	return CompareKindOther;
 }
 
 static CompareKind KindAtPath (NSString* path)
@@ -308,11 +357,12 @@ CompareNode* CompareBuildTree (NSString* left, NSString* right, compare_options_
 				}
 
 				BOOL leaf = i + 1 == components.count;
-				CompareKind kind = leaf ? KindAtPath(onDisk) : CompareKindDirectory;
 				if(isLeft ? !child.leftPath : !child.rightPath)
 				{
-					if(isLeft) { child.leftPath  = onDisk; child.leftKind  = kind; }
-					else       { child.rightPath = onDisk; child.rightKind = kind; }
+					compare_stamp_t stamp = CompareStampAtPath(onDisk);
+					CompareKind kind = leaf ? KindForStamp(stamp, NO) : CompareKindDirectory;
+					if(isLeft) { child.leftPath  = onDisk; child.leftKind  = kind; child.leftStamp  = stamp; }
+					else       { child.rightPath = onDisk; child.rightKind = kind; child.rightStamp = stamp; }
 				}
 				node = child;
 			}
@@ -338,6 +388,131 @@ NSString* CompareBranchLabel (NSString* root, NSString* git)
 	if(NSString* commit = line(@[ @"rev-parse", @"--short", @"HEAD" ]))
 		return [@"detached " stringByAppendingString:commit];
 	return nil;
+}
+
+// ===========================
+// = Re-reading changed entries =
+// ===========================
+
+static BOOL HasFolderShape (CompareNode* node)
+{
+	return node.childrenByName.count != 0;
+}
+
+// Re-reads both sides of `node` and its descendants. Returns NO when the entry
+// is now missing on both sides (the caller removes it).
+static BOOL Reread (CompareNode* node)
+{
+	for(CompareNode* child in node.childrenByName.allValues)
+	{
+		if(!Reread(child))
+			[node.childrenByName removeObjectForKey:child.name];
+	}
+	for(BOOL left : { YES, NO })
+	{
+		NSString* path = [node pathOnLeft:left];
+		compare_stamp_t stamp = CompareStampAtPath(path);
+		CompareKind kind = KindForStamp(stamp, HasFolderShape(node) || (left ? node.leftKind : node.rightKind) == CompareKindDirectory);
+		if(left) { node.leftPath  = stamp.exists ? path : nil; node.leftKind  = kind; node.leftStamp  = stamp; }
+		else     { node.rightPath = stamp.exists ? path : nil; node.rightKind = kind; node.rightStamp = stamp; }
+	}
+	return node.leftKind != CompareKindNone || node.rightKind != CompareKindNone || !node.parent;
+}
+
+// Recomputes a folder's status from its (already classified) children.
+static void Aggregate (CompareNode* node, compare_options_t const& options)
+{
+	CompareStatus childMask = 0;
+	for(CompareNode* child in node.childrenByName.allValues)
+		childMask |= child.mask;
+	BOOL foldersFirst = options.folders_first;
+	node.children = [node.childrenByName.allValues sortedArrayUsingComparator:^NSComparisonResult(CompareNode* lhs, CompareNode* rhs){
+		if(foldersFirst && lhs.isFolder != rhs.isFolder)
+			return lhs.isFolder ? NSOrderedAscending : NSOrderedDescending;
+		return [lhs.name localizedStandardCompare:rhs.name];
+	}];
+	if(node.leftKind == CompareKindDirectory && node.rightKind == CompareKindDirectory)
+		node.status = (childMask & CompareStatusDifferent) ? CompareStatusModified : CompareStatusIdentical;
+	else if(node.leftKind == CompareKindNone)
+		node.status = CompareStatusRightOnly;
+	else if(node.rightKind == CompareKindNone)
+		node.status = CompareStatusLeftOnly;
+	else
+		node.status = CompareStatusTypeChanged;
+	node.mask = node.status | childMask;
+}
+
+void CompareRestat (CompareNode* node, compare_options_t const& options)
+{
+	if(!node)
+		return;
+	CompareNode* parent = node.parent;
+	if(Reread(node))
+	{
+		if(!node.isFolder)
+			node.children = nil;
+		Classify(node, options);
+	}
+	else
+	{
+		[parent.childrenByName removeObjectForKey:node.name];
+	}
+
+	// Folders above: their own kinds may change too (a folder created on one side).
+	for(CompareNode* ancestor = parent; ancestor; ancestor = ancestor.parent)
+	{
+		for(BOOL left : { YES, NO })
+		{
+			if(!ancestor.parent)
+				continue; // the roots stay folders
+			NSString* path = [ancestor pathOnLeft:left];
+			compare_stamp_t stamp = CompareStampAtPath(path);
+			CompareKind kind = KindForStamp(stamp, YES);
+			if(left) { ancestor.leftPath  = stamp.exists ? path : nil; ancestor.leftKind  = kind; ancestor.leftStamp  = stamp; }
+			else     { ancestor.rightPath = stamp.exists ? path : nil; ancestor.rightKind = kind; ancestor.rightStamp = stamp; }
+		}
+		CompareNode* above = ancestor.parent;
+		if(above && !ancestor.childrenByName.count && ancestor.leftKind == CompareKindNone && ancestor.rightKind == CompareKindNone)
+			[above.childrenByName removeObjectForKey:ancestor.name];
+		else
+			Aggregate(ancestor, options);
+	}
+}
+
+// The node for `relativePath`, creating it and its parents when missing.
+static CompareNode* EnsureNode (CompareNode* root, NSString* relativePath)
+{
+	CompareNode* node = root;
+	for(NSString* component in [relativePath.precomposedStringWithCanonicalMapping componentsSeparatedByString:@"/"])
+	{
+		if(!component.length)
+			continue;
+		CompareNode* child = node.childrenByName[component];
+		if(!child)
+		{
+			child = NewNode(component, node.relativePath.length ? [node.relativePath stringByAppendingFormat:@"/%@", component] : component, node);
+			node.childrenByName[component] = child;
+		}
+		node = child;
+	}
+	return node;
+}
+
+void CompareRestatPaths (CompareNode* root, NSArray<NSString*>* relativePaths, compare_options_t const& options)
+{
+	for(NSString* relativePath in relativePaths)
+	{
+		CompareNode* node = EnsureNode(root, relativePath);
+		for(BOOL left : { YES, NO })
+		{
+			NSString* path = [node pathOnLeft:left];
+			if(!S_ISDIR(CompareStampAtPath(path).mode))
+				continue;
+			for(NSString* entry in CompareListEntries(path, options))
+				EnsureNode(root, node.relativePath.length ? [node.relativePath stringByAppendingPathComponent:entry] : entry);
+		}
+		CompareRestat(node, options);
+	}
 }
 
 static void CountLeaves (CompareNode* node, NSMutableDictionary<NSNumber*, NSNumber*>* counts)

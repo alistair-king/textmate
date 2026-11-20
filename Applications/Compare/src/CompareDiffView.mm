@@ -2,6 +2,7 @@
 #import "compare_tree.h"
 #import "compare_diff.h"
 #import "compare_colors.h"
+#import "compare_transfer.h"
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -144,6 +145,9 @@ struct prepared_diff_t
 	NSAttributedString* right = nil;
 	std::shared_ptr<side_rows_t> left_rows, right_rows;
 	std::vector<long> hunk_rows; // first row of each change
+	std::vector<compare::diff_hunk_t> hunks;
+	NSData* left_data  = nil;
+	NSData* right_data = nil;
 };
 
 static NSFont* TextFont ()
@@ -151,11 +155,20 @@ static NSFont* TextFont ()
 	return [NSFont userFixedPitchFontOfSize:12] ?: [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
 }
 
+// Every row has this height, so rows line up across the sides and the strip.
+static CGFloat RowHeight ()
+{
+	NSFont* font = TextFont();
+	return ceil(font.ascender - font.descender + font.leading);
+}
+
+static CGFloat const kTextInset = 2; // textContainerInset.height
+
 static NSDictionary* BaseAttributes ()
 {
 	NSFont* font = TextFont();
 	NSMutableParagraphStyle* style = [NSMutableParagraphStyle new];
-	CGFloat height = ceil(font.ascender - font.descender + font.leading);
+	CGFloat height = RowHeight();
 	style.minimumLineHeight = style.maximumLineHeight = height;
 	return @{ NSFontAttributeName: font, NSForegroundColorAttributeName: NSColor.textColor, NSParagraphStyleAttributeName: style };
 }
@@ -254,6 +267,9 @@ static prepared_diff_t Prepare (compare::text_diff_t const& diff)
 	if(diff.left_missing_newline != diff.right_missing_newline)
 		[status addObject:[NSString stringWithFormat:@"no newline at end of file on the %@", diff.left_missing_newline ? @"left" : @"right"]];
 
+	result.hunks      = diff.hunks;
+	result.left_data  = diff.left_data;
+	result.right_data = diff.right_data;
 	result.status     = [status componentsJoinedByString:@" · "];
 	result.left       = left;
 	result.right      = right;
@@ -297,6 +313,96 @@ static NSString* MessageForNode (CompareNode* node)
 	return nil;
 }
 
+// ==============================================
+// = Copy arrows between the two sides, per change =
+// ==============================================
+
+@interface CompareDiffView (Strip)
+- (std::vector<std::pair<long, long>>)changeRows; // first row and row count of each change
+- (CGFloat)scrollOffset;
+- (void)stripClickedChange:(NSInteger)change toRight:(BOOL)toRight;
+@end
+
+static CGFloat const kStripWidth = 34;
+
+@interface CompareChangeStrip : NSView
+@property (nonatomic, weak) CompareDiffView* diffView;
+@end
+
+@implementation CompareChangeStrip
+- (BOOL)isFlipped { return YES; }
+
+- (NSSize)intrinsicContentSize
+{
+	return NSMakeSize(kStripWidth, NSViewNoIntrinsicMetric);
+}
+
+// The arrows sit on each change's first row: → copies it to the right, ← to the left.
+- (NSRect)arrowRectForChange:(std::pair<long, long> const&)rows toRight:(BOOL)toRight
+{
+	CGFloat height = RowHeight();
+	CGFloat y = kTextInset + rows.first * height - self.diffView.scrollOffset;
+	return NSMakeRect(toRight ? 1 : kStripWidth / 2, y, kStripWidth / 2 - 1, height);
+}
+
+- (void)drawRect:(NSRect)dirtyRect
+{
+	[NSColor.controlBackgroundColor set];
+	NSRectFill(dirtyRect);
+	[NSColor.separatorColor set];
+	NSRectFill(NSMakeRect(0, NSMinY(dirtyRect), 1, NSHeight(dirtyRect)));
+	NSRectFill(NSMakeRect(NSMaxX(self.bounds) - 1, NSMinY(dirtyRect), 1, NSHeight(dirtyRect)));
+
+	CGFloat height = RowHeight();
+	NSImageSymbolConfiguration* configuration = [[NSImageSymbolConfiguration configurationWithPointSize:height * 0.62 weight:NSFontWeightSemibold] configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:NSColor.secondaryLabelColor]];
+	NSImage* right = [[NSImage imageWithSystemSymbolName:@"arrow.right" accessibilityDescription:@"Copy to the right"] imageWithSymbolConfiguration:configuration];
+	NSImage* left  = [[NSImage imageWithSystemSymbolName:@"arrow.left" accessibilityDescription:@"Copy to the left"] imageWithSymbolConfiguration:configuration];
+	for(auto const& rows : self.diffView.changeRows)
+	{
+		CGFloat y = kTextInset + rows.first * height - self.diffView.scrollOffset;
+		NSRect band = NSMakeRect(1, y, NSWidth(self.bounds) - 2, MAX(rows.second, 1) * height);
+		if(!NSIntersectsRect(band, dirtyRect))
+			continue;
+		[compare::modified_color() set];
+		NSRectFillUsingOperation(band, NSCompositingOperationSourceOver);
+		for(BOOL toRight : { YES, NO })
+		{
+			NSImage* image = toRight ? right : left;
+			NSRect cell = [self arrowRectForChange:rows toRight:toRight];
+			NSSize size = image.size;
+			NSRect target = NSMakeRect(round(NSMidX(cell) - size.width / 2), round(NSMidY(cell) - size.height / 2), size.width, size.height);
+			[image drawInRect:target fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+		}
+	}
+}
+
+- (void)mouseDown:(NSEvent*)event
+{
+	NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+	auto changes = self.diffView.changeRows;
+	for(size_t i = 0; i < changes.size(); ++i)
+	{
+		for(BOOL toRight : { YES, NO })
+		{
+			if(NSPointInRect(point, [self arrowRectForChange:changes[i] toRight:toRight]))
+			{
+				[self.diffView stripClickedChange:i toRight:toRight];
+				return;
+			}
+		}
+	}
+}
+
+- (void)resetCursorRects
+{
+	for(auto const& rows : self.diffView.changeRows)
+	{
+		for(BOOL toRight : { YES, NO })
+			[self addCursorRect:NSIntersectionRect([self arrowRectForChange:rows toRight:toRight], self.bounds) cursor:NSCursor.pointingHandCursor];
+	}
+}
+@end
+
 @implementation CompareDiffView
 {
 	NSTextField* _pathLabel;
@@ -309,6 +415,9 @@ static NSString* MessageForNode (CompareNode* node)
 	CompareLineNumberRuler* _rulers[2];
 	NSView* _body;
 	std::vector<long> _hunkRows;
+	std::vector<compare::diff_hunk_t> _hunks;
+	NSData* _data[2];
+	CompareChangeStrip* _strip;
 	NSUInteger _generation;
 	BOOL _synchronizing;
 }
@@ -361,7 +470,11 @@ static NSString* MessageForNode (CompareNode* node)
 			[_scrollViews[i].topAnchor constraintEqualToAnchor:_body.topAnchor].active = YES;
 			[_scrollViews[i].bottomAnchor constraintEqualToAnchor:_body.bottomAnchor].active = YES;
 		}
-		CompareSeparatorView* middle = [[CompareSeparatorView alloc] initVertical:YES];
+		_strip = [[CompareChangeStrip alloc] initWithFrame:NSZeroRect];
+		_strip.diffView = self;
+		_strip.translatesAutoresizingMaskIntoConstraints = NO;
+		[_strip setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+		NSView* middle = _strip;
 		[_body addSubview:middle];
 		[NSLayoutConstraint activateConstraints:@[
 			[_scrollViews[0].leadingAnchor constraintEqualToAnchor:_body.leadingAnchor],
@@ -472,7 +585,10 @@ static NSString* MessageForNode (CompareNode* node)
 	_messageLabel.hidden = !message;
 	_body.hidden = message != nil;
 	_hunkRows.clear();
+	_hunks.clear();
+	_data[0] = _data[1] = nil;
 	_currentChange = -1;
+	_strip.needsDisplay = YES;
 	for(size_t i = 0; i < 2; ++i)
 	{
 		[_textViews[i].textStorage setAttributedString:[NSAttributedString new]];
@@ -483,6 +599,13 @@ static NSString* MessageForNode (CompareNode* node)
 
 - (void)showNode:(CompareNode*)node
 {
+	[self showNode:node keepingChange:NO];
+}
+
+- (void)showNode:(CompareNode*)node keepingChange:(BOOL)keep
+{
+	_node = node;
+	NSInteger keptChange = keep ? _currentChange : -1;
 	_pathLabel.stringValue  = node.relativePath ?: @"";
 	_statusLabel.stringValue = @"";
 	if(NSString* message = MessageForNode(node))
@@ -501,12 +624,12 @@ static NSString* MessageForNode (CompareNode* node)
 		dispatch_async(dispatch_get_main_queue(), ^{
 			if(generation != _generation)
 				return;
-			[self showPrepared:*prepared];
+			[self showPrepared:*prepared change:keptChange];
 		});
 	});
 }
 
-- (void)showPrepared:(prepared_diff_t const&)prepared
+- (void)showPrepared:(prepared_diff_t const&)prepared change:(NSInteger)keptChange
 {
 	if(prepared.message)
 	{
@@ -519,6 +642,9 @@ static NSString* MessageForNode (CompareNode* node)
 	_body.hidden = NO;
 	_statusLabel.stringValue = prepared.status ?: @"";
 	_hunkRows = prepared.hunk_rows;
+	_hunks    = prepared.hunks;
+	_data[0]  = prepared.left_data;
+	_data[1]  = prepared.right_data;
 
 	NSAttributedString* texts[2] = { prepared.left, prepared.right };
 	std::shared_ptr<side_rows_t> rows[2] = { prepared.left_rows, prepared.right_rows };
@@ -531,9 +657,51 @@ static NSString* MessageForNode (CompareNode* node)
 
 	_currentChange = -1;
 	if(!_hunkRows.empty())
-		[self goToChange:0];
+		[self goToChange:MIN(MAX(keptChange, 0), (NSInteger)_hunkRows.size() - 1)];
 	else
 		[self updateNavigation];
+	[self.window invalidateCursorRectsForView:_strip];
+	_strip.needsDisplay = YES;
+}
+
+// ===================
+// = Copying changes =
+// ===================
+
+- (std::vector<std::pair<long, long>>)changeRows
+{
+	std::vector<std::pair<long, long>> rows;
+	if(!_message)
+	{
+		for(auto const& hunk : _hunks)
+			rows.emplace_back(hunk.first_row, hunk.row_count);
+	}
+	return rows;
+}
+
+- (CGFloat)scrollOffset
+{
+	return _scrollViews[0].contentView.bounds.origin.y;
+}
+
+- (void)stripClickedChange:(NSInteger)change toRight:(BOOL)toRight
+{
+	_currentChange = change;
+	[self updateNavigation];
+	if(_changeHandler)
+		_changeHandler(self, change, toRight);
+}
+
+- (NSData*)comparedDataOnLeft:(BOOL)left
+{
+	return _data[left ? 0 : 1];
+}
+
+- (NSData*)contentsWithChange:(NSInteger)change toRight:(BOOL)toRight
+{
+	if(change < 0 || change >= (NSInteger)_hunks.size() || !_data[0] || !_data[1])
+		return nil;
+	return compare::apply_hunk(_data[0], _data[1], _hunks[change], toRight);
 }
 
 // ==============
@@ -601,10 +769,15 @@ static NSString* MessageForNode (CompareNode* node)
 	NSScrollView* other = source == _scrollViews[0].contentView ? _scrollViews[1] : _scrollViews[0];
 	NSClipView* destination = other.contentView;
 	if(NSEqualPoints(destination.bounds.origin, source.bounds.origin))
+	{
+		_strip.needsDisplay = YES;
 		return;
+	}
 	_synchronizing = YES;
 	[destination scrollToPoint:source.bounds.origin];
 	[other reflectScrolledClipView:destination];
 	_synchronizing = NO;
+	_strip.needsDisplay = YES;
+	[self.window invalidateCursorRectsForView:_strip];
 }
 @end

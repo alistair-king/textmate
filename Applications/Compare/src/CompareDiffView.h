@@ -7,6 +7,9 @@
 @interface CompareDiffView : NSView
 // Shows the entry's contents, loading files on a worker queue; nil clears.
 - (void)showNode:(CompareNode*)node;
+// After a change was copied: stays on the same change number when it still exists.
+- (void)showNode:(CompareNode*)node keepingChange:(BOOL)keep;
+@property (nonatomic, readonly) CompareNode* node;
 - (void)showMessage:(NSString*)message;
 
 @property (nonatomic, readonly, getter = isLoading) BOOL loading;
@@ -15,6 +18,14 @@
 
 - (IBAction)nextChange:(id)sender;
 - (IBAction)previousChange:(id)sender;
+
+// Copying a change: the arrows between the sides call this handler (the
+// window controller writes the file). The view only computes contents.
+@property (nonatomic, copy) void (^changeHandler)(CompareDiffView* view, NSInteger change, BOOL toRight);
+// The bytes the shown comparison was made from.
+- (NSData*)comparedDataOnLeft:(BOOL)left;
+// The destination file's contents with `change` copied from the other side.
+- (NSData*)contentsWithChange:(NSInteger)change toRight:(BOOL)toRight;
 
 // For tests.
 @property (nonatomic, readonly) NSTextView* leftTextView;

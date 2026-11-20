@@ -34,6 +34,8 @@ namespace compare {
 	struct text_diff_t
 	{
 		NSString* problem = nil;      // set when no text diff is available
+		NSData* left_data  = nil;     // the bytes compared, for applying hunks
+		NSData* right_data = nil;
 		NSArray<NSString*>* left_lines  = @[ ];
 		NSArray<NSString*>* right_lines = @[ ];
 		std::vector<diff_row_t> rows;

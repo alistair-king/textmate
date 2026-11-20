@@ -2,6 +2,7 @@
 #import "compare_tree.h"
 #import "compare_colors.h"
 #import "CompareDiffView.h"
+#import "compare_transfer.h"
 #import <FileBrowser/FileItem.h>
 #import <FileBrowser/FileBrowserOutlineView.h>
 #import <FileBrowser/FileItemTableCellView.h>
@@ -126,9 +127,12 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 }
 
 static NSString* GitExecutable;
+static BOOL ConfirmsChanges = YES;
 
 + (NSString*)gitExecutable              { return GitExecutable; }
 + (void)setGitExecutable:(NSString*)git { GitExecutable = [git copy]; }
++ (BOOL)confirmsChanges                 { return ConfirmsChanges; }
++ (void)setConfirmsChanges:(BOOL)flag   { ConfirmsChanges = flag; }
 
 - (instancetype)initWithLeftPath:(NSString*)left rightPath:(NSString*)right focus:(NSString*)focus
 {
@@ -703,6 +707,10 @@ static NSString* GitExecutable;
 	tab.relativePath = node.relativePath;
 	tab.node         = node;
 	tab.diffView     = [[CompareDiffView alloc] initWithFrame:NSZeroRect];
+	__weak CompareWindowController* weakSelf = self;
+	tab.diffView.changeHandler = ^(CompareDiffView* view, NSInteger change, BOOL toRight){
+		[weakSelf copyChange:change inView:view toRight:toRight];
+	};
 	tab.view         = tab.diffView;
 	[tab.diffView showNode:node];
 	[_tabs addObject:tab];
@@ -778,6 +786,240 @@ static NSString* GitExecutable;
 - (NSUInteger)tabCount         { return _tabs.count; }
 - (NSUInteger)selectedTabIndex { return _selectedTab; }
 
+// =============
+// = Transfers =
+// =============
+
+typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
+
+- (CompareNode*)rootNode
+{
+	return _root;
+}
+
+- (compare_options_t)restatOptions
+{
+	compare_options_t options;
+	options.git           = CompareWindowController.gitExecutable;
+	options.folders_first = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsFoldersOnTopKey];
+	return options;
+}
+
+- (void)presentProblem:(NSString*)problem
+{
+	_lastProblem = [problem copy];
+	if(!problem || !ConfirmsChanges)
+		return;
+	NSAlert* alert = [NSAlert new];
+	alert.messageText     = @"The change could not be made.";
+	alert.informativeText = problem;
+	[alert beginSheetModalForWindow:self.window completionHandler:nil];
+}
+
+- (BOOL)confirm:(NSString*)message informative:(NSString*)informative button:(NSString*)button
+{
+	if(!ConfirmsChanges)
+		return YES;
+	NSAlert* alert = [NSAlert new];
+	alert.messageText     = message;
+	alert.informativeText = informative;
+	[alert addButtonWithTitle:button];
+	[alert addButtonWithTitle:@"Cancel"];
+	return [alert runModal] == NSAlertFirstButtonReturn;
+}
+
+// Runs `block` with a fresh change set, registers its undo (whose redo runs
+// `block` again), then re-reads the affected entries from disk.
+- (BOOL)performChangesNamed:(NSString*)name affecting:(NSArray<NSString*>*)paths using:(CompareChangeBlock)block
+{
+	_lastProblem = nil;
+	CompareChangeSet* changes = [CompareChangeSet new];
+	NSString* problem = nil;
+	BOOL ok = block(changes, &problem);
+	if(changes.count)
+	{
+		NSUndoManager* undoManager = self.window.undoManager;
+		[undoManager registerUndoWithTarget:self handler:^(CompareWindowController* target){
+			[target undoChanges:changes named:name affecting:paths redo:block];
+		}];
+		[undoManager setActionName:name];
+	}
+	[self reloadAfterChangingRelativePaths:paths];
+	if(!ok)
+		[self presentProblem:problem ?: @"Unknown error."];
+	return ok;
+}
+
+- (void)undoChanges:(CompareChangeSet*)changes named:(NSString*)name affecting:(NSArray<NSString*>*)paths redo:(CompareChangeBlock)block
+{
+	_lastProblem = nil;
+	NSString* problem = nil;
+	BOOL ok = [changes undo:&problem];
+	[self reloadAfterChangingRelativePaths:paths];
+	if(ok)
+	{
+		[self.window.undoManager registerUndoWithTarget:self handler:^(CompareWindowController* target){
+			[target performChangesNamed:name affecting:paths using:block];
+		}];
+		[self.window.undoManager setActionName:name];
+	}
+	else
+	{
+		[self presentProblem:problem];
+	}
+}
+
+// Re-reads changed entries and redraws, keeping expansion, selection and
+// each open file tab's change number.
+- (void)reloadAfterChangingRelativePaths:(NSArray<NSString*>*)paths
+{
+	if(!_root)
+		return;
+	NSArray<NSString*>* expanded = [self expandedRelativePaths];
+	NSString* selected = [self selectedRelativePath];
+	CompareRestatPaths(_root, paths, self.restatOptions);
+	[self reloadOutlines];
+	[self expandRelativePaths:expanded];
+	if(selected)
+		[self revealRelativePath:selected select:YES];
+	[self updateSummary];
+
+	auto affects = ^BOOL(NSString* tabPath){
+		for(NSString* path in paths)
+		{
+			if(!path.length || [tabPath isEqualToString:path] || [tabPath hasPrefix:[path stringByAppendingString:@"/"]])
+				return YES;
+		}
+		return NO;
+	};
+	for(NSUInteger i = 1; i < _tabs.count; ++i)
+	{
+		CompareTab* tab = _tabs[i];
+		tab.node = [_root nodeAtRelativePath:tab.relativePath];
+		if(!affects(tab.relativePath))
+			continue;
+		if(tab.node)
+				[tab.diffView showNode:tab.node keepingChange:YES];
+		else	[tab.diffView showMessage:@"This file is no longer in either folder."];
+	}
+	[_tabBar reloadData];
+}
+
+- (void)copyEntriesAtRelativePaths:(NSArray<NSString*>*)paths toRight:(BOOL)toRight
+{
+	NSUInteger count = 0;
+	BOOL replacesType = NO;
+	for(NSString* path in paths)
+	{
+		CompareNode* node = [_root nodeAtRelativePath:path];
+		count += CompareCountCopies(node, toRight);
+		replacesType |= CompareCopyReplacesType(node, toRight);
+	}
+	if(count == 0)
+	{
+		NSBeep();
+		return;
+	}
+
+	NSString* side = toRight ? @"right" : @"left";
+	if(count > 1 || replacesType)
+	{
+		NSString* message = count == 1 ? [NSString stringWithFormat:@"Copy 1 item to the %@?", side] : [NSString stringWithFormat:@"Copy %lu items to the %@?", count, side];
+		NSMutableString* informative = [NSMutableString stringWithFormat:@"Items with the same name on the %@ are replaced.", side];
+		if(replacesType)
+			[informative appendFormat:@" Where the %@ has a folder in place of a file, or a file in place of a folder, it is moved to the Trash.", side];
+		[informative appendString:@" You can undo this."];
+		if(![self confirm:message informative:informative button:@"Copy"])
+			return;
+	}
+
+	__weak CompareWindowController* weakSelf = self;
+	[self performChangesNamed:toRight ? @"Copy to the Right" : @"Copy to the Left" affecting:paths using:^BOOL(CompareChangeSet* changes, NSString** error){
+		CompareNode* root = weakSelf.rootNode;
+		for(NSString* path in paths)
+		{
+			CompareNode* node = [root nodeAtRelativePath:path];
+			if(node && !CompareCopyNode(node, toRight, changes, error))
+				return NO;
+		}
+		return YES;
+	}];
+}
+
+- (void)trashEntriesAtRelativePaths:(NSArray<NSString*>*)paths onLeft:(BOOL)left
+{
+	__weak CompareWindowController* weakSelf = self;
+	[self performChangesNamed:@"Move to Trash" affecting:paths using:^BOOL(CompareChangeSet* changes, NSString** error){
+		CompareNode* root = weakSelf.rootNode;
+		for(NSString* path in paths)
+		{
+			CompareNode* node = [root nodeAtRelativePath:path];
+			if(node && !CompareTrashNode(node, left, changes, error))
+				return NO;
+		}
+		return YES;
+	}];
+}
+
+- (void)copyChange:(NSInteger)change inView:(CompareDiffView*)view toRight:(BOOL)toRight
+{
+	CompareNode* node = view.node;
+	NSData* contents = [view contentsWithChange:change toRight:toRight];
+	if(!node || !contents)
+		return;
+	NSData* expectedDestination = [view comparedDataOnLeft:!toRight];
+	NSData* expectedSource      = [view comparedDataOnLeft:toRight];
+	NSString* destination = [node pathOnLeft:!toRight];
+	NSString* source      = [node pathOnLeft:toRight];
+	mode_t mode = CompareStampAtPath(source).mode ?: 0644;
+	NSString* relativePath = node.relativePath;
+
+	[self performChangesNamed:toRight ? @"Copy Change to the Right" : @"Copy Change to the Left" affecting:@[ relativePath ] using:^BOOL(CompareChangeSet* changes, NSString** error){
+		// Write only over exactly what was compared.
+		auto current = ^NSData*(NSString* path){
+			return CompareStampAtPath(path).exists ? [NSData dataWithContentsOfFile:path] : [NSData data];
+		};
+		if(![current(destination) isEqualToData:expectedDestination] || ![current(source) isEqualToData:expectedSource])
+		{
+			if(error)
+				*error = [NSString stringWithFormat:@"“%@” changed since it was compared. Compare again, then try once more.", relativePath];
+			return NO;
+		}
+		return [changes writeData:contents toPath:destination mode:mode error:error];
+	}];
+}
+
+- (IBAction)copyToRight:(id)sender { [self copySelectionToRight:YES]; }
+- (IBAction)copyToLeft:(id)sender  { [self copySelectionToRight:NO]; }
+
+- (void)copySelectionToRight:(BOOL)toRight
+{
+	if(CompareDiffView* view = self.selectedDiffView)
+	{
+		if(view.currentChange >= 0 && view.currentChange < view.changeCount)
+			[self copyChange:view.currentChange inView:view toRight:toRight];
+		else
+			NSBeep();
+		return;
+	}
+	NSOutlineView* outlineView = _sides[0].outlineView;
+	NSArray<CompareNode*>* nodes = [self topmostNodesInRows:outlineView.selectedRowIndexes outlineView:outlineView];
+	[self copyEntriesAtRelativePaths:[nodes valueForKey:@"relativePath"] toRight:toRight];
+}
+
+- (BOOL)canCopySelectionToRight:(BOOL)toRight
+{
+	if(CompareDiffView* view = self.selectedDiffView)
+		return view.currentChange >= 0 && view.currentChange < view.changeCount;
+	NSOutlineView* outlineView = _sides[0].outlineView;
+	for(CompareNode* node in [self topmostNodesInRows:outlineView.selectedRowIndexes outlineView:outlineView])
+	{
+		if(CompareCountCopies(node, toRight))
+			return YES;
+	}
+	return NO;
+}
+
 - (IBAction)nextChange:(id)sender     { [self.selectedDiffView nextChange:sender]; }
 - (IBAction)previousChange:(id)sender { [self.selectedDiffView previousChange:sender]; }
 
@@ -785,6 +1027,13 @@ static NSString* GitExecutable;
 {
 	if(item.action == @selector(nextChange:) || item.action == @selector(previousChange:))
 		return self.selectedDiffView && [self.selectedDiffView validateMenuItem:item];
+	if(item.action == @selector(copyToRight:) || item.action == @selector(copyToLeft:))
+	{
+		BOOL fileTab = self.selectedDiffView != nil;
+		BOOL toRight = item.action == @selector(copyToRight:);
+		item.title = fileTab ? (toRight ? @"Copy Change to the Right" : @"Copy Change to the Left") : (toRight ? @"Copy to the Right" : @"Copy to the Left");
+		return [self canCopySelectionToRight:toRight];
+	}
 	if(item.action == @selector(openSelectedFiles:))
 		return _selectedTab == 0 && _sides[0].outlineView.numberOfSelectedRows > 0;
 	if(item.action == @selector(selectNextTab:) || item.action == @selector(selectPreviousTab:))
@@ -884,10 +1133,59 @@ static NSString* GitExecutable;
 		NSInteger row = side.outlineView.clickedRow;
 		CompareNode* node = row == -1 ? nil : [side.outlineView itemAtRow:row];
 		NSString* path = side.left ? node.leftPath : node.rightPath;
+		NSArray<CompareNode*>* nodes = [self nodesForMenuInOutlineView:side.outlineView];
+		BOOL present = NO;
+		NSUInteger copies = 0;
+		for(CompareNode* candidate in nodes)
+		{
+			present |= (side.left ? candidate.leftKind : candidate.rightKind) != CompareKindNone;
+			copies  += CompareCountCopies(candidate, side.left);
+		}
+		NSMenuItem* copy = [menu addItemWithTitle:side.left ? @"Copy to the Right" : @"Copy to the Left" action:copies ? @selector(copyClickedEntries:) : NULL keyEquivalent:@""];
+		copy.target = self;
+		copy.representedObject = @{ @"toRight": @(side.left), @"paths": [nodes valueForKey:@"relativePath"] };
+		NSMenuItem* trash = [menu addItemWithTitle:@"Move to Trash" action:present ? @selector(trashClickedEntries:) : NULL keyEquivalent:@""];
+		trash.target = self;
+		trash.representedObject = @{ @"left": @(side.left), @"paths": [nodes valueForKey:@"relativePath"] };
+		[menu addItem:NSMenuItem.separatorItem];
 		NSMenuItem* reveal = [menu addItemWithTitle:@"Reveal in Finder" action:path ? @selector(revealInFinder:) : NULL keyEquivalent:@""];
 		reveal.target = self;
 		reveal.representedObject = path;
 	}
+}
+
+// The clicked row, or the selection when the click is inside it; without
+// nested duplicates (an entry whose folder is also included).
+- (NSArray<CompareNode*>*)nodesForMenuInOutlineView:(NSOutlineView*)outlineView
+{
+	NSInteger clicked = outlineView.clickedRow;
+	NSIndexSet* rows = clicked == -1 || [outlineView.selectedRowIndexes containsIndex:clicked] ? outlineView.selectedRowIndexes : [NSIndexSet indexSetWithIndex:clicked];
+	return [self topmostNodesInRows:rows outlineView:outlineView];
+}
+
+- (NSArray<CompareNode*>*)topmostNodesInRows:(NSIndexSet*)rows outlineView:(NSOutlineView*)outlineView
+{
+	NSMutableArray<CompareNode*>* nodes = [NSMutableArray array];
+	for(NSUInteger row = rows.firstIndex; row != NSNotFound; row = [rows indexGreaterThanIndex:row])
+	{
+		CompareNode* node = [outlineView itemAtRow:row];
+		BOOL nested = NO;
+		for(CompareNode* ancestor = node.parent; ancestor && !nested; ancestor = ancestor.parent)
+			nested = [nodes containsObject:ancestor];
+		if(!nested)
+			[nodes addObject:node];
+	}
+	return nodes;
+}
+
+- (void)copyClickedEntries:(NSMenuItem*)sender
+{
+	[self copyEntriesAtRelativePaths:sender.representedObject[@"paths"] toRight:[sender.representedObject[@"toRight"] boolValue]];
+}
+
+- (void)trashClickedEntries:(NSMenuItem*)sender
+{
+	[self trashEntriesAtRelativePaths:sender.representedObject[@"paths"] onLeft:[sender.representedObject[@"left"] boolValue]];
 }
 
 - (void)revealInFinder:(NSMenuItem*)sender

@@ -1,6 +1,6 @@
 # tm-compare — Development Plan
 
-Status: Phases 0–2 done (2026-11-20); Phase 3 next. This file is the working plan; it will be
+Status: Phases 0–3 done (2026-11-20); Phase 4 next. This file is the working plan; it will be
 replaced by `docs/compare.md` (user documentation) once the feature ships.
 
 ## Goal
@@ -220,7 +220,7 @@ Each phase ends with a green ctest suite (see CLAUDE.md → Testing).
 | **0. Skeleton** ✅ | Compare.app and tm-compare built, embedded and signed. URL handling works. The window shows the two paths. Worktree discovery is reused and the Text → Compare To menu is live. | `command-palette-projects` still green; launcher `--help` |
 | **1. Tree comparison (read-only)** ✅ | File enumeration and classification. Two synchronised `FileBrowserOutlineView` trees with `FileItemTableCellView` cells, row background colours, filters and opening on `focus`. | `compare-tree` (model, Git fixture with a linked worktree) and `compare-window` (real window: alignment, tints, sync, filters, focus; `COMPARE_SNAPSHOT_DIR` writes light/dark PNGs) |
 | **2. File diff view** ✅ | xdiff hunks, side-by-side view with line background colours, synchronised scroll, next/previous change | `compare` (hunk model: insert/delete/change pairing, empty sides, missing trailing newline, CRLF, binary, Latin-1, changed spans) and `compare-window` (contents, tints, navigation, messages) |
-| **3. Transfers** | File and folder copy in both directions, delete to Trash, then per-hunk apply in both directions. Staleness check, undo, re-classify after each change. | Apply/undo round-trips; refusal when the target changed on disk; a GUI test bundle like `theme-editor-selection` |
+| **3. Transfers** ✅ | File and folder copy in both directions, Move to Trash, per-change copy in both directions. Staleness checks, undo/redo, re-reading changed entries. | `compare-transfer` (hunk application, change sets and undo, tree copies, type changes, stale refusal, trash) and `compare-window` (copies, trash, undo/redo, refusals, change copies from file tabs) |
 | **4. Polish** | Live refresh via file-system events, "include ignored files" option, remembered expansion state, `docs/compare.md`, README | — |
 
 ## Phase 1 notes
@@ -276,3 +276,30 @@ Each phase ends with a green ctest suite (see CLAUDE.md → Testing).
   this; it was confirmed to fail without the entitlement.
 - Deferred: syntax highlighting (OakDocumentView), intra-line diff beyond
   prefix/suffix trimming, jumping from the last change to the next file.
+
+## Phase 3 notes
+
+- Engine: `compare_transfer.{h,mm}`. `CompareChangeSet` writes atomically
+  (temporary file renamed into place), keeps what it replaced in a backup
+  folder, and undoes in reverse; undo refuses when a path no longer looks
+  the way its latest change left it. Created parent folders are removed
+  again when empty.
+- Tree: Edit → Copy to the Right / Left (⌥⌘→ / ⌥⌘←) and each tree's context
+  menu copy the selected entries; folders copy every differing entry below
+  them, and entries only on the destination stay. A file in place of a
+  folder (or the reverse) on the destination goes to the Trash first.
+  Copying more than one item, or replacing a type, asks first. Move to
+  Trash is in the context menu, for the clicked side.
+- File tabs: arrows beside each change, in a strip between the two sides,
+  copy that change either way; the Edit menu commands copy the current
+  change. A change is written only when both files still hold exactly the
+  bytes compared.
+- Every transfer refuses when the entry changed on disk since it was
+  compared (stamps: device, inode, size, mode, modification time) and asks
+  for Compare Again. Unsaved TextMate buffers are not considered.
+- Undo/Redo (⌘Z / ⇧⌘Z) use the window's undo manager; redo runs the
+  operation again by relative path. After each change the affected entries
+  are re-read (`CompareRestatPaths`, which also finds entries an undo
+  brought back) instead of comparing everything again.
+- Not done: per-row copy arrows in the trees (menus and shortcuts only);
+  copying submodules or other special entries.

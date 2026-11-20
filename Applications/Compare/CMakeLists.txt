@@ -1,4 +1,4 @@
-add_executable(Compare MACOSX_BUNDLE src/main.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm)
+add_executable(Compare MACOSX_BUNDLE src/main.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm)
 # Static frameworks cannot carry resources: bundle the tab bar's images and the
 # file-type icons TMFileReference uses, as TextMate's app bundle does.
 file(GLOB _compare_resources CONFIGURE_DEPENDS
@@ -64,9 +64,18 @@ if(BUILD_TESTING)
     target_link_libraries(compare_tree_tests PRIVATE ${TEXTMATE_DEBUG_LIBS} "-framework Foundation")
     add_test(NAME compare-tree COMMAND compare_tree_tests)
 
+    set(_transfer_runner "${CMAKE_CURRENT_BINARY_DIR}/transfer_test_runner.mm")
+    add_custom_command(OUTPUT "${_transfer_runner}"
+      COMMAND "${CMAKE_SOURCE_DIR}/bin/gen_test"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/t_compare_transfer.mm" > "${_transfer_runner}"
+      DEPENDS tests/t_compare_transfer.mm src/compare_transfer.h src/compare_tree.h src/compare_diff.h "${CMAKE_SOURCE_DIR}/bin/gen_test")
+    add_executable(compare_transfer_tests "${_transfer_runner}" src/compare_transfer.mm src/compare_tree.mm src/compare_diff.mm)
+    target_link_libraries(compare_transfer_tests PRIVATE xdiff ${TEXTMATE_DEBUG_LIBS} "-framework Foundation")
+    add_test(NAME compare-transfer COMMAND compare_transfer_tests)
+
     # Drives the real window over the fixture; needs a GUI session.
     add_executable(compare_window_tests MACOSX_BUNDLE
-      tests/window_tests.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm
+      tests/window_tests.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm
       ${_compare_resources} ${_compare_doctypes})
     set_target_properties(compare_window_tests PROPERTIES
       MACOSX_BUNDLE_GUI_IDENTIFIER "com.macromates.TextMate.Compare.Tests"

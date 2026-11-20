@@ -36,6 +36,8 @@ namespace compare {
 		text_diff_t result;
 		left  = left  ?: [NSData data];
 		right = right ?: [NSData data];
+		result.left_data  = left;
+		result.right_data = right;
 		if(memchr(left.bytes, 0, left.length) || memchr(right.bytes, 0, right.length))
 		{
 			result.problem = @"Binary file. A text comparison is not available.";

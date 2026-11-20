@@ -22,6 +22,7 @@
 - (void)openSelectedFiles:(id)sender;
 - (void)closeTab:(id)sender;
 - (NSString*)tabBarView:(id)tabBar titleForIndex:(NSUInteger)index;
+- (void)trashClickedEntries:(NSMenuItem*)sender;
 @end
 
 static int Failures = 0;
@@ -361,6 +362,131 @@ static void TestFileTabs (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+static NSString* Contents (NSString* root, NSString* relativePath)
+{
+	return [NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:relativePath] encoding:NSUTF8StringEncoding error:nil];
+}
+
+static void SelectRow (NSOutlineView* outlineView, NSString* relativePath)
+{
+	NSInteger row = RowFor(outlineView, relativePath);
+	CHECK(row != -1);
+	if(row != -1)
+		[outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+}
+
+static void TestTransfers (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	[controller.window setFrame:NSMakeRect(100, 100, 1000, 700) display:NO];
+	[controller.window layoutIfNeeded];
+	NSOutlineView* left = [controller outlineViewForLeftSide:YES];
+	NSUndoManager* undo = controller.window.undoManager;
+	NSTextField* summary = [controller valueForKey:@"_summaryLabel"];
+
+	// A modified file, left to right; undo and redo.
+	SelectRow(left, @"grown.txt");
+	NSMenuItem* toRight = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(copyToRight:) keyEquivalent:@""];
+	CHECK([controller validateMenuItem:toRight]);
+	CHECK([toRight.title isEqualToString:@"Copy to the Right"]);
+	[controller copyToRight:nil];
+	CHECK(controller.lastProblem == nil);
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:@"short\n"]);
+	CHECK(RowFor(left, @"grown.txt") == -1); // identical now, hidden by the Changed filter
+	CHECK([summary.stringValue hasPrefix:@"4 modified"]);
+	CHECK(undo.canUndo && [undo.undoActionName isEqualToString:@"Copy to the Right"]);
+	[undo undo];
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:@"much longer contents\n"]);
+	CHECK(RowFor(left, @"grown.txt") != -1);
+	CHECK([summary.stringValue hasPrefix:@"5 modified"]);
+	CHECK(undo.canRedo);
+	[undo redo];
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:@"short\n"]);
+	[undo undo];
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:@"much longer contents\n"]);
+
+	// Right to left.
+	SelectRow(left, @"grown.txt");
+	[controller copyToLeft:nil];
+	CHECK([Contents(fixture.left, @"grown.txt") isEqualToString:@"much longer contents\n"]);
+	[undo undo];
+	CHECK([Contents(fixture.left, @"grown.txt") isEqualToString:@"short\n"]);
+
+	// A file only on the left, and a folder only on the right.
+	SelectRow(left, @"left-only.txt");
+	[controller copyToRight:nil];
+	CHECK([Contents(fixture.right, @"left-only.txt") isEqualToString:@"untracked on the left\n"]);
+	SelectRow(left, @"newdir");
+	NSMenuItem* toLeft = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(copyToLeft:) keyEquivalent:@""];
+	CHECK([controller validateMenuItem:toLeft] && ![controller validateMenuItem:toRight]);
+	[controller copyToLeft:nil];
+	CHECK([Contents(fixture.left, @"newdir/x.txt") isEqualToString:@"new on the right\n"]);
+	CHECK(RowFor(left, @"newdir") == -1);
+	[undo undo];
+	CHECK(!CompareStampAtPath([fixture.left stringByAppendingPathComponent:@"newdir"]).exists);
+	CHECK(RowFor(left, @"newdir") != -1);
+	[undo undo];
+	CHECK(!CompareStampAtPath([fixture.right stringByAppendingPathComponent:@"left-only.txt"]).exists);
+
+	// Move to Trash (the left's gone.txt is the only copy), then undo.
+	NSMenuItem* trash = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(trashClickedEntries:) keyEquivalent:@""];
+	trash.representedObject = @{ @"left": @YES, @"paths": @[ @"gone.txt" ] };
+	[controller trashClickedEntries:trash];
+	CHECK(controller.lastProblem == nil);
+	CHECK(RowFor(left, @"gone.txt") == -1);
+	CHECK(!CompareStampAtPath([fixture.left stringByAppendingPathComponent:@"gone.txt"]).exists);
+	[undo undo];
+	CHECK([Contents(fixture.left, @"gone.txt") isEqualToString:@"tracked\n"]);
+	CHECK(RowFor(left, @"gone.txt") != -1);
+
+	// A file changed since it was compared is not overwritten.
+	[@"edited elsewhere\n" writeToFile:[fixture.right stringByAppendingPathComponent:@"same-size.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	SelectRow(left, @"same-size.txt");
+	[controller copyToRight:nil];
+	CHECK([controller.lastProblem containsString:@"changed on the right"]);
+	CHECK([Contents(fixture.right, @"same-size.txt") isEqualToString:@"edited elsewhere\n"]);
+	[controller refresh:nil];
+	CHECK(WaitUntil(^{ return Loaded(controller); }));
+
+	// Copying single changes from a file tab.
+	CompareDiffView* diff = Show(controller, @"multi.txt");
+	CHECK(diff.changeCount == 2 && diff.currentChange == 0);
+	Snapshot(controller, @"changes");
+	CHECK([controller validateMenuItem:toRight]);
+	CHECK([toRight.title isEqualToString:@"Copy Change to the Right"]);
+	[controller copyToRight:nil]; // line 3, left to right
+	CHECK(controller.lastProblem == nil);
+	CHECK([Contents(fixture.right, @"multi.txt") hasPrefix:@"line 1\nline 2\nline 3\nline 4\n"]);
+	CHECK([Contents(fixture.right, @"multi.txt") containsString:@"line 16 changed\n"]);
+	CHECK(WaitUntil(^{ return (BOOL)!diff.loading; }));
+	CHECK(diff.changeCount == 1 && diff.currentChange == 0);
+
+	// The arrows between the sides: line 16, right to left.
+	diff.changeHandler(diff, 0, NO);
+	CHECK(WaitUntil(^{ return (BOOL)!diff.loading; }));
+	CHECK([Contents(fixture.left, @"multi.txt") containsString:@"line 16 changed\n"]);
+	CHECK(diff.changeCount == 0);
+	CHECK([diff.statusText isEqualToString:@"No differences"]);
+	[controller selectTabAtIndex:0];
+	CHECK(RowFor(left, @"multi.txt") == -1);
+
+	[undo undo];
+	[undo undo];
+	[controller selectTabAtIndex:1];
+	CHECK(WaitUntil(^{ return (BOOL)!diff.loading; }));
+	CHECK(diff.changeCount == 2);
+	CHECK(![Contents(fixture.left, @"multi.txt") containsString:@"changed"]);
+
+	// A file tab refuses to copy over a file edited since it was shown.
+	[[Contents(fixture.right, @"multi.txt") stringByAppendingString:@"appended\n"] writeToFile:[fixture.right stringByAppendingPathComponent:@"multi.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	[controller copyToRight:nil];
+	CHECK([controller.lastProblem containsString:@"changed since it was compared"]);
+	CHECK([Contents(fixture.right, @"multi.txt") hasSuffix:@"appended\n"]);
+
+	SelectFilter(controller, 0);
+	[controller close];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -386,6 +512,7 @@ int main (int argc, char const* argv[])
 		RegisterDefaults(); // tab widths, as Compare.app's main does
 		[NSUserDefaults.standardUserDefaults setVolatileDomain:@{ @"compareFilter": @0, kUserDefaultsFoldersOnTopKey: @YES } forName:NSArgumentDomain];
 		CompareWindowController.gitExecutable = @COMPARE_TEST_GIT;
+		CompareWindowController.confirmsChanges = NO;
 
 		compare_fixture_t fixture = compare_fixture::create(@COMPARE_TEST_GIT);
 		CHECK(fixture.error == nil);
@@ -393,6 +520,12 @@ int main (int argc, char const* argv[])
 		{
 			TestChangedFilter(fixture);
 			TestFileTabs(fixture);
+
+			// Transfers change files: use a fixture of their own.
+			compare_fixture_t writable = compare_fixture::create(@COMPARE_TEST_GIT);
+			CHECK(writable.error == nil);
+			if(!writable.error)
+				TestTransfers(writable);
 			TestFocus(fixture);
 		}
 

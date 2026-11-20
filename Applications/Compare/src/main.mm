@@ -126,8 +126,17 @@ static BOOL IsDirectory (NSString* path)
 
 	NSMenuItem* edit = [NSMenuItem new];
 	edit.submenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+	[edit.submenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
+	[edit.submenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@"Z"];
+	[edit.submenu addItem:NSMenuItem.separatorItem];
 	[edit.submenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
 	[edit.submenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+	[edit.submenu addItem:NSMenuItem.separatorItem];
+	for(NSArray* entry in @[ @[ @"Copy to the Right", NSStringFromSelector(@selector(copyToRight:)), @(NSRightArrowFunctionKey) ], @[ @"Copy to the Left", NSStringFromSelector(@selector(copyToLeft:)), @(NSLeftArrowFunctionKey) ] ])
+	{
+		NSMenuItem* item = [edit.submenu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)[entry[2] unsignedShortValue]]];
+		item.keyEquivalentModifierMask = NSEventModifierFlagCommand|NSEventModifierFlagOption;
+	}
 	[menu addItem:edit];
 
 	NSMenuItem* go = [NSMenuItem new];
