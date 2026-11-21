@@ -5,23 +5,24 @@
 
 static char const* const kUsage =
 	"Usage: tm-compare [--focus <relative-path>] <left-folder> <right-folder>\n"
-	"Opens TextMate's worktree comparison for two folders.\n";
+	"       tm-compare <left-file> <right-file>\n"
+	"Opens TextMate's comparison of two folders (worktrees), or of two files.\n";
 
-static NSString* ExistingDirectory (char const* argument)
+// The absolute, resolved path of an existing file or folder, or nil.
+static NSString* ExistingPath (char const* argument, BOOL* isDirectory)
 {
 	NSString* path = [NSFileManager.defaultManager stringWithFileSystemRepresentation:argument length:strlen(argument)];
 	if(!path.isAbsolutePath)
 		path = [NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:path];
 	path = path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
-	BOOL isDirectory = NO;
-	return [NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory] && isDirectory ? path : nil;
+	return [NSFileManager.defaultManager fileExistsAtPath:path isDirectory:isDirectory] ? path : nil;
 }
 
 int main (int argc, char const* argv[])
 {
 	@autoreleasepool
 	{
-		std::vector<char const*> folders;
+		std::vector<char const*> folders; // or files
 		NSString* focus = nil;
 		for(int i = 1; i < argc; ++i)
 		{
@@ -51,19 +52,30 @@ int main (int argc, char const* argv[])
 			return 1;
 		}
 
-		NSString* left  = ExistingDirectory(folders[0]);
-		NSString* right = ExistingDirectory(folders[1]);
+		BOOL isDirectory[2] = { NO, NO };
+		NSString* left  = ExistingPath(folders[0], &isDirectory[0]);
+		NSString* right = ExistingPath(folders[1], &isDirectory[1]);
 		for(size_t i = 0; i < 2; ++i)
 		{
 			if(!(i == 0 ? left : right))
 			{
-				fprintf(stderr, "tm-compare: %s is not a folder\n", folders[i]);
+				fprintf(stderr, "tm-compare: %s does not exist\n", folders[i]);
 				return 1;
 			}
 		}
+		if(isDirectory[0] != isDirectory[1])
+		{
+			fprintf(stderr, "tm-compare: %s is a %s and %s is a %s; compare two folders or two files\n", folders[0], isDirectory[0] ? "folder" : "file", folders[1], isDirectory[1] ? "folder" : "file");
+			return 1;
+		}
+		if(focus && !isDirectory[0])
+		{
+			fprintf(stderr, "tm-compare: --focus applies to folders, not files\n");
+			return 1;
+		}
 		if([left isEqualToString:right])
 		{
-			fprintf(stderr, "tm-compare: both arguments are the same folder\n");
+			fprintf(stderr, "tm-compare: both arguments are the same %s\n", isDirectory[0] ? "folder" : "file");
 			return 1;
 		}
 

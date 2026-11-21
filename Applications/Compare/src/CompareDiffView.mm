@@ -728,6 +728,9 @@ static CGFloat const kStripWidth = 34;
 	_message = nil;
 	_messageLabel.hidden = YES;
 	_body.hidden = NO;
+	// Selected while loading, the hidden text could not take the focus.
+	if(self.window.firstResponder == self.window)
+		[self.window makeFirstResponder:self.leftTextView];
 	_statusLabel.stringValue = prepared.status ?: @"";
 	_hunkRows = prepared.hunk_rows;
 	_hunks    = prepared.hunks;

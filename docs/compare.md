@@ -8,6 +8,8 @@ When the project in the front window belongs to a Git repository with more than 
 
 From the command line, run `tm-compare <left-folder> <right-folder>`, optionally with `--focus <relative-path>` to open on a folder inside them. Any two folders can be compared; without Git, every file in them is listed. Comparing the same pair again brings its window to the front.
 
+Given two files rather than two folders (`tm-compare <left-file> <right-file>`, the names may differ), Compare opens just their comparison: a window with one file tab and no trees, which works like any file tab below. Copies, Undo and Edit in TextMate work as usual, and the window compares again when either file changes on disk (other files in their folders do not count). A file and a folder cannot be compared with each other, and `--focus` applies to folders only.
+
 ## Files tab
 
 The first tab, **Files**, shows the two folders side by side as trees that look like TextMate's file browser, with copy arrows between them (see [Copying changes](#copying-changes)). Every row lines up across the two sides: an entry missing on one side shows as a dimmed placeholder there. Expanding, collapsing, selecting and scrolling on one side does the same on the other. Each header shows the folder's name, its branch and its location.

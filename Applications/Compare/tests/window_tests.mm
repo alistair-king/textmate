@@ -1155,6 +1155,60 @@ static void TestEditInTextMate (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+// Started on two files (named differently): just their comparison, which
+// copies changes, undoes them and follows edits to those two files only.
+static void TestFilePair ()
+{
+	NSString* base = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"compare-files-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+	NSString* leftFolder  = [base stringByAppendingPathComponent:@"left"];
+	NSString* rightFolder = [base stringByAppendingPathComponent:@"right"];
+	for(NSString* folder in @[ leftFolder, rightFolder ])
+		[NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+	NSString* left  = [leftFolder stringByAppendingPathComponent:@"old.txt"];
+	NSString* right = [rightFolder stringByAppendingPathComponent:@"new.txt"];
+	[@"one\ntwo\nthree\n" writeToFile:left atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	[@"one\n2\nthree\n" writeToFile:right atomically:NO encoding:NSUTF8StringEncoding error:nil];
+
+	CompareWindowController* controller = [[CompareWindowController alloc] initWithLeftPath:left rightPath:right focus:nil];
+	[controller.window setFrame:NSMakeRect(100, 100, 900, 320) display:NO];
+	[controller showWindow:nil];
+	CompareDiffView* diff = controller.selectedDiffView;
+	CHECK(controller.isFileComparison);
+	CHECK(controller.tabCount == 1 && diff != nil);
+	CHECK([controller.window.title isEqualToString:@"old.txt ⇄ new.txt"]);
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading && diff.changeCount == 1); }));
+	CHECK(controller.window.firstResponder == diff.leftTextView);
+
+	// No trees: their menu items are off.
+	NSMenuItem* mode = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(takeDisplayModeFrom:) keyEquivalent:@""];
+	NSMenuItem* expand = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(expandAllFolders:) keyEquivalent:@""];
+	CHECK(![controller validateMenuItem:mode] && ![controller validateMenuItem:expand]);
+
+	// Copying the change writes the right file; undo puts it back.
+	[NSApp sendAction:@selector(nextChange:) to:controller from:nil];
+	[controller copyToRight:nil];
+	CHECK(controller.lastProblem == nil);
+	CHECK([[NSString stringWithContentsOfFile:right encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"one\ntwo\nthree\n"]);
+	CHECK(WaitUntil(^{ return (BOOL)(!diff.loading && diff.changeCount == 0); }));
+	[controller.window.undoManager undo];
+	CHECK([[NSString stringWithContentsOfFile:right encoding:NSUTF8StringEncoding error:nil] isEqualToString:@"one\n2\nthree\n"]);
+	CHECK(WaitUntil(^{ return (BOOL)(!diff.loading && diff.changeCount == 1); }));
+
+	// Edited elsewhere: compared again. Other files beside them do not count.
+	NSUInteger count = controller.comparisonCount;
+	[@"one\n2\nthree\nfour\n" writeToFile:right atomically:YES encoding:NSUTF8StringEncoding error:nil];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && !diff.loading && diff.changeCount == 2); }));
+	NSUInteger events = controller.fileEventCount;
+	count = controller.comparisonCount;
+	[@"x\n" writeToFile:[leftFolder stringByAppendingPathComponent:@"other.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.fileEventCount > events); }));
+	Spin(1.5);
+	CHECK(controller.comparisonCount == count);
+
+	[controller close];
+	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -1215,6 +1269,7 @@ int main (int argc, char const* argv[])
 				TestIgnoreSetting(ignoring);
 			TestFocus(fixture);
 		}
+		TestFilePair();
 
 		if(Failures)
 			fprintf(stderr, "compare-window: %d assertion(s) failed\n", Failures);

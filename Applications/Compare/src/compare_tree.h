@@ -123,6 +123,11 @@ void CompareRestat (CompareNode* node, compare_options_t const& options);
 // nodes are created, and a folder's contents are listed again.
 void CompareRestatPaths (CompareNode* root, NSArray<NSString*>* relativePaths, compare_options_t const& options);
 
+// One entry for two files (a comparison started on files rather than
+// folders): its relativePath is @"" and, unlike other nodes, it keeps both
+// paths when a file is missing, so changes can recreate it.
+CompareNode* CompareFilePair (NSString* left, NSString* right);
+
 // Which of `relativePaths` (below `root`) Git ignores (`git check-ignore`);
 // empty without Git. Paths are returned precomposed.
 NSSet<NSString*>* CompareIgnoredPaths (NSString* root, NSArray<NSString*>* relativePaths, NSString* git);

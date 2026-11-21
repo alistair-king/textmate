@@ -1,7 +1,8 @@
 #import <Cocoa/Cocoa.h>
 
 // One comparison window for an ordered pair of worktree roots. The left root
-// is the worktree TextMate requested the comparison from.
+// is the worktree TextMate requested the comparison from. Given two files
+// instead, it shows just their comparison: one file tab, no trees.
 @interface CompareWindowController : NSWindowController <NSWindowDelegate>
 // Git used for listing files and branch names; nil compares plain folders.
 @property (class, nonatomic, copy) NSString* gitExecutable;
@@ -15,6 +16,7 @@
 - (instancetype)initWithLeftPath:(NSString*)left rightPath:(NSString*)right focus:(NSString*)focus;
 @property (nonatomic, readonly) NSString* leftPath;
 @property (nonatomic, readonly) NSString* rightPath;
+@property (nonatomic, readonly, getter = isFileComparison) BOOL fileComparison; // two files, not folders
 // Folder below both roots to reveal; nil for the roots themselves. Setting it
 // on a loaded window reveals the folder.
 @property (nonatomic, copy) NSString* focus;

@@ -289,6 +289,7 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	NSView* _tabContent;
 	NSMutableArray<CompareTab*>* _tabs;
 	NSUInteger _selectedTab;
+	BOOL _files; // two files: one file tab, no trees
 }
 
 static NSString* GitExecutable;
@@ -335,8 +336,12 @@ static NSURL* TextMateApplicationURL ()
 		_visibleChildren = [NSMapTable strongToStrongObjectsMapTable];
 		_revealFocusAfterLoad = YES;
 		_includeIgnored = [NSUserDefaults.standardUserDefaults boolForKey:kCompareIncludeIgnoredDefaultsKey];
+		BOOL leftIsFolder = NO;
+		_files = [NSFileManager.defaultManager fileExistsAtPath:left isDirectory:&leftIsFolder] && !leftIsFolder;
 
 		window.title              = [NSString stringWithFormat:@"%@ ⇄ %@", left.lastPathComponent, right.lastPathComponent];
+		if(_files && [left.lastPathComponent isEqualToString:right.lastPathComponent])
+			window.title = [NSString stringWithFormat:@"%@ — %@ ⇄ %@", left.lastPathComponent, left.stringByDeletingLastPathComponent.lastPathComponent, right.stringByDeletingLastPathComponent.lastPathComponent];
 		window.minSize            = NSMakeSize(560, 420);
 		window.releasedWhenClosed = NO;
 		window.delegate           = self;
@@ -392,10 +397,16 @@ static NSURL* TextMateApplicationURL ()
 		[split.topAnchor constraintEqualToAnchor:divider.bottomAnchor].active = YES;
 		[split.bottomAnchor constraintEqualToAnchor:treesView.bottomAnchor].active = YES;
 
-		CompareTab* treesTab = [CompareTab new];
-		treesTab.identifier = [NSUUID UUID];
-		treesTab.view       = treesView;
-		_tabs = [NSMutableArray arrayWithObject:treesTab];
+		// Two files have no trees: their comparison is the only tab.
+		CompareTab* firstTab = [CompareTab new];
+		firstTab.identifier = [NSUUID UUID];
+		firstTab.view       = treesView;
+		if(_files)
+		{
+			firstTab = [self makeTabForNode:CompareFilePair(left, right)];
+			window.subtitle = left.stringByDeletingLastPathComponent.stringByAbbreviatingWithTildeInPath;
+		}
+		_tabs = [NSMutableArray arrayWithObject:firstTab];
 
 		// TextMate's tab bar above the selected tab's view.
 		_tabBar = [[OakTabBarView alloc] initWithFrame:NSZeroRect];
@@ -405,15 +416,22 @@ static NSURL* TextMateApplicationURL ()
 		_tabContent = [NSView new];
 
 		NSView* content = [NSView new];
-		for(NSView* view in @[ _tabBar, _tabContent ])
+		for(NSView* view in _files ? @[ _tabContent ] : @[ _tabBar, _tabContent ])
 		{
 			view.translatesAutoresizingMaskIntoConstraints = NO;
 			[content addSubview:view];
 			[view.leadingAnchor constraintEqualToAnchor:content.leadingAnchor].active = YES;
 			[view.trailingAnchor constraintEqualToAnchor:content.trailingAnchor].active = YES;
 		}
-		[_tabBar.topAnchor constraintEqualToAnchor:content.topAnchor].active = YES;
-		[_tabContent.topAnchor constraintEqualToAnchor:_tabBar.bottomAnchor].active = YES;
+		if(_files)
+		{
+			[_tabContent.topAnchor constraintEqualToAnchor:content.topAnchor].active = YES;
+		}
+		else
+		{
+			[_tabBar.topAnchor constraintEqualToAnchor:content.topAnchor].active = YES;
+			[_tabContent.topAnchor constraintEqualToAnchor:_tabBar.bottomAnchor].active = YES;
+		}
 		[_tabContent.bottomAnchor constraintEqualToAnchor:content.bottomAnchor].active = YES;
 		window.contentView = content;
 
@@ -436,6 +454,11 @@ static NSURL* TextMateApplicationURL ()
 		[self startWatching];
 	}
 	return self;
+}
+
+- (BOOL)isFileComparison
+{
+	return _files;
 }
 
 - (void)dealloc
@@ -491,10 +514,19 @@ static NSURL* TextMateApplicationURL ()
 
 - (void)startWatching
 {
+	__weak CompareWindowController* weakSelf = self;
+	if(_files)
+	{
+		// FSEvents watches folders: the ones holding the two files.
+		NSArray* folders = [[NSOrderedSet orderedSetWithArray:@[ _leftPath.stringByDeletingLastPathComponent, _rightPath.stringByDeletingLastPathComponent ]] array];
+		_watch.start(folders, @[ ], 0.5, ^(NSArray<NSString*>* paths){
+			[weakSelf filesDidChange:paths];
+		});
+		return;
+	}
 	NSMutableArray* excluded = [NSMutableArray array];
 	for(NSString* root in @[ RealPath(_leftPath), RealPath(_rightPath) ])
 		[excluded addObject:[root stringByAppendingPathComponent:@".git"]];
-	__weak CompareWindowController* weakSelf = self;
 	_watch.start(@[ _leftPath, _rightPath ], excluded, 0.5, ^(NSArray<NSString*>* paths){
 		[weakSelf filesDidChange:paths];
 	});
@@ -529,6 +561,17 @@ static NSURL* TextMateApplicationURL ()
 - (void)filesDidChange:(NSArray<NSString*>*)paths
 {
 	_fileEventCount += paths.count;
+	if(_files)
+	{
+		// Only the two files count, not their neighbours.
+		NSSet* watched = [NSSet setWithObjects:_leftPath, _rightPath, RealPath(_leftPath), RealPath(_rightPath), nil];
+		for(NSString* path in paths)
+		{
+			if([watched containsObject:path])
+				return [self scheduleLiveRefresh];
+		}
+		return;
+	}
 	if(!_root)
 		return;
 	compare_excludes_t const excludes(CompareSettings.excludedNames);
@@ -839,6 +882,23 @@ static NSURL* TextMateApplicationURL ()
 
 	NSString* left  = _leftPath;
 	NSString* right = _rightPath;
+	if(_files)
+	{
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			CompareNode* pair = CompareFilePair(left, right);
+			dispatch_async(dispatch_get_main_queue(), ^{
+				if(generation != _generation || loading.isCancelled)
+					return;
+				[_spinner stopAnimation:self];
+				_comparing = NO;
+				++_comparisonCount;
+				[self showFilePair:pair reload:NO];
+				if(_refreshPending)
+					[self refresh:self];
+			});
+		});
+		return;
+	}
 	NSString* git   = CompareWindowController.gitExecutable;
 	BOOL foldersFirst = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsFoldersOnTopKey];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -898,6 +958,18 @@ static NSURL* TextMateApplicationURL ()
 		self.window.title = [NSString stringWithFormat:@"%@ ⇄ %@", leftBranch, rightBranch];
 	self.window.subtitle = _leftPath.stringByDeletingLastPathComponent.stringByAbbreviatingWithTildeInPath;
 	[self updateSummary];
+}
+
+// Shows the files again, keeping the current change; unchanged files (as
+// after a live refresh for something else) only take the new entry.
+- (void)showFilePair:(CompareNode*)pair reload:(BOOL)reload
+{
+	CompareTab* tab = _tabs.firstObject;
+	CompareNode* previous = tab.node;
+	tab.node = pair;
+	if(!reload && previous.leftStamp == pair.leftStamp && previous.rightStamp == pair.rightStamp && tab.diffView.node)
+			[tab.diffView updateNode:pair];
+	else	[tab.diffView showNode:pair keepingChange:YES];
 }
 
 - (void)updateSummary
@@ -1241,6 +1313,13 @@ static NSURL* TextMateApplicationURL ()
 			return i;
 	}
 
+	[_tabs addObject:[self makeTabForNode:node]];
+	[_tabBar reloadData];
+	return _tabs.count - 1;
+}
+
+- (CompareTab*)makeTabForNode:(CompareNode*)node
+{
 	CompareTab* tab = [CompareTab new];
 	tab.identifier   = [NSUUID UUID];
 	tab.relativePath = node.relativePath;
@@ -1253,9 +1332,7 @@ static NSURL* TextMateApplicationURL ()
 	};
 	tab.view         = tab.diffView;
 	[tab.diffView showNode:node];
-	[_tabs addObject:tab];
-	[_tabBar reloadData];
-	return _tabs.count - 1;
+	return tab;
 }
 
 - (void)updateFileTabs
@@ -1298,7 +1375,7 @@ static NSURL* TextMateApplicationURL ()
 	}
 	_selectedTab = index;
 	_tabBar.selectedTabIndex = index;
-	NSView* responder = index == 0 ? (NSView*)_sides[0].outlineView : _tabs[index].diffView.leftTextView;
+	NSView* responder = _tabs[index].diffView ? _tabs[index].diffView.leftTextView : (NSView*)_sides[0].outlineView;
 	[self.window makeFirstResponder:responder];
 }
 
@@ -1472,6 +1549,8 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 	}
 	CompareChangeSet* changes = [CompareChangeSet new];
 	changes.roots = @[ _leftPath, _rightPath ]; // never write through a link out of them
+	if(_files)
+		changes.roots = @[ _leftPath.stringByDeletingLastPathComponent, _rightPath.stringByDeletingLastPathComponent ];
 	NSString* problem = nil;
 	BOOL ok = block(changes, &problem);
 	if(changes.count)
@@ -1513,6 +1592,8 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 // each open file tab's change number.
 - (void)reloadAfterChangingRelativePaths:(NSArray<NSString*>*)paths
 {
+	if(_files)
+		return [self showFilePair:CompareFilePair(_leftPath, _rightPath) reload:YES];
 	if(!_root)
 		return;
 	NSArray<NSString*>* expanded = [self expandedRelativePaths];
@@ -1678,6 +1759,9 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 		item.title = fileTab ? (toRight ? @"Copy Change to the Right" : @"Copy Change to the Left") : (toRight ? @"Copy to the Right" : @"Copy to the Left");
 		return [self canCopySelectionToRight:toRight];
 	}
+	// Two files have no trees to filter, expand or open from.
+	if(_files && (item.action == @selector(takeDisplayModeFrom:) || item.action == @selector(toggleIgnoredFilesFromMenu:) || item.action == @selector(openSelectedFiles:)))
+		return NO;
 	if(item.action == @selector(takeDisplayModeFrom:))
 		item.state = item.tag == _filter ? NSControlStateValueOn : NSControlStateValueOff;
 	if(item.action == @selector(toggleIgnoredFilesFromMenu:))

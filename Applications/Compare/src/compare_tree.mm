@@ -481,6 +481,24 @@ CompareNode* CompareBuildTree (NSString* left, NSString* right, compare_options_
 	return Classify(root, options) ? root : nil;
 }
 
+CompareNode* CompareFilePair (NSString* left, NSString* right)
+{
+	CompareNode* node = NewNode(left.lastPathComponent, @"", nil);
+	node.leftPath  = left;
+	node.rightPath = right;
+	for(BOOL isLeft : { YES, NO })
+	{
+		NSString* path = isLeft ? left : right;
+		compare_stamp_t stamp = CompareStampAtPath(path);
+		CompareKind kind = KindForStamp(stamp, YES, path);
+		if(isLeft) { node.leftKind  = kind; node.leftStamp  = stamp; }
+		else       { node.rightKind = kind; node.rightStamp = stamp; }
+	}
+	compare_options_t options;
+	Classify(node, options);
+	return node;
+}
+
 NSSet<NSString*>* CompareIgnoredPaths (NSString* root, NSArray<NSString*>* relativePaths, NSString* git)
 {
 	NSMutableSet<NSString*>* ignored = [NSMutableSet set];

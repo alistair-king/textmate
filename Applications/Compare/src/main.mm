@@ -71,19 +71,27 @@ static BOOL IsDirectory (NSString* path)
 
 - (void)openComparisonWithLeft:(NSString*)left right:(NSString*)right focus:(NSString*)focus
 {
+	// Two folders, or two files.
+	NSString* problem = nil;
 	for(NSString* path in @[ left, right ])
 	{
-		if(!IsDirectory(path))
-		{
-			NSAlert* alert = [NSAlert new];
-			alert.messageText     = @"The folder can’t be compared.";
-			alert.informativeText = [NSString stringWithFormat:@"“%@” does not exist or is not a folder.", path.stringByAbbreviatingWithTildeInPath];
-			[alert runModal];
-			if(!_controllers.count)
-				[NSApp terminate:self];
-			return;
-		}
+		if(!problem && ![NSFileManager.defaultManager fileExistsAtPath:path])
+			problem = [NSString stringWithFormat:@"“%@” does not exist.", path.stringByAbbreviatingWithTildeInPath];
 	}
+	if(!problem && IsDirectory(left) != IsDirectory(right))
+		problem = [NSString stringWithFormat:@"“%@” is a %@ and “%@” is a %@. Compare two folders, or two files.", left.lastPathComponent, IsDirectory(left) ? @"folder" : @"file", right.lastPathComponent, IsDirectory(right) ? @"folder" : @"file"];
+	if(problem)
+	{
+		NSAlert* alert = [NSAlert new];
+		alert.messageText     = @"These can’t be compared.";
+		alert.informativeText = problem;
+		[alert runModal];
+		if(!_controllers.count)
+			[NSApp terminate:self];
+		return;
+	}
+	if(!IsDirectory(left))
+		focus = nil; // a folder below the roots: none for files
 
 	for(CompareWindowController* controller in _controllers)
 	{
