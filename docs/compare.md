@@ -118,4 +118,6 @@ Tests (see CLAUDE.md for running them):
 
 Custom-drawn views (`CompareTreeStrip`, `CompareChangeStrip`, the line-number ruler, separators, row views) return YES from `clipsToBounds` and fill only within their bounds. Views do not clip by default since macOS 14, and a strip that filled its whole dirty rect once grew its backing layer to the window and covered everything drawn before it.
 
+The app icon, `resources/Compare.icns`, is drawn from TextMate's own icon by `resources/make_icon.swift`: two flowers, one over the other, with → and ← above them. After changing the script, run `swift Applications/Compare/resources/make_icon.swift` from the repository root and commit the new `Compare.icns`; the script also writes an uncommitted 1024 px `Compare-preview.png`.
+
 Compare.app links the FileBrowser and OakTabBarView static libraries and bundles their images and TMFileReference's file-type icons, which static libraries cannot carry. FileBrowser pulls in `libOakSwiftUI.dylib`, so ad-hoc signed builds need `com.apple.security.cs.disable-library-validation`, as ThemeEditor does.

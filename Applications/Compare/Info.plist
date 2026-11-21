@@ -6,6 +6,7 @@
 	<key>CFBundleName</key><string>Compare</string>
 	<key>CFBundleDisplayName</key><string>Compare</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleIconFile</key><string>Compare.icns</string>
 	<key>CFBundleVersion</key><string>1</string>
 	<key>CFBundleShortVersionString</key><string>1.0</string>
 	<key>LSMinimumSystemVersion</key><string>14.0</string>

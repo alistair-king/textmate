@@ -7,7 +7,12 @@ file(GLOB _compare_resources CONFIGURE_DEPENDS
 file(GLOB _compare_doctypes CONFIGURE_DEPENDS
   "${CMAKE_SOURCE_DIR}/Frameworks/TMFileReference/resources/*.icns"
   "${CMAKE_SOURCE_DIR}/Frameworks/TMFileReference/resources/bindings.plist")
-target_sources(Compare PRIVATE ${_compare_resources} ${_compare_doctypes})
+# The app icon: two TextMate flowers with arrows (resources/make_icon.swift draws it).
+set(_compare_icon "${CMAKE_CURRENT_SOURCE_DIR}/resources/Compare.icns")
+target_sources(Compare PRIVATE ${_compare_resources} ${_compare_doctypes} "${_compare_icon}")
+set_source_files_properties("${_compare_icon}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+# Icon changes must refresh signing and the helper embedded in TextMate.
+set_property(TARGET Compare APPEND PROPERTY LINK_DEPENDS "${_compare_icon}")
 set_source_files_properties(${_compare_resources} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 set_source_files_properties(${_compare_doctypes} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/DocumentTypes")
 # FileBrowser supplies the tree views; the rest mirrors ThemeEditor's setup of
