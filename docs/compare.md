@@ -42,7 +42,7 @@ Above the trees:
 
 If Git takes longer than a minute to list the files, the comparison fails rather than listing every file, ignored ones included. Comparisons stay current: when a compared file changes on disk, or a new file appears that is not ignored, Compare compares again. Changes inside `.git` and to ignored files do not trigger a comparison. A new window opens with every folder that contains differences expanded, so the changed files are in view; folders that are a difference themselves (only on one side, or a file on the other) stay collapsed. Other expanded folders are remembered for each pair of folders.
 
-Files are compared byte for byte; symbolic links by their targets. Empty folders appear when folders are walked (without Git, or with **Show Ignored Files**); Git's list of files has no empty folders. Submodules and nested repositories are listed but not compared. A change to a file's permissions alone is not shown as a difference.
+Files are compared byte for byte; symbolic links by their targets. Empty folders appear when folders are walked (without Git, or with **Show Ignored Files**); Git's list of files has no empty folders. Submodules and nested repositories (folders with their own `.git`) are listed as one entry but not compared, and a folder walk does not go inside them. A change to a file's permissions alone is not shown as a difference.
 
 ## File tabs
 
@@ -83,7 +83,7 @@ Changes can be copied in either direction.
 - **Move to Trash** in a tree's context menu moves that side's entries to the Trash.
 - **In a file tab**, the arrows between the two sides, next to each change, copy that change to the right (→) or to the left (←). **Edit → Copy Change to the Right** and **Copy Change to the Left** copy the current change. The tab stays on the same change number afterwards.
 
-Compare only writes over what it compared: if a file changed on disk since it was compared, the copy is refused and asks you to compare again. Copies and their Undo never write outside the two compared folders, and never through a symbolic link that has taken the place of a folder since the comparison. Unsaved changes in TextMate are not part of the comparison: Compare reads and writes the files on disk, and TextMate treats its writes like those of any other program.
+Compare only writes over what it compared: if a file changed on disk since it was compared, the copy is refused and asks you to compare again. Copies and their Undo never write outside the two compared folders, and never through a symbolic link that has taken the place of a folder (or of a compared folder itself) since the comparison. Unsaved changes in TextMate are not part of the comparison: Compare reads and writes the files on disk, and TextMate treats its writes like those of any other program.
 
 Every write replaces the file atomically and keeps its permissions. **Edit → Undo** (⌘Z) reverses the last copy or move to the Trash, and **Redo** (⇧⌘Z) does it again. Undo is refused when a file has changed since, and Redo when anything it would change has changed since the Undo, including anything inside a folder it would move to the Trash.
 

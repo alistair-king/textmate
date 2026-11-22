@@ -1174,6 +1174,7 @@ static void TestFilePair ()
 	[controller showWindow:nil];
 	CompareDiffView* diff = controller.selectedDiffView;
 	CHECK(controller.isFileComparison);
+	CHECK(diff.node == nil && controller.comparisonCount == 0); // not read on the main thread
 	CHECK(controller.tabCount == 1 && diff != nil);
 	CHECK([controller.window.title isEqualToString:@"old.txt ⇄ new.txt"]);
 	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading && diff.changeCount == 1); }));

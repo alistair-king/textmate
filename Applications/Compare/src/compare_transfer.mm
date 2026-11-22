@@ -143,9 +143,10 @@ namespace {
 }
 
 // Creates missing parent folders, recording them for undo.
-// With `roots` set, `path` must be inside one of them, and every folder
-// between that root and `path` a real folder: never a link, which could lead
-// the write somewhere else.
+// With `roots` set, `path` must be inside one of them, and that root and
+// every folder between it and `path` a real folder: never a link, which could
+// lead the write somewhere else (as after the root was moved away and a link
+// put in its place).
 - (BOOL)checkConfined:(NSString*)path error:(NSString**)error
 {
 	if(!_roots)
@@ -155,6 +156,13 @@ namespace {
 		NSString* prefix = [root hasSuffix:@"/"] ? root : [root stringByAppendingString:@"/"];
 		if(![path hasPrefix:prefix])
 			continue;
+		compare_stamp_t rootStamp = CompareStampAtPath(root);
+		if(!rootStamp.exists || !S_ISDIR(rootStamp.mode))
+		{
+			if(error)
+				*error = [NSString stringWithFormat:@"%@ is no longer a folder (it may be a link), so nothing was written through it. Compare again, then try once more.", DisplayName(root)];
+			return NO;
+		}
 		NSString* folder = root;
 		NSArray<NSString*>* components = [[path substringFromIndex:prefix.length] componentsSeparatedByString:@"/"];
 		for(NSUInteger i = 0; i + 1 < components.count; ++i)

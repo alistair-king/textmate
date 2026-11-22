@@ -579,3 +579,28 @@ void test_trash_refuses_a_changed_file_whose_other_side_is_a_folder ()
 	OAK_ASSERT([changes undo:&error]);
 	OAK_ASSERT(Exists(pair.right, @"config/added.txt"));
 }
+
+void test_undo_never_restores_through_a_link_that_replaced_the_root ()
+{
+	NSString* root    = Folder();
+	NSString* outside = Folder();
+	Write(root, @"f.txt", @"old\n");
+	CompareChangeSet* changes = [CompareChangeSet new];
+	changes.roots = @[ root ];
+	NSString* error = nil;
+	OAK_ASSERT([changes writeData:Data(@"new\n") toPath:[root stringByAppendingPathComponent:@"f.txt"] mode:0644 error:&error]);
+
+	// The compared folder itself moves away and a link takes its place.
+	NSString* moved = [outside stringByAppendingPathComponent:@"moved"];
+	OAK_ASSERT([NSFileManager.defaultManager moveItemAtPath:root toPath:moved error:nil]);
+	OAK_ASSERT([NSFileManager.defaultManager createSymbolicLinkAtPath:root withDestinationPath:moved error:nil]);
+	OAK_ASSERT(![changes undo:&error]);
+	OAK_ASSERT([error containsString:@"no longer a folder"]);
+	OAK_ASSERT([Read(moved, @"f.txt") isEqualToString:@"new\n"]);
+
+	// Nor is anything new written through it.
+	CompareChangeSet* more = [CompareChangeSet new];
+	more.roots = @[ root ];
+	OAK_ASSERT(![more writeData:Data(@"x\n") toPath:[root stringByAppendingPathComponent:@"g.txt"] mode:0644 error:&error]);
+	OAK_ASSERT(!Exists(moved, @"g.txt"));
+}

@@ -290,6 +290,7 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	NSMutableArray<CompareTab*>* _tabs;
 	NSUInteger _selectedTab;
 	BOOL _files; // two files: one file tab, no trees
+	BOOL _reloadFiles; // the next comparison of two files reloads their text
 }
 
 static NSString* GitExecutable;
@@ -403,7 +404,8 @@ static NSURL* TextMateApplicationURL ()
 		firstTab.view       = treesView;
 		if(_files)
 		{
-			firstTab = [self makeTabForNode:CompareFilePair(left, right)];
+			firstTab = [self makeTabForNode:nil]; // compared on a worker queue, like folders
+			[firstTab.diffView showMessage:@"Comparing…"];
 			window.subtitle = left.stringByDeletingLastPathComponent.stringByAbbreviatingWithTildeInPath;
 		}
 		_tabs = [NSMutableArray arrayWithObject:firstTab];
@@ -892,7 +894,8 @@ static NSURL* TextMateApplicationURL ()
 				[_spinner stopAnimation:self];
 				_comparing = NO;
 				++_comparisonCount;
-				[self showFilePair:pair reload:NO];
+				[self showFilePair:pair reload:_reloadFiles];
+				_reloadFiles = NO;
 				if(_refreshPending)
 					[self refresh:self];
 			});
@@ -1593,7 +1596,11 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 - (void)reloadAfterChangingRelativePaths:(NSArray<NSString*>*)paths
 {
 	if(_files)
-		return [self showFilePair:CompareFilePair(_leftPath, _rightPath) reload:YES];
+	{
+		// Reading the files can take long: compare again off the main thread.
+		_reloadFiles = YES;
+		return [self refresh:self];
+	}
 	if(!_root)
 		return;
 	NSArray<NSString*>* expanded = [self expandedRelativePaths];

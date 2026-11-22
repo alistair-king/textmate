@@ -221,6 +221,12 @@ static NSString* JoinRelative (NSString* base, NSString* path)
 	return base.length ? [base stringByAppendingFormat:@"/%@", path] : path;
 }
 
+// A folder with its own .git (a folder, or a file for a submodule).
+static BOOL IsRepository (NSString* folder)
+{
+	return CompareStampAtPath([folder stringByAppendingPathComponent:@".git"]).exists;
+}
+
 static NSArray<NSString*>* WalkEntries (NSString* root, BOOL (^cancelled)(), compare_excludes_t const& excludes, NSString* base)
 {
 	// The path-based enumerator yields paths relative to `root`, whatever
@@ -239,6 +245,12 @@ static NSArray<NSString*>* WalkEntries (NSString* root, BOOL (^cancelled)(), com
 		}
 		if(![enumerator.fileAttributes.fileType isEqualToString:NSFileTypeDirectory])
 			[entries addObject:path];
+		else if(IsRepository([root stringByAppendingPathComponent:path]))
+		{
+			// A nested repository or submodule is one entry, as in Git's list.
+			[entries addObject:path];
+			[enumerator skipDescendants];
+		}
 		else if([NSFileManager.defaultManager contentsOfDirectoryAtPath:[root stringByAppendingPathComponent:path] error:nil].count == 0)
 			[entries addObject:path]; // an empty folder is an entry too
 	}
@@ -655,8 +667,8 @@ void CompareRestatPaths (CompareNode* root, NSArray<NSString*>* relativePaths, c
 		for(BOOL left : { YES, NO })
 		{
 			NSString* path = [node pathOnLeft:left];
-			if(!S_ISDIR(CompareStampAtPath(path).mode))
-				continue;
+			if(!S_ISDIR(CompareStampAtPath(path).mode) || (node.parent && IsRepository(path)))
+				continue; // a nested repository's contents are not compared
 			for(NSString* entry in ListEntries(path, options, node.relativePath))
 				EnsureNode(root, node.relativePath.length ? [node.relativePath stringByAppendingPathComponent:entry] : entry);
 		}

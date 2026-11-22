@@ -286,3 +286,33 @@ void test_rereading_paths_skips_excluded_entries ()
 	OAK_ASSERT([root nodeAtRelativePath:@"docs/build"] == nil);
 	OAK_ASSERT([root nodeAtRelativePath:@"node_modules"] == nil);
 }
+
+void test_walks_stop_at_nested_repositories ()
+{
+	NSString* base = [[NSTemporaryDirectory() stringByAppendingPathComponent:[@"compare-nested-" stringByAppendingString:NSUUID.UUID.UUIDString]] stringByResolvingSymlinksInPath];
+	NSString* left  = [base stringByAppendingPathComponent:@"left"];
+	NSString* right = [base stringByAppendingPathComponent:@"right"];
+	for(NSString* root in @[ left, right ])
+	{
+		OAK_ASSERT(compare_fixture::write(root, @"top.txt", @"top\n") == nil);
+		OAK_ASSERT(compare_fixture::write(root, @"vendor/nested/.git/HEAD", @"ref: refs/heads/main\n") == nil);
+		OAK_ASSERT(compare_fixture::write(root, @"module/.git", @"gitdir: ../.git/modules/module\n") == nil); // a submodule
+	}
+	OAK_ASSERT(compare_fixture::write(left,  @"vendor/nested/inner.txt", @"left\n") == nil);
+	OAK_ASSERT(compare_fixture::write(right, @"vendor/nested/inner.txt", @"right\n") == nil);
+	OAK_ASSERT(compare_fixture::write(left,  @"module/code.c", @"int x;\n") == nil);
+
+	NSArray* entries = [CompareListEntries(left, compare_options_t()) sortedArrayUsingSelector:@selector(compare:)];
+	OAK_ASSERT([entries isEqual:(@[ @"module", @"top.txt", @"vendor/nested" ])]);
+
+	CompareNode* root = CompareBuildTree(left, right, compare_options_t());
+	CompareNode* nested = [root nodeAtRelativePath:@"vendor/nested"];
+	OAK_ASSERT(nested != nil && nested.leftKind == CompareKindOther && nested.children.count == 0);
+	OAK_ASSERT([root nodeAtRelativePath:@"vendor/nested/inner.txt"] == nil);
+	OAK_ASSERT([root nodeAtRelativePath:@"module/code.c"] == nil);
+
+	// Reading it again after a change does not list its contents either.
+	CompareRestatPaths(root, @[ @"vendor/nested" ], compare_options_t());
+	OAK_ASSERT([root nodeAtRelativePath:@"vendor/nested/inner.txt"] == nil);
+	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
+}
