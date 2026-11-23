@@ -1210,6 +1210,35 @@ static void TestFilePair ()
 	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
 }
 
+// A first change far down: both sides open scrolled to it, together.
+static void TestScrollToDistantChange ()
+{
+	NSString* base = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"compare-scroll-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+	[NSFileManager.defaultManager createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:nil];
+	NSMutableString* text = [NSMutableString string];
+	for(int i = 1; i <= 400; ++i)
+		[text appendFormat:@"line %d\n", i];
+	NSString* left  = [base stringByAppendingPathComponent:@"left.txt"];
+	NSString* right = [base stringByAppendingPathComponent:@"right.txt"];
+	[text writeToFile:left atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	[[text stringByReplacingOccurrencesOfString:@"line 300\n" withString:@"changed 300\n"] writeToFile:right atomically:NO encoding:NSUTF8StringEncoding error:nil];
+
+	CompareWindowController* controller = [[CompareWindowController alloc] initWithLeftPath:left rightPath:right focus:nil];
+	[controller.window setFrame:NSMakeRect(100, 100, 900, 320) display:NO];
+	[controller showWindow:nil];
+	CompareDiffView* diff = controller.selectedDiffView;
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading && diff.changeCount == 1); }));
+	Spin(1); // background layout, which used to pull the sides back
+	[controller.window displayIfNeeded];
+	NSClipView* leftClip  = diff.leftTextView.enclosingScrollView.contentView;
+	NSClipView* rightClip = diff.rightTextView.enclosingScrollView.contentView;
+	CHECK(NSMinY(leftClip.bounds) > 0);
+	CHECK(NSMinY(rightClip.bounds) == NSMinY(leftClip.bounds));
+
+	[controller close];
+	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
+}
+
 static void TestFocus (compare_fixture_t const& fixture)
 {
 	CompareWindowController* controller = Open(fixture, @"deep/a");
@@ -1271,6 +1300,7 @@ int main (int argc, char const* argv[])
 			TestFocus(fixture);
 		}
 		TestFilePair();
+		TestScrollToDistantChange();
 
 		if(Failures)
 			fprintf(stderr, "compare-window: %d assertion(s) failed\n", Failures);

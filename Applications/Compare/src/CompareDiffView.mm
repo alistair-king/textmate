@@ -834,8 +834,12 @@ static CGFloat const kStripWidth = 34;
 	[self updateNavigation];
 
 	// Rows have a fixed height and start at the same offset on both sides.
+	// Both sides are laid out in full first: a side still being laid out
+	// changes height as it goes, and its scroll view then pulls the scroll
+	// position back (and the other side with it, as they scroll together).
+	for(NSTextView* side : _textViews)
+		[side.layoutManager ensureLayoutForTextContainer:side.textContainer];
 	NSTextView* textView = _textViews[0];
-	[textView.layoutManager ensureLayoutForTextContainer:textView.textContainer];
 	NSUInteger index = _rulers[0].rows->starts[_hunkRows[change]];
 	NSRange glyphs = [textView.layoutManager glyphRangeForCharacterRange:NSMakeRange(index, 0) actualCharacterRange:nullptr];
 	NSRect line = [textView.layoutManager lineFragmentRectForGlyphAtIndex:glyphs.location effectiveRange:nullptr];

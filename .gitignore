@@ -8,3 +8,4 @@ build-output.log
 *.bak
 .build
 .serena/memories/lsp_tsc_pull_diagnostics.md
+.serena/.project.yml.swp

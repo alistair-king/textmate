@@ -100,7 +100,7 @@ if(BUILD_TESTING)
       FileBrowser OakTabBarView OakSystem Preferences bundles file io ns parse plist scm settings text theme xdiff
       ${TEXTMATE_DEBUG_LIBS} "-framework Cocoa")
     add_test(NAME compare-window COMMAND $<TARGET_FILE:compare_window_tests>)
-    set_tests_properties(compare-window PROPERTIES RUN_SERIAL TRUE TIMEOUT 60)
+    set_tests_properties(compare-window PROPERTIES RUN_SERIAL TRUE TIMEOUT 180)
   endif()
 
   # Runs the signed app binary (hardened runtime, real entitlements) so a
