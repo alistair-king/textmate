@@ -46,6 +46,7 @@
 @property (nonatomic, readonly) NSString* message;   // nil while showing text
 @property (nonatomic, readonly) NSString* statusText;
 - (NSString*)sideHeaderTextOnLeft:(BOOL)left; // “name|branch|path”
+- (NSColor*)stripTintForRow:(long)row;        // the middle strip's color for a row
 @end
 
 // A 1 pt separator line with an intrinsic thickness, so Auto Layout never

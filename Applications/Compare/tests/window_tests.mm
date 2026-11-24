@@ -1356,6 +1356,34 @@ static void TestChooser (compare_fixture_t const& fixture)
 	CHECK(!chooser.window.isVisible);
 }
 
+// The strip between the sides follows each row of a change: orange where a
+// line changed on both sides, neutral where only one side has lines (as
+// beside unchanged rows).
+static void TestStripFollowsRows ()
+{
+	NSString* base = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"compare-strip-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+	[NSFileManager.defaultManager createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:nil];
+	NSString* left  = [base stringByAppendingPathComponent:@"left.txt"];
+	NSString* right = [base stringByAppendingPathComponent:@"right.txt"];
+	[@"a\nb\nc\n" writeToFile:left atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	[@"a\nB\nx1\nx2\nx3\nc\n" writeToFile:right atomically:NO encoding:NSUTF8StringEncoding error:nil];
+
+	CompareWindowController* controller = [[CompareWindowController alloc] initWithLeftPath:left rightPath:right focus:nil];
+	[controller.window setFrame:NSMakeRect(100, 100, 900, 320) display:NO];
+	[controller showWindow:nil];
+	CompareDiffView* diff = controller.selectedDiffView;
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading && diff.changeCount == 1); }));
+	CHECK([diff stripTintForRow:0] == nil);                       // a
+	CHECK([diff stripTintForRow:1] == compare::modified_color()); // b → B
+	for(long row = 2; row <= 4; ++row)                           // x1 … x3, only on the right
+		CHECK([diff stripTintForRow:row] == nil);
+	CHECK([diff stripTintForRow:5] == nil);                       // c
+	Snapshot(controller, @"strip");
+
+	[controller close];
+	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
+}
+
 // A first change far down: both sides open scrolled to it, together.
 static void TestScrollToDistantChange ()
 {
@@ -1455,6 +1483,7 @@ int main (int argc, char const* argv[])
 		}
 		TestFilePair();
 		TestScrollToDistantChange();
+		TestStripFollowsRows();
 
 		if(Failures)
 			fprintf(stderr, "compare-window: %d assertion(s) failed\n", Failures);

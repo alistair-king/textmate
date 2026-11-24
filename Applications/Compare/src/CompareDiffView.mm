@@ -372,6 +372,7 @@ static NSString* MessageForNode (CompareNode* node)
 @interface CompareDiffView (Strip)
 - (std::vector<std::pair<long, long>>)changeRows; // first row and row count of each change
 - (CGFloat)scrollOffset;
+- (NSColor*)stripTintForRow:(long)row;
 - (void)stripClickedChange:(NSInteger)change toRight:(BOOL)toRight;
 @end
 
@@ -417,8 +418,18 @@ static CGFloat const kStripWidth = 34;
 		NSRect band = NSMakeRect(1, y, NSWidth(self.bounds) - 2, MAX(rows.second, 1) * height);
 		if(!NSIntersectsRect(band, dirtyRect))
 			continue;
-		[compare::modified_color() set];
-		NSRectFillUsingOperation(band, NSCompositingOperationSourceOver);
+		// Row by row: orange where both sides have a changed line, neutral
+		// beside lines on one side only.
+		long first = MAX(rows.first, (long)floor((NSMinY(dirtyRect) - y) / height) + rows.first);
+		long last  = MIN(rows.first + MAX(rows.second, 1L), (long)ceil((NSMaxY(dirtyRect) - y) / height) + rows.first);
+		for(long row = first; row < last; ++row)
+		{
+			if(NSColor* tint = [self.diffView stripTintForRow:row])
+			{
+				[tint set];
+				NSRectFillUsingOperation(NSMakeRect(1, y + (row - rows.first) * height, NSWidth(self.bounds) - 2, height), NSCompositingOperationSourceOver);
+			}
+		}
 		for(BOOL toRight : { YES, NO })
 		{
 			NSImage* image = toRight ? right : left;
@@ -867,6 +878,19 @@ static CGFloat const kStripWidth = 34;
 			rows.emplace_back(hunk.first_row, hunk.row_count);
 	}
 	return rows;
+}
+
+// The strip's color for a row: tinted only where a line changed on both
+// sides; beside a line on one side only (a gap on the other) it stays neutral.
+- (NSColor*)stripTintForRow:(long)row
+{
+	NSColor* tints[2] = { nil, nil };
+	for(size_t i = 0; i < 2; ++i)
+	{
+		if(_rulers[i].rows && row >= 0 && (size_t)row < _rulers[i].rows->tints.size())
+			tints[i] = _rulers[i].rows->tints[row];
+	}
+	return tints[0] == compare::modified_color() && tints[1] == compare::modified_color() ? tints[0] : nil;
 }
 
 - (CGFloat)scrollOffset
