@@ -10,6 +10,7 @@
 #import "syntax_fixture.h"
 #import "../src/compare_menu.h"
 #import "../src/CompareSettings.h"
+#import "../src/CompareChooser.h"
 
 // Drives the real CompareWindowController over the shared fixture. Failures
 // print `file:line: Assertion failed: …` and make the process exit non-zero.
@@ -1308,6 +1309,53 @@ static void TestRedoAfterSwap (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+// File → New Comparison… (and Compare started without anything to compare):
+// Compare is enabled only for two folders or two files, not the same twice.
+static void TestChooser (compare_fixture_t const& fixture)
+{
+	CompareChooserWindowController* chooser = [CompareChooserWindowController new];
+	__block NSArray* compared = nil;
+	chooser.compareHandler = ^(NSString* left, NSString* right){ compared = @[ left, right ]; };
+	[chooser showWindow:nil];
+	CHECK(chooser.window.isVisible && [chooser.window.title isEqualToString:@"New Comparison"]);
+
+	// Nothing chosen yet.
+	CHECK(chooser.problem != nil && !chooser.compareButton.enabled);
+	Snapshot(chooser, @"chooser-empty");
+	[chooser compare:nil];
+	CHECK(compared == nil && chooser.window.isVisible);
+
+	// A folder and a file.
+	chooser.leftPath  = fixture.left;
+	chooser.rightPath = [fixture.right stringByAppendingPathComponent:@"multi.txt"];
+	CHECK([chooser.problem containsString:@"is a folder"] && !chooser.compareButton.enabled);
+	Snapshot(chooser, @"chooser-problem");
+
+	// The same folder twice.
+	chooser.rightPath = fixture.left;
+	CHECK([chooser.problem containsString:@"Both sides"] && !chooser.compareButton.enabled);
+
+	// Two files.
+	chooser.leftPath  = [fixture.left stringByAppendingPathComponent:@"multi.txt"];
+	chooser.rightPath = [fixture.right stringByAppendingPathComponent:@"multi.txt"];
+	CHECK(chooser.problem == nil && chooser.compareButton.enabled);
+
+	// Two folders: Compare hands them over and closes the window.
+	chooser.leftPath  = fixture.left;
+	chooser.rightPath = fixture.right;
+	CHECK(chooser.problem == nil && chooser.compareButton.enabled);
+	Snapshot(chooser, @"chooser");
+
+	// ⇄ swaps them.
+	[NSApp sendAction:@selector(swapSides:) to:chooser from:nil];
+	CHECK([chooser.leftPath isEqualToString:fixture.right] && [chooser.rightPath isEqualToString:fixture.left]);
+	[NSApp sendAction:@selector(swapSides:) to:chooser from:nil];
+
+	[chooser.compareButton performClick:nil];
+	CHECK([compared isEqual:(@[ fixture.left, fixture.right ])]);
+	CHECK(!chooser.window.isVisible);
+}
+
 // A first change far down: both sides open scrolled to it, together.
 static void TestScrollToDistantChange ()
 {
@@ -1398,6 +1446,7 @@ int main (int argc, char const* argv[])
 			TestFocus(fixture);
 			TestFilePairBranches(fixture);
 			TestSwapSides(fixture);
+			TestChooser(fixture);
 
 			compare_fixture_t redo = compare_fixture::create(@COMPARE_TEST_GIT);
 			CHECK(redo.error == nil);

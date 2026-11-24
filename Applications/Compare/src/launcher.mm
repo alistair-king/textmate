@@ -6,7 +6,9 @@
 static char const* const kUsage =
 	"Usage: tm-compare [--focus <relative-path>] <left-folder> <right-folder>\n"
 	"       tm-compare <left-file> <right-file>\n"
-	"Opens TextMate's comparison of two folders (worktrees), or of two files.\n";
+	"       tm-compare\n"
+	"Opens TextMate's comparison of two folders (worktrees), or of two files.\n"
+	"Without arguments, Compare asks which folders or files to compare.\n";
 
 // The absolute, resolved path of an existing file or folder, or nil.
 static NSString* ExistingPath (char const* argument, BOOL* isDirectory)
@@ -16,6 +18,45 @@ static NSString* ExistingPath (char const* argument, BOOL* isDirectory)
 		path = [NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:path];
 	path = path.stringByStandardizingPath.stringByResolvingSymlinksInPath;
 	return [NSFileManager.defaultManager fileExistsAtPath:path isDirectory:isDirectory] ? path : nil;
+}
+
+// TextMate.app/Contents/Helpers/Compare.app, beside this launcher's MacOS folder.
+static NSURL* CompareApplicationURL ()
+{
+	uint32_t length = 0;
+	_NSGetExecutablePath(nullptr, &length);
+	std::vector<char> buffer(length);
+	_NSGetExecutablePath(buffer.data(), &length);
+	NSString* executable = [[NSString stringWithUTF8String:buffer.data()] stringByResolvingSymlinksInPath];
+	NSString* contents = executable.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+	return [NSURL fileURLWithPath:[contents stringByAppendingPathComponent:@"Helpers/Compare.app"] isDirectory:YES];
+}
+
+// Opens `request` with Compare, or (nil) just starts it; returns the exit status.
+static int Launch (NSURL* app, NSURL* request)
+{
+	NSWorkspaceOpenConfiguration* configuration = [NSWorkspaceOpenConfiguration configuration];
+	configuration.activates = YES;
+	dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+	__block NSError* launchError = nil;
+	auto completion = ^(NSRunningApplication* runningApp, NSError* error) {
+		launchError = error;
+		dispatch_semaphore_signal(finished);
+	};
+	if(request)
+			[NSWorkspace.sharedWorkspace openURLs:@[ request ] withApplicationAtURL:app configuration:configuration completionHandler:completion];
+	else	[NSWorkspace.sharedWorkspace openApplicationAtURL:app configuration:configuration completionHandler:completion];
+	if(dispatch_semaphore_wait(finished, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC)) != 0)
+	{
+		fprintf(stderr, "tm-compare: timed out launching %s\n", app.fileSystemRepresentation);
+		return 1;
+	}
+	if(launchError)
+	{
+		fprintf(stderr, "tm-compare: could not launch %s: %s\n", app.fileSystemRepresentation, launchError.localizedDescription.UTF8String);
+		return 1;
+	}
+	return 0;
 }
 
 int main (int argc, char const* argv[])
@@ -46,11 +87,14 @@ int main (int argc, char const* argv[])
 			}
 		}
 
-		if(folders.size() != 2)
+		if(folders.size() != 2 && !(folders.empty() && !focus))
 		{
 			fputs(kUsage, stderr);
 			return 1;
 		}
+		NSURL* app = CompareApplicationURL();
+		if(folders.empty())
+			return Launch(app, nil); // Compare asks what to compare
 
 		BOOL isDirectory[2] = { NO, NO };
 		NSString* left  = ExistingPath(folders[0], &isDirectory[0]);
@@ -85,33 +129,6 @@ int main (int argc, char const* argv[])
 			fprintf(stderr, "tm-compare: --focus must be a relative path without “.” or “..” components\n");
 			return 1;
 		}
-
-		uint32_t length = 0;
-		_NSGetExecutablePath(nullptr, &length);
-		std::vector<char> buffer(length);
-		_NSGetExecutablePath(buffer.data(), &length);
-		NSString* executable = [[NSString stringWithUTF8String:buffer.data()] stringByResolvingSymlinksInPath];
-		NSString* contents = executable.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
-		NSURL* app = [NSURL fileURLWithPath:[contents stringByAppendingPathComponent:@"Helpers/Compare.app"] isDirectory:YES];
-
-		NSWorkspaceOpenConfiguration* configuration = [NSWorkspaceOpenConfiguration configuration];
-		configuration.activates = YES;
-		dispatch_semaphore_t finished = dispatch_semaphore_create(0);
-		__block NSError* launchError = nil;
-		[NSWorkspace.sharedWorkspace openURLs:@[ request ] withApplicationAtURL:app configuration:configuration completionHandler:^(NSRunningApplication* runningApp, NSError* error) {
-			launchError = error;
-			dispatch_semaphore_signal(finished);
-		}];
-		if(dispatch_semaphore_wait(finished, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC)) != 0)
-		{
-			fprintf(stderr, "tm-compare: timed out launching %s\n", app.fileSystemRepresentation);
-			return 1;
-		}
-		if(launchError)
-		{
-			fprintf(stderr, "tm-compare: could not launch %s: %s\n", app.fileSystemRepresentation, launchError.localizedDescription.UTF8String);
-			return 1;
-		}
-		return 0;
+		return Launch(app, request);
 	}
 }

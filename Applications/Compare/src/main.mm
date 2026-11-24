@@ -4,6 +4,7 @@
 #import "compare_syntax.h"
 #import "compare_menu.h"
 #import "CompareSettings.h"
+#import "CompareChooser.h"
 #import <mach-o/dyld.h>
 #import <OakSystem/application.h>
 #import <Preferences/Keys.h>
@@ -25,6 +26,8 @@ static BOOL IsDirectory (NSString* path)
 @implementation CompareAppController
 {
 	NSMutableArray<CompareWindowController*>* _controllers;
+	CompareChooserWindowController* _chooser;
+	BOOL _receivedRequest;
 }
 
 - (instancetype)init
@@ -38,6 +41,39 @@ static BOOL IsDirectory (NSString* path)
 {
 	[self createMenu];
 	[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowWillClose:) name:NSWindowWillCloseNotification object:nil];
+}
+
+// Started with nothing to compare (tm-compare without arguments, or the app
+// opened by itself): ask for what to compare.
+- (void)applicationDidFinishLaunching:(NSNotification*)notification
+{
+	if(![notification.userInfo[NSApplicationLaunchIsDefaultLaunchKey] boolValue])
+		return; // launched to open a request
+	dispatch_async(dispatch_get_main_queue(), ^{
+		if(!_receivedRequest && !_controllers.count)
+			[self newComparison:self];
+	});
+}
+
+// Clicking the Dock icon with no windows open.
+- (BOOL)applicationShouldHandleReopen:(NSApplication*)sender hasVisibleWindows:(BOOL)visible
+{
+	if(!visible)
+		[self newComparison:self];
+	return YES;
+}
+
+- (IBAction)newComparison:(id)sender
+{
+	if(!_chooser)
+	{
+		_chooser = [CompareChooserWindowController new];
+		__weak CompareAppController* weakSelf = self;
+		_chooser.compareHandler = ^(NSString* left, NSString* right){
+			[weakSelf openComparisonWithLeft:left right:right focus:nil];
+		};
+	}
+	[_chooser showWindow:self];
 }
 
 - (void)applicationWillTerminate:(NSNotification*)notification
@@ -57,6 +93,7 @@ static BOOL IsDirectory (NSString* path)
 
 - (void)application:(NSApplication*)application openURLs:(NSArray<NSURL*>*)urls
 {
+	_receivedRequest = YES;
 	for(NSURL* url in urls)
 	{
 		compare::request_t request;
@@ -147,6 +184,7 @@ static BOOL IsDirectory (NSString* path)
 
 	NSMenuItem* file = [NSMenuItem new];
 	file.submenu = [[NSMenu alloc] initWithTitle:@"File"];
+	[file.submenu addItemWithTitle:@"New Comparison…" action:@selector(newComparison:) keyEquivalent:@"n"];
 	[file.submenu addItemWithTitle:@"Open File Comparison" action:@selector(openSelectedFiles:) keyEquivalent:@"o"];
 	[file.submenu addItemWithTitle:@"Edit in TextMate" action:@selector(editInTextMate:) keyEquivalent:@"e"];
 	[file.submenu addItemWithTitle:@"Compare Again" action:@selector(refresh:) keyEquivalent:@"r"];
