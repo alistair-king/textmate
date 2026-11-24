@@ -14,6 +14,10 @@
 // keeps what is shown, but copies use the new tree's paths.
 - (void)updateNode:(CompareNode*)node;
 - (void)showMessage:(NSString*)message;
+// The branch (or “detached 1a2b3c4”) shown beside each side's file name; nil
+// outside a Git work tree.
+- (void)setBranch:(NSString*)branch onLeft:(BOOL)left;
+- (NSString*)branchOnLeft:(BOOL)left;
 
 @property (nonatomic, readonly, getter = isLoading) BOOL loading;
 @property (nonatomic, readonly) CGFloat rowHeight; // every row's height, on both sides
@@ -41,6 +45,7 @@
 @property (nonatomic, readonly) NSTextView* rightTextView;
 @property (nonatomic, readonly) NSString* message;   // nil while showing text
 @property (nonatomic, readonly) NSString* statusText;
+- (NSString*)sideHeaderTextOnLeft:(BOOL)left; // “name|branch|path”
 @end
 
 // A 1 pt separator line with an intrinsic thickness, so Auto Layout never

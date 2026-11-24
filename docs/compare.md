@@ -48,7 +48,7 @@ Files are compared byte for byte; symbolic links by their targets. Empty folders
 
 Double-click a file in either tree, or select it and press ⌘↓ or ⌘O (**File → Open File Comparison**), to compare its contents in a tab of its own. Opening a file that already has a tab selects it. Double-clicking a folder expands or collapses it. Several selected files open together.
 
-Both versions are shown side by side with line numbers. Rows line up: a line only on one side shows as a hatched gap on the other. The line-number gutter carries the same background colors as its rows.
+Both versions are shown side by side with line numbers. Above each side, as above each tree in the Files tab, a header shows that side's file name and Git branch (or “detached” and the commit; nothing outside Git) and the file's full path, dimmed where the file is missing on that side. Rows line up: a line only on one side shows as a hatched gap on the other. The line-number gutter carries the same background colors as its rows.
 
 - Changed lines are amber on both sides, with the part that differs in a stronger amber.
 - Lines only on one side are green; the other side shows a hatched gap.

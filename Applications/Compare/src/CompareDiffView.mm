@@ -464,6 +464,11 @@ static CGFloat const kStripWidth = 34;
 	NSTextField* _changeLabel;
 	NSSegmentedControl* _navigation;
 	NSTextField* _messageLabel;
+	NSView* _sidesHeader;            // above each side: name, branch and path
+	NSTextField* _sideNames[2];
+	NSTextField* _sideBranches[2];
+	NSTextField* _sidePaths[2];
+	NSString* _branches[2];
 	NSScrollView* _scrollViews[2];
 	NSTextView* _textViews[2];
 	CompareLineNumberRuler* _rulers[2];
@@ -542,12 +547,53 @@ static CGFloat const kStripWidth = 34;
 			[_scrollViews[0].widthAnchor constraintEqualToAnchor:_scrollViews[1].widthAnchor],
 		]];
 
+		// Each side's file, as the Files tab's headers show each folder.
+		_sidesHeader = [NSView new];
+		NSStackView* sideHeaders[2];
+		for(size_t i = 0; i < 2; ++i)
+		{
+			_sideNames[i] = [NSTextField labelWithString:@""];
+			_sideNames[i].font = [NSFont boldSystemFontOfSize:NSFont.systemFontSize];
+			_sideNames[i].lineBreakMode = NSLineBreakByTruncatingMiddle;
+			[_sideNames[i] setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+			[_sideNames[i] setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+			_sideBranches[i] = [NSTextField labelWithString:@""];
+			_sideBranches[i].font = [NSFont systemFontOfSize:NSFont.systemFontSize];
+			_sideBranches[i].textColor = NSColor.secondaryLabelColor;
+			_sideBranches[i].lineBreakMode = NSLineBreakByTruncatingMiddle;
+			[_sideBranches[i] setContentHuggingPriority:NSLayoutPriorityDefaultHigh + 1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+			[_sideBranches[i] setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow - 1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+			NSStackView* title = [NSStackView stackViewWithViews:@[ _sideNames[i], _sideBranches[i] ]];
+			title.spacing = 6;
+			[title setHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+			_sidePaths[i] = [NSTextField labelWithString:@""];
+			_sidePaths[i].font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+			_sidePaths[i].textColor = NSColor.secondaryLabelColor;
+			_sidePaths[i].lineBreakMode = NSLineBreakByTruncatingMiddle;
+			[_sidePaths[i] setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+			sideHeaders[i] = [NSStackView stackViewWithViews:@[ title, _sidePaths[i] ]];
+			sideHeaders[i].orientation = NSUserInterfaceLayoutOrientationVertical;
+			sideHeaders[i].alignment   = NSLayoutAttributeLeading;
+			sideHeaders[i].spacing     = 2;
+			sideHeaders[i].edgeInsets  = NSEdgeInsetsMake(8, 10, 8, 10);
+			sideHeaders[i].translatesAutoresizingMaskIntoConstraints = NO;
+			[_sidesHeader addSubview:sideHeaders[i]];
+			[sideHeaders[i].topAnchor constraintEqualToAnchor:_sidesHeader.topAnchor].active = YES;
+			[sideHeaders[i].bottomAnchor constraintLessThanOrEqualToAnchor:_sidesHeader.bottomAnchor].active = YES;
+		}
+		[_sidesHeader setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+		CompareSeparatorView* sidesDivider = [[CompareSeparatorView alloc] initVertical:NO];
+
 		_messageLabel = [NSTextField wrappingLabelWithString:@""];
 		_messageLabel.alignment = NSTextAlignmentCenter;
 		_messageLabel.textColor = NSColor.secondaryLabelColor;
 		_messageLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
-		for(NSView* view in @[ header, divider, _body, _messageLabel ])
+		for(NSView* view in @[ header, divider, _sidesHeader, sidesDivider, _body, _messageLabel ])
 		{
 			view.translatesAutoresizingMaskIntoConstraints = NO;
 			[self addSubview:view];
@@ -559,7 +605,19 @@ static CGFloat const kStripWidth = 34;
 			[divider.topAnchor constraintEqualToAnchor:header.bottomAnchor],
 			[divider.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
 			[divider.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
-			[_body.topAnchor constraintEqualToAnchor:divider.bottomAnchor],
+			[_sidesHeader.topAnchor constraintEqualToAnchor:divider.bottomAnchor],
+			[_sidesHeader.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+			[_sidesHeader.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
+			// Each side's header lines up with its text.
+			[sideHeaders[0].leadingAnchor constraintEqualToAnchor:_scrollViews[0].leadingAnchor],
+			[sideHeaders[0].trailingAnchor constraintEqualToAnchor:_scrollViews[0].trailingAnchor],
+			[sideHeaders[1].leadingAnchor constraintEqualToAnchor:_scrollViews[1].leadingAnchor],
+			[sideHeaders[1].trailingAnchor constraintEqualToAnchor:_scrollViews[1].trailingAnchor],
+			[_sidesHeader.bottomAnchor constraintEqualToAnchor:sideHeaders[0].bottomAnchor],
+			[sidesDivider.topAnchor constraintEqualToAnchor:_sidesHeader.bottomAnchor],
+			[sidesDivider.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+			[sidesDivider.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
+			[_body.topAnchor constraintEqualToAnchor:sidesDivider.bottomAnchor],
 			[_body.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
 			[_body.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
 			[_body.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
@@ -656,6 +714,41 @@ static CGFloat const kStripWidth = 34;
 - (void)updateNode:(CompareNode*)node
 {
 	_node = node;
+	[self updateSideHeaders];
+}
+
+- (void)setBranch:(NSString*)branch onLeft:(BOOL)left
+{
+	_branches[left ? 0 : 1] = [branch copy];
+	[self updateSideHeaders];
+}
+
+- (NSString*)branchOnLeft:(BOOL)left
+{
+	return _branches[left ? 0 : 1];
+}
+
+// Each side's file name and branch, and its path below; a side without the
+// file shows where it would be, dimmed.
+- (void)updateSideHeaders
+{
+	for(size_t i = 0; i < 2; ++i)
+	{
+		BOOL left = i == 0;
+		NSString* path = [_node pathOnLeft:left];
+		BOOL present = (left ? _node.leftKind : _node.rightKind) != CompareKindNone;
+		_sideNames[i].stringValue    = path.lastPathComponent ?: @"";
+		_sideNames[i].textColor      = present ? NSColor.labelColor : NSColor.tertiaryLabelColor;
+		_sideBranches[i].stringValue = _branches[i] ?: @"";
+		_sidePaths[i].stringValue    = path.stringByAbbreviatingWithTildeInPath ?: @"";
+		_sidePaths[i].toolTip        = path;
+	}
+}
+
+- (NSString*)sideHeaderTextOnLeft:(BOOL)left
+{
+	size_t i = left ? 0 : 1;
+	return [NSString stringWithFormat:@"%@|%@|%@", _sideNames[i].stringValue, _sideBranches[i].stringValue, _sidePaths[i].stringValue];
 }
 
 - (void)showNode:(CompareNode*)node
@@ -666,6 +759,7 @@ static CGFloat const kStripWidth = 34;
 - (void)showNode:(CompareNode*)node keepingChange:(BOOL)keep
 {
 	_node = node;
+	[self updateSideHeaders];
 	NSInteger keptChange = keep ? _currentChange : -1;
 	_pathLabel.stringValue  = node.relativePath ?: @"";
 	_statusLabel.stringValue = @"";

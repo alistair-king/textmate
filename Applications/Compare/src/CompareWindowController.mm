@@ -291,6 +291,7 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	NSUInteger _selectedTab;
 	BOOL _files; // two files: one file tab, no trees
 	BOOL _reloadFiles; // the next comparison of two files reloads their text
+	NSString* _branches[2]; // shown in each file tab's headers
 }
 
 static NSString* GitExecutable;
@@ -886,14 +887,21 @@ static NSURL* TextMateApplicationURL ()
 	NSString* right = _rightPath;
 	if(_files)
 	{
+		NSString* git = CompareWindowController.gitExecutable;
 		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 			CompareNode* pair = CompareFilePair(left, right);
+			NSString* leftBranch  = CompareBranchLabel(left.stringByDeletingLastPathComponent, git);
+			NSString* rightBranch = CompareBranchLabel(right.stringByDeletingLastPathComponent, git);
 			dispatch_async(dispatch_get_main_queue(), ^{
 				if(generation != _generation || loading.isCancelled)
 					return;
 				[_spinner stopAnimation:self];
 				_comparing = NO;
 				++_comparisonCount;
+				_branches[0] = leftBranch;
+				_branches[1] = rightBranch;
+				[_tabs.firstObject.diffView setBranch:leftBranch onLeft:YES];
+				[_tabs.firstObject.diffView setBranch:rightBranch onLeft:NO];
 				[self showFilePair:pair reload:_reloadFiles];
 				_reloadFiles = NO;
 				if(_refreshPending)
@@ -956,6 +964,8 @@ static NSURL* TextMateApplicationURL ()
 		NSString* branch = side.left ? leftBranch : rightBranch;
 		side.branchLabel.stringValue = [branch isEqualToString:side.nameLabel.stringValue] ? @"" : branch ?: @"";
 	}
+	_branches[0] = leftBranch;
+	_branches[1] = rightBranch;
 	[self updateFileTabs]; // entries are new nodes after every comparison
 	if(leftBranch && rightBranch)
 		self.window.title = [NSString stringWithFormat:@"%@ ⇄ %@", leftBranch, rightBranch];
@@ -1334,6 +1344,8 @@ static NSURL* TextMateApplicationURL ()
 		[weakSelf copyChange:change inView:view toRight:toRight];
 	};
 	tab.view         = tab.diffView;
+	[tab.diffView setBranch:_branches[0] onLeft:YES];
+	[tab.diffView setBranch:_branches[1] onLeft:NO];
 	[tab.diffView showNode:node];
 	return tab;
 }
@@ -1343,6 +1355,8 @@ static NSURL* TextMateApplicationURL ()
 	for(NSUInteger i = 1; i < _tabs.count; ++i)
 	{
 		CompareTab* tab = _tabs[i];
+		[tab.diffView setBranch:_branches[0] onLeft:YES];
+		[tab.diffView setBranch:_branches[1] onLeft:NO];
 		CompareNode* previous = tab.node;
 		tab.node = [_root nodeAtRelativePath:tab.relativePath];
 		// A live refresh compares again often: reload only files that changed.

@@ -1138,6 +1138,12 @@ static void TestEditInTextMate (compare_fixture_t const& fixture)
 	// A file tab opens at the current change's line (lines 3 and 16 differ).
 	CompareDiffView* diff = Show(controller, @"multi.txt");
 	CHECK(WaitUntil(^{ return (BOOL)(!diff.loading && diff.changeCount == 2); }));
+
+	// Its headers show each side's file, branch and path, as the trees' do.
+	NSString* leftHeader  = [NSString stringWithFormat:@"multi.txt|main|%@", [fixture.left stringByAppendingPathComponent:@"multi.txt"].stringByAbbreviatingWithTildeInPath];
+	NSString* rightHeader = [NSString stringWithFormat:@"multi.txt|feature|%@", [fixture.right stringByAppendingPathComponent:@"multi.txt"].stringByAbbreviatingWithTildeInPath];
+	CHECK([[diff sideHeaderTextOnLeft:YES] isEqualToString:leftHeader]);
+	CHECK([[diff sideHeaderTextOnLeft:NO] isEqualToString:rightHeader]);
 	[controller.window makeFirstResponder:diff.leftTextView];
 	CHECK([controller validateMenuItem:edit] && [edit.title isEqualToString:@"Edit Left in TextMate"]);
 	[opened removeAllObjects];
@@ -1179,6 +1185,8 @@ static void TestFilePair ()
 	CHECK([controller.window.title isEqualToString:@"old.txt ⇄ new.txt"]);
 	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading && diff.changeCount == 1); }));
 	CHECK(controller.window.firstResponder == diff.leftTextView);
+	CHECK([[diff sideHeaderTextOnLeft:YES] isEqualToString:[@"old.txt||" stringByAppendingString:left.stringByAbbreviatingWithTildeInPath]]);
+	CHECK([[diff sideHeaderTextOnLeft:NO] isEqualToString:[@"new.txt||" stringByAppendingString:right.stringByAbbreviatingWithTildeInPath]]);
 
 	// No trees: their menu items are off.
 	NSMenuItem* mode = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(takeDisplayModeFrom:) keyEquivalent:@""];
@@ -1208,6 +1216,20 @@ static void TestFilePair ()
 
 	[controller close];
 	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
+}
+
+// Two files in Git worktrees: each side's header shows its branch.
+static void TestFilePairBranches (compare_fixture_t const& fixture)
+{
+	NSString* left  = [fixture.left stringByAppendingPathComponent:@"multi.txt"];
+	NSString* right = [fixture.right stringByAppendingPathComponent:@"multi.txt"];
+	CompareWindowController* controller = [[CompareWindowController alloc] initWithLeftPath:left rightPath:right focus:nil];
+	[controller showWindow:nil];
+	CompareDiffView* diff = controller.selectedDiffView;
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading); }));
+	CHECK([[diff sideHeaderTextOnLeft:YES] isEqualToString:[@"multi.txt|main|" stringByAppendingString:left.stringByAbbreviatingWithTildeInPath]]);
+	CHECK([[diff sideHeaderTextOnLeft:NO] isEqualToString:[@"multi.txt|feature|" stringByAppendingString:right.stringByAbbreviatingWithTildeInPath]]);
+	[controller close];
 }
 
 // A first change far down: both sides open scrolled to it, together.
@@ -1298,6 +1320,7 @@ int main (int argc, char const* argv[])
 			if(!ignoring.error)
 				TestIgnoreSetting(ignoring);
 			TestFocus(fixture);
+			TestFilePairBranches(fixture);
 		}
 		TestFilePair();
 		TestScrollToDistantChange();
