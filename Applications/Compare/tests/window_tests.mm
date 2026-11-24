@@ -43,6 +43,7 @@
 - (BOOL)tabBarView:(id)tabBar isClosableAtIndex:(NSUInteger)index;
 - (void)trashClickedEntries:(NSMenuItem*)sender;
 - (void)searchChanged:(NSSearchField*)sender;
+- (IBAction)swapSides:(id)sender;
 @end
 
 static int Failures = 0;
@@ -1207,12 +1208,21 @@ static void TestFilePair ()
 	NSUInteger count = controller.comparisonCount;
 	[@"one\n2\nthree\nfour\n" writeToFile:right atomically:YES encoding:NSUTF8StringEncoding error:nil];
 	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && !diff.loading && diff.changeCount == 2); }));
+	Spin(1.5); // an atomic save's later events
 	NSUInteger events = controller.fileEventCount;
 	count = controller.comparisonCount;
 	[@"x\n" writeToFile:[leftFolder stringByAppendingPathComponent:@"other.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
 	CHECK(WaitUntil(^{ return (BOOL)(controller.fileEventCount > events); }));
 	Spin(1.5);
 	CHECK(controller.comparisonCount == count);
+
+	// Swapping puts the right file on the left.
+	count = controller.comparisonCount;
+	[controller swapSides:nil];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && !diff.loading && diff.changeCount == 2); }));
+	CHECK([controller.window.title isEqualToString:@"new.txt ⇄ old.txt"]);
+	CHECK([[diff sideHeaderTextOnLeft:YES] hasPrefix:@"new.txt||"]);
+	CHECK([diff.leftTextView.string isEqualToString:@"one\n2\nthree\nfour\n"]);
 
 	[controller close];
 	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
@@ -1229,6 +1239,72 @@ static void TestFilePairBranches (compare_fixture_t const& fixture)
 	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading); }));
 	CHECK([[diff sideHeaderTextOnLeft:YES] isEqualToString:[@"multi.txt|main|" stringByAppendingString:left.stringByAbbreviatingWithTildeInPath]]);
 	CHECK([[diff sideHeaderTextOnLeft:NO] isEqualToString:[@"multi.txt|feature|" stringByAppendingString:right.stringByAbbreviatingWithTildeInPath]]);
+	[controller close];
+}
+
+static CompareNode* RootOf (CompareWindowController* controller)
+{
+	return [controller valueForKey:@"_root"];
+}
+
+// View → Swap Left and Right mirrors the comparison and keeps the window's
+// state: open file tabs, expanded folders and the selection.
+static void TestSwapSides (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	NSOutlineView* left = [controller outlineViewForLeftSide:YES];
+	CompareDiffView* diff = Show(controller, @"multi.txt");
+	CHECK(WaitUntil(^{ return (BOOL)(!diff.loading && diff.changeCount == 2); }));
+	[controller selectTabAtIndex:0];
+	[controller expandAllFolders:nil]; // earlier tests saved this pair collapsed
+	SelectRow(left, @"deep/a/b.txt");
+	CHECK([RootOf(controller) nodeAtRelativePath:@"gone.txt"].status == CompareStatusLeftOnly);
+
+	NSMenuItem* swap = [compare::view_menu() itemWithTitle:@"Swap Left and Right"];
+	CHECK(swap.action == @selector(swapSides:) && [controller validateMenuItem:swap]);
+	NSUInteger count = controller.comparisonCount;
+	[NSApp sendAction:swap.action to:controller from:swap];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	[controller.window layoutIfNeeded];
+
+	CHECK([controller.leftPath isEqualToString:fixture.right] && [controller.rightPath isEqualToString:fixture.left]);
+	CHECK([RootOf(controller) nodeAtRelativePath:@"gone.txt"].status == CompareStatusRightOnly);
+	CHECK([controller.window.title isEqualToString:@"feature ⇄ main"]);
+	CHECK(RowFor(left, @"deep/a/b.txt") != -1 && left.selectedRow == RowFor(left, @"deep/a/b.txt")); // still expanded and selected
+	CHECK(Aligned(controller));
+	CHECK(controller.tabCount == 2);
+	CHECK(WaitUntil(^{ return (BOOL)(!diff.loading && diff.changeCount == 2); }));
+	CHECK([[diff sideHeaderTextOnLeft:YES] hasPrefix:@"multi.txt|feature|"]);
+	CHECK([[diff leftTextView].string isEqualToString:Contents(fixture.right, @"multi.txt")]);
+
+	// And back.
+	count = controller.comparisonCount;
+	[controller swapSides:nil];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	CHECK([controller.leftPath isEqualToString:fixture.left]);
+	CHECK([RootOf(controller) nodeAtRelativePath:@"gone.txt"].status == CompareStatusLeftOnly);
+	[controller close];
+}
+
+// A copy redone after swapping still goes into the folder it went into.
+static void TestRedoAfterSwap (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	NSString* leftContents = Contents(fixture.left, @"grown.txt");
+	NSString* rightContents = Contents(fixture.right, @"grown.txt");
+	SelectRow([controller outlineViewForLeftSide:YES], @"grown.txt");
+	[controller copyToRight:nil];
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:leftContents]);
+	[controller.window.undoManager undo];
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:rightContents]);
+
+	NSUInteger count = controller.comparisonCount;
+	[controller swapSides:nil];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	[controller.window.undoManager redo];
+	CHECK(controller.lastProblem == nil);
+	CHECK([Contents(fixture.right, @"grown.txt") isEqualToString:leftContents]); // not the other way
+	CHECK([Contents(fixture.left, @"grown.txt") isEqualToString:leftContents]);
 	[controller close];
 }
 
@@ -1321,6 +1397,12 @@ int main (int argc, char const* argv[])
 				TestIgnoreSetting(ignoring);
 			TestFocus(fixture);
 			TestFilePairBranches(fixture);
+			TestSwapSides(fixture);
+
+			compare_fixture_t redo = compare_fixture::create(@COMPARE_TEST_GIT);
+			CHECK(redo.error == nil);
+			if(!redo.error)
+				TestRedoAfterSwap(redo);
 		}
 		TestFilePair();
 		TestScrollToDistantChange();

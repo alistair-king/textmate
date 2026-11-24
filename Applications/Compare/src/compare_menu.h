@@ -3,8 +3,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-// The View menu: display modes (tag = CompareFilter), ignored files, and
-// expanding or collapsing every folder.
+// The View menu: display modes (tag = CompareFilter), ignored files,
+// expanding or collapsing every folder, and swapping the sides.
 // Built in one place so Compare.app and its tests use the same items and
 // key equivalents.
 
@@ -29,6 +29,8 @@ namespace compare {
 		// No key equivalents: ⇧⌘←/→ and ⌥⌘←/→ move the caret or copy changes.
 		[menu addItemWithTitle:@"Expand All" action:@selector(expandAllFolders:) keyEquivalent:@""];
 		[menu addItemWithTitle:@"Collapse All" action:@selector(collapseAllFolders:) keyEquivalent:@""];
+		[menu addItem:NSMenuItem.separatorItem];
+		[menu addItemWithTitle:@"Swap Left and Right" action:@selector(swapSides:) keyEquivalent:@""];
 		return menu;
 	}
 

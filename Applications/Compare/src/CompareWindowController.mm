@@ -7,6 +7,7 @@
 #import "CompareSettings.h"
 #import "compare_url.h"
 #include <stdlib.h>
+#include <utility>
 #import <FileBrowser/FileItem.h>
 #import <FileBrowser/FileBrowserOutlineView.h>
 #import <FileBrowser/FileItemTableCellView.h>
@@ -223,6 +224,7 @@ static CGFloat const kTreeStripWidth = 34;
 @property (nonatomic) NSView* view;
 @property (nonatomic) NSTextField* nameLabel;
 @property (nonatomic) NSTextField* branchLabel;
+@property (nonatomic) NSTextField* locationLabel;
 @property (nonatomic) NSScrollView* scrollView;
 @property (nonatomic) FileBrowserOutlineView* outlineView;
 @property (nonatomic) NSMapTable<CompareNode*, FileItem*>* items;
@@ -292,6 +294,8 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	BOOL _files; // two files: one file tab, no trees
 	BOOL _reloadFiles; // the next comparison of two files reloads their text
 	NSString* _branches[2]; // shown in each file tab's headers
+	NSArray<NSString*>* _keptExpanded; // after swapping sides: restored on the next comparison
+	NSString* _keptSelection;
 }
 
 static NSString* GitExecutable;
@@ -341,9 +345,7 @@ static NSURL* TextMateApplicationURL ()
 		BOOL leftIsFolder = NO;
 		_files = [NSFileManager.defaultManager fileExistsAtPath:left isDirectory:&leftIsFolder] && !leftIsFolder;
 
-		window.title              = [NSString stringWithFormat:@"%@ ⇄ %@", left.lastPathComponent, right.lastPathComponent];
-		if(_files && [left.lastPathComponent isEqualToString:right.lastPathComponent])
-			window.title = [NSString stringWithFormat:@"%@ — %@ ⇄ %@", left.lastPathComponent, left.stringByDeletingLastPathComponent.lastPathComponent, right.stringByDeletingLastPathComponent.lastPathComponent];
+		[self updateTitle];
 		window.minSize            = NSMakeSize(560, 420);
 		window.releasedWhenClosed = NO;
 		window.delegate           = self;
@@ -462,6 +464,57 @@ static NSURL* TextMateApplicationURL ()
 - (BOOL)isFileComparison
 {
 	return _files;
+}
+
+// The folder or file names; a folder comparison shows the branches once known.
+- (void)updateTitle
+{
+	NSString* left = _leftPath.lastPathComponent, *right = _rightPath.lastPathComponent;
+	self.window.title = [NSString stringWithFormat:@"%@ ⇄ %@", left, right];
+	if(_files && [left isEqualToString:right])
+		self.window.title = [NSString stringWithFormat:@"%@ — %@ ⇄ %@", left, _leftPath.stringByDeletingLastPathComponent.lastPathComponent, _rightPath.stringByDeletingLastPathComponent.lastPathComponent];
+	if(_files)
+		self.window.subtitle = _leftPath.stringByDeletingLastPathComponent.stringByAbbreviatingWithTildeInPath;
+}
+
+// View → Swap Left and Right: the same comparison, mirrored. Open file tabs,
+// expanded folders, the selection and Undo stay; both sides are compared
+// again, as every entry's left and right change places.
+- (IBAction)swapSides:(id)sender
+{
+	[self saveState]; // under the old order's key
+	NSString* left = _rightPath;
+	_rightPath = _leftPath;
+	_leftPath  = left;
+	std::swap(_branches[0], _branches[1]);
+	[self updateTitle];
+
+	if(_root)
+	{
+		_keptExpanded  = [self expandedRelativePaths];
+		_keptSelection = [self selectedRelativePath];
+	}
+	_root = nil; // its entries say left and right the other way round
+	[self reloadOutlines];
+	for(CompareSide* side : _sides)
+	{
+		side.root = side.left ? _leftPath : _rightPath;
+		side.nameLabel.stringValue     = side.root.lastPathComponent;
+		side.branchLabel.stringValue   = @"";
+		side.locationLabel.stringValue = side.root.stringByAbbreviatingWithTildeInPath;
+		side.locationLabel.toolTip     = side.root;
+	}
+	for(CompareTab* tab in _tabs)
+	{
+		if(!tab.diffView)
+			continue;
+		tab.node = nil; // nothing to copy until compared again
+		[tab.diffView setBranch:_branches[0] onLeft:YES];
+		[tab.diffView setBranch:_branches[1] onLeft:NO];
+		[tab.diffView showMessage:@"Comparing…"];
+	}
+	_reloadFiles = _files;
+	[self refresh:self];
 }
 
 - (void)dealloc
@@ -798,6 +851,7 @@ static NSURL* TextMateApplicationURL ()
 
 	NSTextField* location = Label(root.stringByAbbreviatingWithTildeInPath, [NSFont systemFontOfSize:NSFont.smallSystemFontSize], NSColor.secondaryLabelColor);
 	location.toolTip = root;
+	side.locationLabel = location;
 
 	NSStackView* header = [NSStackView stackViewWithViews:@[ title, location ]];
 	header.orientation = NSUserInterfaceLayoutOrientationVertical;
@@ -940,9 +994,11 @@ static NSURL* TextMateApplicationURL ()
 
 - (void)showTree:(CompareNode*)root leftBranch:(NSString*)leftBranch rightBranch:(NSString*)rightBranch
 {
-	BOOL first = !_root;
-	NSArray<NSString*>* expanded = first ? self.savedExpandedPaths : [self expandedRelativePaths];
-	NSString* selected = [self selectedRelativePath];
+	BOOL first = !_root && !_keptExpanded;
+	NSArray<NSString*>* expanded = _keptExpanded ?: (first ? self.savedExpandedPaths : [self expandedRelativePaths]);
+	NSString* selected = _keptExpanded ? _keptSelection : [self selectedRelativePath];
+	_keptExpanded  = nil;
+	_keptSelection = nil;
 
 	_root = root;
 	[self reloadOutlines];
@@ -1434,6 +1490,14 @@ static NSURL* TextMateApplicationURL ()
 
 typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 
+// For a redo while the folders are being compared again (after Swap).
+static BOOL SetNotComparedError (NSString** error)
+{
+	if(error)
+		*error = @"The folders are being compared. Try again once the comparison has finished.";
+	return NO;
+}
+
 - (CompareNode*)rootNode
 {
 	return _root;
@@ -1679,13 +1743,19 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 			return;
 	}
 
+	// A redo runs this again, maybe after the sides were swapped: it copies
+	// into the same folder, whichever side that is now.
+	NSString* destination = toRight ? _rightPath : _leftPath;
 	__weak CompareWindowController* weakSelf = self;
 	[self performChangesNamed:toRight ? @"Copy to the Right" : @"Copy to the Left" affecting:paths using:^BOOL(CompareChangeSet* changes, NSString** error){
 		CompareNode* root = weakSelf.rootNode;
+		if(!root)
+			return SetNotComparedError(error);
+		BOOL right = [weakSelf.rightPath isEqualToString:destination];
 		for(NSString* path in paths)
 		{
 			CompareNode* node = [root nodeAtRelativePath:path];
-			if(node && !CompareCopyNode(node, toRight, changes, error))
+			if(node && !CompareCopyNode(node, right, changes, error))
 				return NO;
 		}
 		return YES;
@@ -1694,13 +1764,17 @@ typedef BOOL (^CompareChangeBlock)(CompareChangeSet* changes, NSString** error);
 
 - (void)trashEntriesAtRelativePaths:(NSArray<NSString*>*)paths onLeft:(BOOL)left
 {
+	NSString* folder = left ? _leftPath : _rightPath; // as for copies: the same folder on redo
 	__weak CompareWindowController* weakSelf = self;
 	[self performChangesNamed:@"Move to Trash" affecting:paths using:^BOOL(CompareChangeSet* changes, NSString** error){
 		CompareNode* root = weakSelf.rootNode;
+		if(!root)
+			return SetNotComparedError(error);
+		BOOL onLeft = [weakSelf.leftPath isEqualToString:folder];
 		for(NSString* path in paths)
 		{
 			CompareNode* node = [root nodeAtRelativePath:path];
-			if(node && !CompareTrashNode(node, left, changes, error))
+			if(node && !CompareTrashNode(node, onLeft, changes, error))
 				return NO;
 		}
 		return YES;
