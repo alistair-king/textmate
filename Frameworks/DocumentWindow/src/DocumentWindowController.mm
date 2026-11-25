@@ -495,6 +495,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 		self.window = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:[self frameRectForNewWindow] styleMask:windowStyle] styleMask:windowStyle backing:NSBackingStoreBuffered defer:NO];
 		self.window.animationBehavior  = NSWindowAnimationBehaviorDocumentWindow;
 		self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
+		self.window.tabbingMode        = NSWindowTabbingModeDisallowed; // we have our own tabs; never let AppKit group document windows
 		self.window.delegate           = self;
 		self.window.releasedWhenClosed = NO;
 
