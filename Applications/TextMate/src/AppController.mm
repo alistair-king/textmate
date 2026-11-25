@@ -1018,7 +1018,7 @@ static KVDB* commandPaletteFrecencyDB ()
 		if(repositoryPath)
 		{
 			item.projectGroupIdentifier = repositoryPath;
-			item.projectGroupTitle = [repositoryPath.lastPathComponent isEqual:@".git"] ? repositoryPath.stringByDeletingLastPathComponent.lastPathComponent : repositoryPath.lastPathComponent;
+			item.projectGroupTitle = metadata[@"repositoryName"] ?: [repositoryPath.lastPathComponent isEqual:@".git"] ? repositoryPath.stringByDeletingLastPathComponent.lastPathComponent : repositoryPath.lastPathComponent;
 			item.projectGroupPath = [repositoryPath stringByAbbreviatingWithTildeInPath];
 			NSMutableArray* workspaceIdentifiers = [NSMutableArray array];
 			for(NSString* related in metadata[@"relatedPaths"]) [workspaceIdentifiers addObject:[@"project:" stringByAppendingString:related]];

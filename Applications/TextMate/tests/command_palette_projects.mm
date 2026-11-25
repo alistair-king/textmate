@@ -38,7 +38,15 @@ int main(int argc, char const* argv[])
 		[fs removeItemAtPath:missing error:nil];
 		NSString* plain = [temporary stringByAppendingPathComponent:@"non-git"];
 		[fs createDirectoryAtPath:plain withIntermediateDirectories:YES attributes:nil error:nil];
+		Check([CommandPaletteRepositoryName(@"https://github.com/team/textmate.git\n") isEqual:@"textmate"], @"HTTPS remote name");
+		Check([CommandPaletteRepositoryName(@"git@github.com:team/textmate.git") isEqual:@"textmate"], @"scp-style remote name");
+		Check([CommandPaletteRepositoryName(@"git@host:textmate") isEqual:@"textmate"], @"scp-style remote without owner");
+		Check([CommandPaletteRepositoryName(@"/srv/repos/textmate.git/") isEqual:@"textmate"], @"Local path remote name");
+		Check(CommandPaletteRepositoryName(@"") == nil, @"Empty remote has no name");
+		Git(git, root, @[@"remote", @"add", @"origin", @"https://example.invalid/team/palette-project.git"]);
 		NSDictionary* entries = CommandPaletteWorktrees(@[root, linked, plain], git);
+		Check([entries[root][@"repositoryName"] isEqual:@"palette-project"], @"Project name comes from the origin remote");
+		Check([entries[linked][@"repositoryName"] isEqual:@"palette-project"], @"Linked worktrees share the project name");
 		Check(entries.count == 3, [@"Discover main and linked worktrees, excluding missing and non-Git directories: " stringByAppendingString:entries.description]);
 		Check([entries[root][@"branchLabel"] isEqual:@"main"], @"Main branch label");
 		Check([entries[linked][@"branchLabel"] isEqual:@"topic/palette"], @"Linked branch and unusual path survive NUL parsing");
@@ -64,6 +72,7 @@ int main(int argc, char const* argv[])
 		Git(git, nested, @[@"init", @"-b", @"nested"]);
 		NSDictionary* discoveredNested = CommandPaletteWorktrees(@[root, nested], git);
 		Check([discoveredNested[nested][@"repositoryPath"] isEqual:nested], @"Original subdirectory seeds discover new nested repositories instead of folding them into cached parent metadata");
+		Check(discoveredNested[nested][@"repositoryName"] == nil, @"Repositories without an origin remote have no project name");
 		NSDictionary* linkedEntries = CommandPaletteWorktrees(@[linked], git);
 		Check([linkedEntries[root][@"relatedPaths"] isEqual:entries[root][@"relatedPaths"]], @"Discovery also works from linked checkouts");
 		Check([linkedEntries[linked][@"repositoryPath"] isEqual:root], @"Group identity is stable when querying a linked checkout");

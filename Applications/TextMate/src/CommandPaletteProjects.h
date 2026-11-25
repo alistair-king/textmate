@@ -5,4 +5,6 @@
 NSDictionary<NSString*, NSDictionary*>* CommandPaletteWorktrees(NSArray<NSString*>* paths, NSString* git, NSProgress* progress = nil);
 NSString* CommandPaletteCanonicalPath(NSString* path);
 NSDictionary* CommandPaletteWorktreeForPath(NSDictionary<NSString*, NSDictionary*>* worktrees, NSString* path);
+// Repository name from a remote URL (https, scp-style, or local path), without ".git".
+NSString* CommandPaletteRepositoryName(NSString* remoteURL);
 NSArray<NSString*>* CommandPaletteWorkspacePaths(NSArray<NSString*>* paths, NSDictionary<NSString*, NSDictionary*>* worktrees);
