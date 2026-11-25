@@ -1474,6 +1474,27 @@ static void TestFileLoadingIndicator (compare_fixture_t const& fixture)
 	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
 }
 
+// The other tree follows a selection as it changes (posted while a click is
+// still tracked), not only once it has changed (when the button comes up).
+static void TestSelectionFollowsAtOnce (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	NSOutlineView* left  = [controller outlineViewForLeftSide:YES];
+	NSOutlineView* right = [controller outlineViewForLeftSide:NO];
+	[left deselectAll:nil];
+	NSInteger row = RowFor(left, @"grown.txt");
+	CHECK(row != -1 && right.selectedRow == -1);
+
+	// The left row is selected as a tracked click does it: no “did change” yet.
+	[controller setValue:@YES forKey:@"_synchronizing"];
+	[left selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+	[controller setValue:@NO forKey:@"_synchronizing"];
+	CHECK(right.selectedRow == -1);
+	[NSNotificationCenter.defaultCenter postNotificationName:NSOutlineViewSelectionIsChangingNotification object:left];
+	CHECK(right.selectedRow == row);
+	[controller close];
+}
+
 // A first change far down: both sides open scrolled to it, together.
 static void TestScrollToDistantChange ()
 {
@@ -1567,6 +1588,7 @@ int main (int argc, char const* argv[])
 			TestChooser(fixture);
 			TestLoadingIndicator(fixture);
 			TestFileLoadingIndicator(fixture);
+			TestSelectionFollowsAtOnce(fixture);
 
 			compare_fixture_t redo = compare_fixture::create(@COMPARE_TEST_GIT);
 			CHECK(redo.error == nil);

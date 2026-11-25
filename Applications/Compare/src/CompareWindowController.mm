@@ -1468,13 +1468,29 @@ static NSURL* TextMateApplicationURL ()
 	_synchronizing = NO;
 }
 
+// The other tree selects the same rows. While a click is tracked (the
+// button still down, as AppKit waits to see whether it starts a drag), only
+// “is changing” is posted; following that too means the other side updates
+// as soon as the row does, not when the button is released.
+- (void)outlineViewSelectionIsChanging:(NSNotification*)notification
+{
+	[self mirrorSelectionOf:notification.object];
+}
+
 - (void)outlineViewSelectionDidChange:(NSNotification*)notification
+{
+	[self mirrorSelectionOf:notification.object];
+}
+
+- (void)mirrorSelectionOf:(NSOutlineView*)source
 {
 	if(_synchronizing)
 		return;
+	NSOutlineView* other = [self otherSide:[self sideForOutlineView:source]].outlineView;
+	if([other.selectedRowIndexes isEqualToIndexSet:source.selectedRowIndexes])
+		return;
 	_synchronizing = YES;
-	NSOutlineView* source = notification.object;
-	[[self otherSide:[self sideForOutlineView:source]].outlineView selectRowIndexes:source.selectedRowIndexes byExtendingSelection:NO];
+	[other selectRowIndexes:source.selectedRowIndexes byExtendingSelection:NO];
 	_synchronizing = NO;
 }
 
