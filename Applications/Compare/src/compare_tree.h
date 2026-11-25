@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 #include <string>
 #include <vector>
+#include <atomic>
+#include <memory>
 
 // What a path is on one side of the comparison.
 typedef NS_ENUM(uint8_t, CompareKind) {
@@ -87,6 +89,15 @@ private:
 	std::vector<std::string> _paths;
 };
 
+// How far CompareBuildTree has got, for a window to show while it works;
+// updated from the worker thread, read from any.
+struct compare_progress_t
+{
+	std::atomic<bool> listed{false}; // both folders listed; `files` is known
+	std::atomic<long> files{0};      // entries to compare (files, links, …)
+	std::atomic<long> compared{0};   // of those, compared so far
+};
+
 struct compare_options_t
 {
 	compare_excludes_t excludes;
@@ -96,6 +107,7 @@ struct compare_options_t
 	BOOL (^cancelled)()    = nil;
 	NSTimeInterval git_timeout = 60;          // listing with Git longer than this fails the comparison
 	void (^failed)(NSString* reason) = nil;   // why a listing failed (not called when cancelled)
+	std::shared_ptr<compare_progress_t> progress; // optional: filled in by CompareBuildTree
 };
 
 // Relative paths of every non-folder entry below `root`. Uses

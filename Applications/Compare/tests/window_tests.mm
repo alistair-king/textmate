@@ -45,6 +45,8 @@
 - (void)trashClickedEntries:(NSMenuItem*)sender;
 - (void)searchChanged:(NSSearchField*)sender;
 - (IBAction)swapSides:(id)sender;
+- (BOOL)isShowingLoading;
+- (void)updateLoadingProgress;
 @end
 
 static int Failures = 0;
@@ -1384,6 +1386,45 @@ static void TestStripFollowsRows ()
 	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
 }
 
+// While there is no tree yet, a spinner and how far the comparison has got
+// cover the empty trees; refreshing a tree that is shown keeps the trees.
+static void TestLoadingIndicator (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = [[CompareWindowController alloc] initWithLeftPath:fixture.left rightPath:fixture.right focus:nil];
+	[controller.window setFrame:NSMakeRect(100, 100, 900, 320) display:NO];
+	NSTextField* detail = [controller valueForKey:@"_loadingDetail"];
+	CHECK(controller.isShowingLoading && controller.comparisonCount == 0);
+	CHECK(detail.stringValue.length > 0);
+	Snapshot(controller, @"loading");
+	[controller showWindow:nil];
+	CHECK(WaitUntil(^{ return Loaded(controller); }));
+	CHECK(!controller.isShowingLoading);
+
+	// It counted the files as it compared them.
+	[controller updateLoadingProgress];
+	NSArray* words = [detail.stringValue componentsSeparatedByString:@" "];
+	CHECK(words.count == 5 && [words[0] isEqualToString:words[2]] && [detail.stringValue hasSuffix:@"files compared"] && [words[0] integerValue] > 0);
+
+	// A refresh keeps the tree in view.
+	NSUInteger count = controller.comparisonCount;
+	[controller refresh:nil];
+	CHECK(!controller.isShowingLoading);
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+
+	// Swapping has no tree to show until it is compared again.
+	count = controller.comparisonCount;
+	[controller swapSides:nil];
+	CHECK(controller.isShowingLoading);
+	Snapshot(controller, @"loading-shown");
+	// Over the trees only: the bar (summary, search, refresh) stays usable.
+	NSView* overlay = [controller valueForKey:@"_loadingView"];
+	NSView* summary = [controller valueForKey:@"_summaryLabel"];
+	CHECK(NSMaxY([overlay convertRect:overlay.bounds toView:nil]) <= NSMinY([summary convertRect:summary.bounds toView:nil]));
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > count && Loaded(controller)); }));
+	CHECK(!controller.isShowingLoading);
+	[controller close];
+}
+
 // A first change far down: both sides open scrolled to it, together.
 static void TestScrollToDistantChange ()
 {
@@ -1475,6 +1516,7 @@ int main (int argc, char const* argv[])
 			TestFilePairBranches(fixture);
 			TestSwapSides(fixture);
 			TestChooser(fixture);
+			TestLoadingIndicator(fixture);
 
 			compare_fixture_t redo = compare_fixture::create(@COMPARE_TEST_GIT);
 			CHECK(redo.error == nil);

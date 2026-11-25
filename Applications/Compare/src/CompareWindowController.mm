@@ -248,6 +248,24 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 // ========
 
 // The first tab compares the trees; the others each compare one file.
+// Covers the empty trees while the first comparison runs: a spinner, what
+// is happening, and how far it has got.
+@interface CompareLoadingView : NSView
+@end
+
+@implementation CompareLoadingView
+- (void)drawRect:(NSRect)dirtyRect
+{
+	[NSColor.controlBackgroundColor setFill];
+	NSRectFill(dirtyRect);
+}
+
+- (NSView*)hitTest:(NSPoint)point
+{
+	return self.hidden ? nil : [super hitTest:point] ? self : nil; // the trees below are empty
+}
+@end
+
 @interface CompareTab : NSObject
 @property (nonatomic) NSUUID* identifier;
 @property (nonatomic) NSView* view;
@@ -294,6 +312,12 @@ static NSTextField* Label (NSString* text, NSFont* font, NSColor* color)
 	BOOL _files; // two files: one file tab, no trees
 	BOOL _reloadFiles; // the next comparison of two files reloads their text
 	NSString* _branches[2]; // shown in each file tab's headers
+	CompareLoadingView* _loadingView;
+	NSProgressIndicator* _loadingSpinner;
+	NSTextField* _loadingTitle;
+	NSTextField* _loadingDetail;
+	NSTimer* _progressTimer;
+	std::shared_ptr<compare_progress_t> _progress; // of the running (or last) comparison
 	NSArray<NSString*>* _keptExpanded; // after swapping sides: restored on the next comparison
 	NSString* _keptSelection;
 }
@@ -400,6 +424,16 @@ static NSURL* TextMateApplicationURL ()
 		[divider.topAnchor constraintEqualToAnchor:bar.bottomAnchor].active = YES;
 		[split.topAnchor constraintEqualToAnchor:divider.bottomAnchor].active = YES;
 		[split.bottomAnchor constraintEqualToAnchor:treesView.bottomAnchor].active = YES;
+
+		_loadingView = [self makeLoadingView];
+		_loadingView.translatesAutoresizingMaskIntoConstraints = NO;
+		[treesView addSubview:_loadingView positioned:NSWindowAbove relativeTo:split];
+		[NSLayoutConstraint activateConstraints:@[
+			[_loadingView.topAnchor constraintEqualToAnchor:split.topAnchor],
+			[_loadingView.bottomAnchor constraintEqualToAnchor:split.bottomAnchor],
+			[_loadingView.leadingAnchor constraintEqualToAnchor:split.leadingAnchor],
+			[_loadingView.trailingAnchor constraintEqualToAnchor:split.trailingAnchor],
+		]];
 
 		// Two files have no trees: their comparison is the only tab.
 		CompareTab* firstTab = [CompareTab new];
@@ -528,6 +562,7 @@ static NSURL* TextMateApplicationURL ()
 	[self saveState];
 	[_loading cancel];
 	_watch.stop();
+	[self hideLoading];
 	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(liveRefresh) object:nil];
 }
 
@@ -796,6 +831,96 @@ static NSURL* TextMateApplicationURL ()
 // = Layout =
 // ==========
 
+- (CompareLoadingView*)makeLoadingView
+{
+	_loadingSpinner = [NSProgressIndicator new];
+	_loadingSpinner.style = NSProgressIndicatorStyleSpinning;
+	_loadingSpinner.controlSize = NSControlSizeRegular;
+	_loadingSpinner.displayedWhenStopped = NO;
+
+	_loadingTitle = [NSTextField labelWithString:@"Comparing folders…"];
+	_loadingTitle.font = [NSFont systemFontOfSize:15 weight:NSFontWeightMedium];
+	_loadingTitle.textColor = NSColor.secondaryLabelColor;
+	_loadingTitle.alignment = NSTextAlignmentCenter;
+
+	_loadingDetail = [NSTextField wrappingLabelWithString:@""];
+	_loadingDetail.font = [NSFont monospacedDigitSystemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightRegular];
+	_loadingDetail.textColor = NSColor.tertiaryLabelColor;
+	_loadingDetail.alignment = NSTextAlignmentCenter;
+	_loadingDetail.preferredMaxLayoutWidth = 420;
+
+	NSStackView* stack = [NSStackView stackViewWithViews:@[ _loadingSpinner, _loadingTitle, _loadingDetail ]];
+	stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+	stack.alignment   = NSLayoutAttributeCenterX;
+	stack.spacing     = 8;
+	[stack setCustomSpacing:14 afterView:_loadingSpinner];
+	stack.translatesAutoresizingMaskIntoConstraints = NO;
+
+	CompareLoadingView* view = [CompareLoadingView new];
+	view.hidden = YES;
+	[view addSubview:stack];
+	[NSLayoutConstraint activateConstraints:@[
+		[stack.centerXAnchor constraintEqualToAnchor:view.centerXAnchor],
+		[stack.centerYAnchor constraintEqualToAnchor:view.centerYAnchor constant:-20],
+		[stack.widthAnchor constraintLessThanOrEqualToAnchor:view.widthAnchor constant:-40],
+	]];
+	return view;
+}
+
+// Shown while there is no tree yet (a new window, after Swap, after a
+// failure); a refresh of a tree that is shown keeps it, with the bar's spinner.
+- (void)showLoading
+{
+	_loadingTitle.stringValue = @"Comparing folders…";
+	_loadingView.hidden = NO;
+	[_loadingSpinner startAnimation:self];
+	[self updateLoadingProgress];
+	if(!_progressTimer)
+	{
+		__weak CompareWindowController* weakSelf = self;
+		_progressTimer = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer* timer){
+			[weakSelf updateLoadingProgress];
+		}];
+		[NSRunLoop.currentRunLoop addTimer:_progressTimer forMode:NSRunLoopCommonModes];
+	}
+}
+
+- (void)hideLoading
+{
+	[_progressTimer invalidate];
+	_progressTimer = nil;
+	[_loadingSpinner stopAnimation:self];
+	_loadingView.hidden = YES;
+}
+
+- (void)showLoadingFailure:(NSString*)reason
+{
+	[self hideLoading];
+	_loadingView.hidden = NO;
+	_loadingTitle.stringValue  = @"The folders could not be compared.";
+	_loadingDetail.stringValue = reason ?: @"Click ↻ or choose File → Compare Again to try again.";
+}
+
+- (void)updateLoadingProgress
+{
+	auto progress = _progress;
+	if(!progress || !progress->listed)
+	{
+		_loadingDetail.stringValue = @"Listing the files in both folders…";
+		return;
+	}
+	auto number = ^NSString*(long value){
+		return [NSNumberFormatter localizedStringFromNumber:@(value) numberStyle:NSNumberFormatterDecimalStyle];
+	};
+	long files = progress->files, compared = MIN(progress->compared.load(), files);
+	_loadingDetail.stringValue = [NSString stringWithFormat:@"%@ of %@ %@ compared", number(compared), number(files), files == 1 ? @"file" : @"files"];
+}
+
+- (BOOL)isShowingLoading
+{
+	return !_loadingView.hidden;
+}
+
 - (NSView*)makeBar
 {
 	_summaryLabel = Label(@"", [NSFont systemFontOfSize:NSFont.smallSystemFontSize], NSColor.secondaryLabelColor);
@@ -966,8 +1091,15 @@ static NSURL* TextMateApplicationURL ()
 	}
 	NSString* git   = CompareWindowController.gitExecutable;
 	BOOL foldersFirst = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsFoldersOnTopKey];
+	auto progress = std::make_shared<compare_progress_t>();
+	_progress = progress;
+	if(!_root)
+		[self showLoading];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		__block NSString* reason = nil;
 		compare_options_t options;
+		options.progress        = progress;
+		options.failed          = ^(NSString* why){ reason = why; };
 		options.git           = git;
 		options.folders_first   = foldersFirst;
 		options.include_ignored = includeIgnored;
@@ -983,9 +1115,16 @@ static NSURL* TextMateApplicationURL ()
 			_comparing = NO;
 			++_comparisonCount;
 			if(!root)
+			{
 				_summaryLabel.stringValue = @"Comparison failed.";
+				if(!_root)
+					[self showLoadingFailure:reason];
+			}
 			else
+			{
+				[self hideLoading];
 				[self showTree:root leftBranch:leftBranch rightBranch:rightBranch];
+			}
 			if(_refreshPending)
 				[self refresh:self];
 		});

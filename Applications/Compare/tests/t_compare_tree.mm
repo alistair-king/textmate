@@ -147,6 +147,26 @@ void test_cancelled_returns_nil ()
 	OAK_ASSERT(CompareBuildTree(Fixture().left, Fixture().right, options) == nil);
 }
 
+static long FilesIn (CompareNode* node)
+{
+	long count = node.isFolder ? 0 : 1;
+	for(CompareNode* child in node.children)
+		count += FilesIn(child);
+	return count;
+}
+
+void test_progress_counts_files_listed_and_compared ()
+{
+	compare_options_t options = GitOptions();
+	options.progress = std::make_shared<compare_progress_t>();
+	CompareNode* root = CompareBuildTree(Fixture().left, Fixture().right, options);
+	OAK_ASSERT(root != nil);
+	OAK_ASSERT(options.progress->listed);
+	OAK_ASSERT(options.progress->files > 0);
+	OAK_ASSERT_EQ(options.progress->files.load(), FilesIn(root));
+	OAK_ASSERT_EQ(options.progress->compared.load(), options.progress->files.load());
+}
+
 void test_branch_labels ()
 {
 	OAK_ASSERT([CompareBranchLabel(Fixture().left, @COMPARE_TEST_GIT) isEqualToString:@"main"]);

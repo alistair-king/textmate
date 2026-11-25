@@ -16,6 +16,8 @@ Given two files rather than two folders (`tm-compare <left-file> <right-file>`, 
 
 The first tab, **Files**, shows the two folders side by side as trees that look like TextMate's file browser, with copy arrows between them (see [Copying changes](#copying-changes)). Every row lines up across the two sides: an entry missing on one side shows as a dimmed placeholder there. Expanding, collapsing, selecting and scrolling on one side does the same on the other. Each header shows the folder's name, its branch and its location.
 
+While a window compares its folders for the first time (and again after Swap Left and Right), a spinner covers the empty trees and says how far it has got: first listing the files in both folders, then how many of them have been compared, such as “1,234 of 5,678 files compared”. Comparing again a tree that is already shown keeps it in view, with the small spinner beside ↻ in the bar. If the comparison fails, the same place says so.
+
 Only differences get a background color, so they stand out; everything else keeps the default background:
 
 | Row | Meaning |

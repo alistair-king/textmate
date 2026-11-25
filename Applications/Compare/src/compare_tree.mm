@@ -430,6 +430,8 @@ static BOOL Classify (CompareNode* node, compare_options_t const& options)
 	else
 		node.status = CompareStatusIdentical; // submodules are not compared
 	node.mask = node.status;
+	if(options.progress)
+		++options.progress->compared;
 	return YES;
 }
 
@@ -487,6 +489,22 @@ CompareNode* CompareBuildTree (NSString* left, NSString* right, compare_options_
 				node = child;
 			}
 		}
+	}
+
+	if(options.progress)
+	{
+		long files = 0;
+		NSMutableArray<CompareNode*>* pending = [NSMutableArray arrayWithObject:root];
+		while(CompareNode* node = pending.lastObject)
+		{
+			[pending removeLastObject];
+			if(node.childrenByName.count)
+				[pending addObjectsFromArray:node.childrenByName.allValues];
+			else if(!node.isFolder) // empty folders are not compared
+				++files;
+		}
+		options.progress->files = files;
+		options.progress->listed = true;
 	}
 
 	// Leaves keep an empty dictionary only while building; `children` stays nil.
