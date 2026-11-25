@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+	<key>CFBundleExecutable</key><string>Compare</string>
+	<key>CFBundleIdentifier</key><string>com.macromates.TextMate.Compare</string>
+	<key>CFBundleName</key><string>Compare</string>
+	<key>CFBundleDisplayName</key><string>Compare</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleIconFile</key><string>Compare.icns</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>CFBundleShortVersionString</key><string>1.0</string>
+	<key>LSMinimumSystemVersion</key><string>14.0</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSPrincipalClass</key><string>NSApplication</string>
+	<key>CFBundleURLTypes</key><array><dict>
+		<key>CFBundleURLName</key><string>com.macromates.TextMate.Compare</string>
+		<key>CFBundleURLSchemes</key><array><string>textmate-compare</string></array>
+	</dict></array>
+</dict></plist>

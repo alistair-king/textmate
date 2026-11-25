@@ -136,6 +136,15 @@ if(BUILD_TESTING)
     target_link_libraries(command-palette-projects PRIVATE "-framework Foundation")
     add_test(NAME command-palette-projects
       COMMAND command-palette-projects ${TEXTMATE_TEST_GIT_EXECUTABLE})
+
+    # Text → Compare To: visibility, entries, the URL opened, and following
+    # worktrees added or removed by Git.
+    add_executable(worktree-compare-menu tests/worktree_compare_menu.mm
+      src/WorktreeCompareMenu.mm src/CommandPaletteProjects.mm)
+    target_link_libraries(worktree-compare-menu PRIVATE scm ${TEXTMATE_DEBUG_LIBS} "-framework Cocoa")
+    add_test(NAME worktree-compare-menu
+      COMMAND worktree-compare-menu ${TEXTMATE_TEST_GIT_EXECUTABLE})
+    set_tests_properties(worktree-compare-menu PROPERTIES TIMEOUT 120)
   endif()
 endif()
 
@@ -146,6 +155,11 @@ textmate_embed(TextMate ThemeEditor "Helpers" DIRECTORY)
 # Refresh the embedded app when only the theme editor or launcher changes.
 set_property(TARGET TextMate APPEND PROPERTY LINK_DEPENDS
   "$<TARGET_FILE:ThemeEditor>" "$<TARGET_FILE:tm-theme-editor>")
+textmate_embed(TextMate tm-compare "MacOS")
+textmate_embed(TextMate Compare "Helpers" DIRECTORY)
+# Refresh the embedded app when only the compare helper or launcher changes.
+set_property(TARGET TextMate APPEND PROPERTY LINK_DEPENDS
+  "$<TARGET_FILE:Compare>" "$<TARGET_FILE:tm-compare>")
 textmate_embed(TextMate textmate-mcp "MacOS")
 textmate_embed(TextMate tm-codex "MacOS")
 textmate_embed(TextMate tm-claude "MacOS")
@@ -169,6 +183,8 @@ textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-pi")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-theme-editor")
+textmate_codesign_file(TextMate "${CS_IDENTITY}"
+  "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-compare")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"
   "$<TARGET_BUNDLE_DIR:TextMate>/Contents/MacOS/tm-opencode")
 textmate_codesign_file(TextMate "${CS_IDENTITY}"

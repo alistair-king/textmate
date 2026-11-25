@@ -34,6 +34,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 @property (nonatomic) NSDictionary* statusInfo;
 @property (nonatomic, getter = isModified) BOOL modified;
 @property (nonatomic, getter = isSelected) BOOL selected;
+@property (nonatomic, getter = isClosable) BOOL closable; // YES unless the data source says otherwise
 @property (nonatomic) CGFloat fittingWidth;
 @property (nonatomic) BOOL needsLayout;
 @property (nonatomic, weak) OakTabView* tabView;
@@ -59,6 +60,7 @@ static NSString* const OakTabItemPasteboardType = @"com.macromates.TextMate.tabI
 		_path        = path;
 		_identifier  = identifier;
 		_modified    = modified;
+		_closable    = YES;
 		_needsLayout = YES;
 	}
 	return self;
@@ -249,7 +251,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 @implementation OakTabView
 + (NSSet*)keyPathsForValuesAffectingCloseButtonAlphaValue
 {
-	return [NSSet setWithObjects:@"tabItem", @"mouseInside", @"modified", @"voiceOverEnabled", nil];
+	return [NSSet setWithObjects:@"tabItem", @"tabItem.closable", @"mouseInside", @"modified", @"voiceOverEnabled", nil];
 }
 
 - (instancetype)animator
@@ -492,7 +494,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 - (CGFloat)closeButtonAlphaValue
 {
-	return _tabItem && (_mouseInside || _modified || _voiceOverEnabled) ? 1 : 0;
+	return _tabItem && _tabItem.closable && (_mouseInside || _modified || _voiceOverEnabled) ? 1 : 0;
 }
 
 - (void)setOverflowButtonVisible:(BOOL)flag
@@ -833,6 +835,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		[self addSubview:_backgroundView positioned:NSWindowBelow relativeTo:nil];
 
 		[self addSubview:self.createNewTabButton positioned:NSWindowAbove relativeTo:nil];
+		_showsCreateNewTabButton = YES;
 
 		[self registerForDraggedTypes:@[ OakTabItemPasteboardType ]];
 	}
@@ -863,6 +866,15 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 		_createNewTabButton.target     = self;
 	}
 	return _createNewTabButton;
+}
+
+- (void)setShowsCreateNewTabButton:(BOOL)flag
+{
+	if(_showsCreateNewTabButton == flag)
+		return;
+	_showsCreateNewTabButton = flag;
+	self.createNewTabButton.hidden = !flag;
+	[self updateToLayout:[self makeLayout]];
 }
 
 - (NSUInteger)selectedTabIndex
@@ -937,6 +949,9 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 			tabItem = [[OakTabItem alloc] initWithTitle:[_dataSource tabBarView:self titleForIndex:i] path:[_dataSource tabBarView:self pathForIndex:i] identifier:identifier modified:[_dataSource tabBarView:self isEditedAtIndex:i]];
 		}
 		tabItem.toolTip = [self toolTipForIndex:i];
+		BOOL closable = ![_dataSource respondsToSelector:@selector(tabBarView:isClosableAtIndex:)] || [_dataSource tabBarView:self isClosableAtIndex:i];
+		if(tabItem.closable != closable)
+			tabItem.closable = closable;
 		OakTabStatus status = [_dataSource respondsToSelector:@selector(tabBarView:statusForIndex:)] ? [_dataSource tabBarView:self statusForIndex:i] : OakTabStatusNone;
         NSString* description = [_dataSource respondsToSelector:@selector(tabBarView:statusDescriptionForIndex:)] ? [_dataSource tabBarView:self statusDescriptionForIndex:i] : @"";
         NSDictionary* info = @{ @"value": @(status), @"description": description ?: @"" };
@@ -1036,6 +1051,8 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 
 - (void)didClickCloseButtonForTabView:(OakTabView*)tabView
 {
+	if(!tabView.tabItem.closable) // also middle-clicks
+		return;
 	_tag = [_tabItems indexOfObject:tabView.tabItem]; // performCloseTab: asks for [sender tag]
 	if(_tag == NSNotFound)
 		return;
@@ -1370,7 +1387,7 @@ static void* kOakTabViewSelectedContext  = &kOakTabViewSelectedContext;
 - (NSArray<OakTabFrame*>*)makeLayout
 {
 	static NSString* const firstTabIdentifier = [NSUUID UUID].UUIDString;
-	CGFloat const visibleWidth = NSWidth(self.bounds) - NSWidth(self.createNewTabButton.frame);
+	CGFloat const visibleWidth = NSWidth(self.bounds) - (_showsCreateNewTabButton ? NSWidth(self.createNewTabButton.frame) : 0);
 	NSUInteger const countOfVisibleTabs = MIN(MAX(0, floor(visibleWidth / _minimumTabSize)), _tabItems.count);
 
 	NSMutableArray<OakTabItem*>* tabItems = [NSMutableArray array];

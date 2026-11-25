@@ -6,6 +6,7 @@
 #import "TMPlugInController.h"
 #import "RMateServer.h"
 #import "CommandPaletteProjects.h"
+#import "WorktreeCompareMenu.h"
 #import <BundleEditor/BundleEditor.h>
 #import <BundlesManager/BundlesManager.h>
 #import <DocumentWindow/DocumentWindowController.h>
@@ -108,6 +109,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 @implementation AppController
 - (NSMenu*)mainMenu
 {
+	NSMenuItem* compareToMenuItem = nil;
 	MBMenu const items = {
 		{ @"TextMate",
 			.submenu = {
@@ -378,6 +380,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 				{ @"Format Code / Selection",              @selector(lspFormatDocument:) },
 				{ /* -------- */ },
 				{ @"Filter Through Command…",              @selector(orderFrontRunCommandWindow:), @"|" },
+				{ @"Compare To",                           .delegate = WorktreeCompareMenu.sharedInstance, .hidden = YES, .ref = &compareToMenuItem },
 				{ /* -------- */ },
 				{ @"LSP",
 					.submenu = {
@@ -464,6 +467,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 	themesMenu.delegate     = self;
 	spellingMenu.delegate   = self;
 	wrapColumnMenu.delegate = self;
+	WorktreeCompareMenu.sharedInstance.menuItem = compareToMenuItem;
 	return menu;
 }
 
@@ -518,6 +522,7 @@ BOOL HasDocumentWindow (NSArray* windows)
 			foundBackAndForwardActions = YES;
 	}
 	self.keyWindowHasBackAndForwardActions = foundBackAndForwardActions;
+	[WorktreeCompareMenu.sharedInstance updateMenuItemVisibility];
 }
 
 - (void)userDefaultsDidChange:(id)sender
