@@ -3,6 +3,7 @@
 
 #import <Cocoa/Cocoa.h>
 #include <vector>
+#include <atomic>
 
 // Syntax highlighting for file tabs, chosen the way TextMate's editor
 // chooses it for a document (OakDocumentEditor, OakTextView):
@@ -44,7 +45,9 @@ namespace compare {
 	// names the file (it may not exist: the other side's path gives the theme
 	// and font of a side without the file). `darkAppearance` is the window's
 	// effective appearance, used when the theme preference is automatic.
-	side_syntax_t syntax_for_lines (NSArray<NSString*>* lines, NSString* path, NSData* contents, BOOL darkAppearance);
+	// `parsedLines`, when given, counts the lines as they are parsed (for a
+	// view showing how far loading a large file has got).
+	side_syntax_t syntax_for_lines (NSArray<NSString*>* lines, NSString* path, NSData* contents, BOOL darkAppearance, std::atomic<long>* parsedLines = nullptr);
 
 	// Files larger than this are shown in the theme's colors without parsing.
 	static NSUInteger const kSyntaxSizeLimit = 2 * 1024 * 1024;

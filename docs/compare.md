@@ -51,7 +51,7 @@ Files are compared byte for byte; symbolic links by their targets. Empty folders
 
 ## File tabs
 
-Double-click a file in either tree, or select it and press ⌘↓ or ⌘O (**File → Open File Comparison**), to compare its contents in a tab of its own. Opening a file that already has a tab selects it. Double-clicking a folder expands or collapses it. Several selected files open together.
+Double-click a file in either tree, or select it and press ⌘↓ or ⌘O (**File → Open File Comparison**), to compare its contents in a tab of its own. Opening a file that already has a tab selects it. While a file loads, a spinner covers its tab with the file's name and size and the step it is on: reading and comparing the files, then highlighting and building the text (each with a count of lines or rows, the slow part for large files), then laying out the text. Only the text down to the change it opens on is laid out before it is shown; the rest follows in the background. Reloading a file that is already shown, as after copying a change, keeps its text in view. Double-clicking a folder expands or collapses it. Several selected files open together.
 
 Both versions are shown side by side with line numbers. Above each side, as above each tree in the Files tab, a header shows that side's file name and Git branch (or “detached” and the commit; nothing outside Git) and the file's full path, dimmed where the file is missing on that side. Rows line up: a line only on one side shows as a hatched gap on the other. The line-number gutter carries the same background colors as its rows.
 

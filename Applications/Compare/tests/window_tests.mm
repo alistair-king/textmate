@@ -1185,6 +1185,7 @@ static void TestFilePair ()
 	CompareDiffView* diff = controller.selectedDiffView;
 	CHECK(controller.isFileComparison);
 	CHECK(diff.node == nil && controller.comparisonCount == 0); // not read on the main thread
+	CHECK(diff.isShowingLoading && [diff.loadingText hasPrefix:@"Comparing the files…|"]);
 	CHECK(controller.tabCount == 1 && diff != nil);
 	CHECK([controller.window.title isEqualToString:@"old.txt ⇄ new.txt"]);
 	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading && diff.changeCount == 1); }));
@@ -1425,6 +1426,54 @@ static void TestLoadingIndicator (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+// Opening a file: a spinner, its name and size, and the step, over the empty
+// text until it is shown; reloading a file that is shown keeps the text.
+static void TestFileLoadingIndicator (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	NSOutlineView* left = [controller outlineViewForLeftSide:YES];
+	[controller expandAllFolders:nil];
+	SelectRow(left, @"multi.txt");
+	[NSApp sendAction:left.doubleAction to:left.target from:left];
+	CompareDiffView* diff = controller.selectedDiffView;
+	CHECK(diff.loading && diff.isShowingLoading && diff.message == nil);
+	CHECK([diff.loadingText hasPrefix:@"Opening “multi.txt”…|"] && [diff.loadingText containsString:@"bytes · "]);
+	Snapshot(controller, @"file-loading");
+	CHECK(WaitUntil(^{ return (BOOL)!diff.loading; }));
+	CHECK(!diff.isShowingLoading && diff.changeCount == 2);
+
+	[diff showNode:diff.node keepingChange:YES];
+	CHECK(diff.loading && !diff.isShowingLoading); // the text stays while it reloads
+	CHECK(WaitUntil(^{ return (BOOL)!diff.loading; }));
+	CHECK(!diff.isShowingLoading && diff.changeCount == 2);
+	[controller close];
+
+	// A large file in a language with a grammar: the lines are counted as
+	// they are highlighted.
+	NSString* base = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"compare-large-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+	[NSFileManager.defaultManager createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:nil];
+	NSMutableString* text = [NSMutableString string];
+	for(int i = 0; i < 20000; ++i)
+		[text appendFormat:@"keyword line %d // note\n", i];
+	NSString* leftFile  = [base stringByAppendingPathComponent:@"left.cmpt"];
+	NSString* rightFile = [base stringByAppendingPathComponent:@"right.cmpt"];
+	[text writeToFile:leftFile atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	[[text stringByAppendingString:@"keyword extra\n"] writeToFile:rightFile atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	controller = [[CompareWindowController alloc] initWithLeftPath:leftFile rightPath:rightFile focus:nil];
+	[controller showWindow:nil];
+	diff = controller.selectedDiffView;
+	CHECK(WaitUntil(^{ return (BOOL)[diff.loadingText containsString:@"Highlighting: "]; }));
+	CHECK([diff.loadingText hasPrefix:@"Opening “left.cmpt”…|"] && [diff.loadingText containsString:@" of 40,001 lines"]);
+	// Slow in a sanitizer build: allow it time.
+	NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:120];
+	while((controller.comparisonCount == 0 || diff.loading) && deadline.timeIntervalSinceNow > 0)
+		[NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading); }));
+	CHECK(!diff.isShowingLoading && diff.changeCount == 1);
+	[controller close];
+	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
+}
+
 // A first change far down: both sides open scrolled to it, together.
 static void TestScrollToDistantChange ()
 {
@@ -1517,6 +1566,7 @@ int main (int argc, char const* argv[])
 			TestSwapSides(fixture);
 			TestChooser(fixture);
 			TestLoadingIndicator(fixture);
+			TestFileLoadingIndicator(fixture);
 
 			compare_fixture_t redo = compare_fixture::create(@COMPARE_TEST_GIT);
 			CHECK(redo.error == nil);

@@ -14,6 +14,9 @@
 // keeps what is shown, but copies use the new tree's paths.
 - (void)updateNode:(CompareNode*)node;
 - (void)showMessage:(NSString*)message;
+// A spinner with `title` over the text area, until a node or message is shown.
+- (void)showLoading:(NSString*)title;
+@property (nonatomic, readonly, getter = isShowingLoading) BOOL showingLoading;
 // The branch (or “detached 1a2b3c4”) shown beside each side's file name; nil
 // outside a Git work tree.
 - (void)setBranch:(NSString*)branch onLeft:(BOOL)left;
@@ -47,6 +50,7 @@
 @property (nonatomic, readonly) NSString* statusText;
 - (NSString*)sideHeaderTextOnLeft:(BOOL)left; // “name|branch|path”
 - (NSColor*)stripTintForRow:(long)row;        // the middle strip's color for a row
+- (NSString*)loadingText;                     // “title|detail” of the loading overlay
 @end
 
 // A 1 pt separator line with an intrinsic thickness, so Auto Layout never

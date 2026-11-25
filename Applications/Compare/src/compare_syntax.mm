@@ -52,7 +52,7 @@ namespace compare {
 		return traits;
 	}
 
-	side_syntax_t syntax_for_lines (NSArray<NSString*>* lines, NSString* path, NSData* contents, BOOL darkAppearance)
+	side_syntax_t syntax_for_lines (NSArray<NSString*>* lines, NSString* path, NSData* contents, BOOL darkAppearance, std::atomic<long>* parsedLines)
 	{
 		side_syntax_t result;
 		std::string const filePath = path ? to_s(path) : NULL_STR;
@@ -98,6 +98,8 @@ namespace compare {
 		result.lines.reserve(lines.count);
 		for(NSUInteger n = 0; n < lines.count; ++n)
 		{
+			if(parsedLines)
+				++*parsedLines;
 			std::string const line = to_s(lines[n]) + "\n";
 			std::map<size_t, scope::scope_t> scopes;
 			state = parse::parse(line.data(), line.data() + line.size(), state, scopes, n == 0);

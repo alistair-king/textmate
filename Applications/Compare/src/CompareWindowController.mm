@@ -442,7 +442,7 @@ static NSURL* TextMateApplicationURL ()
 		if(_files)
 		{
 			firstTab = [self makeTabForNode:nil]; // compared on a worker queue, like folders
-			[firstTab.diffView showMessage:@"Comparing…"];
+			[firstTab.diffView showLoading:@"Comparing the files…"];
 			window.subtitle = left.stringByDeletingLastPathComponent.stringByAbbreviatingWithTildeInPath;
 		}
 		_tabs = [NSMutableArray arrayWithObject:firstTab];
@@ -545,7 +545,7 @@ static NSURL* TextMateApplicationURL ()
 		tab.node = nil; // nothing to copy until compared again
 		[tab.diffView setBranch:_branches[0] onLeft:YES];
 		[tab.diffView setBranch:_branches[1] onLeft:NO];
-		[tab.diffView showMessage:@"Comparing…"];
+		[tab.diffView showLoading:_files ? @"Comparing the files…" : @"Comparing folders…"];
 	}
 	_reloadFiles = _files;
 	[self refresh:self];

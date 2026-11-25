@@ -4,7 +4,6 @@
 #import "compare_colors.h"
 #import "compare_transfer.h"
 #import "compare_syntax.h"
-#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -151,6 +150,29 @@ struct side_rows_t
 // = The diff view =
 // =================
 
+// How far loading a file comparison has got, written by the worker queue.
+struct load_progress_t
+{
+	enum phase_t { reading, highlighting, building, laying_out };
+	std::atomic<int> phase{reading};
+	std::atomic<long> lines{0};       // lines highlighted so far, both sides
+	std::atomic<long> total_lines{0}; // lines to highlight, both sides
+	std::atomic<long> rows{0};        // rows of text built so far
+	std::atomic<long> total_rows{0};
+};
+
+// Covers the empty text while a file loads: a spinner, the file, and the step.
+@interface CompareFileLoadingView : NSView
+@end
+
+@implementation CompareFileLoadingView
+- (void)drawRect:(NSRect)dirtyRect
+{
+	[NSColor.textBackgroundColor setFill];
+	NSRectFill(dirtyRect);
+}
+@end
+
 struct prepared_diff_t
 {
 	NSString* message = nil;
@@ -197,7 +219,7 @@ static NSString* Plural (NSUInteger count, NSString* singular, NSString* plural)
 
 // Builds both sides off the main thread, in each file's editor font and
 // theme colors, with its syntax highlighting.
-static prepared_diff_t Prepare (compare::text_diff_t const& diff, compare::side_syntax_t const syntax[2])
+static prepared_diff_t Prepare (compare::text_diff_t const& diff, compare::side_syntax_t const syntax[2], std::atomic<long>* builtRows = nullptr)
 {
 	prepared_diff_t result;
 	if(diff.problem)
@@ -265,6 +287,8 @@ static prepared_diff_t Prepare (compare::text_diff_t const& diff, compare::side_
 	long previousHunk = -1;
 	for(size_t i = 0; i < diff.rows.size(); ++i)
 	{
+		if(builtRows)
+			++*builtRows;
 		auto const& row = diff.rows[i];
 		if(row.hunk != -1 && row.hunk != previousHunk)
 			result.hunk_rows.push_back(i);
@@ -475,6 +499,13 @@ static CGFloat const kStripWidth = 34;
 	NSTextField* _changeLabel;
 	NSSegmentedControl* _navigation;
 	NSTextField* _messageLabel;
+	CompareFileLoadingView* _loadingView;
+	NSProgressIndicator* _loadingSpinner;
+	NSTextField* _loadingTitle;
+	NSTextField* _loadingDetail;
+	NSTimer* _loadingTimer;
+	std::shared_ptr<load_progress_t> _loadProgress;
+	NSString* _loadingSize;          // “2.4 MB”, for the detail line
 	NSView* _sidesHeader;            // above each side: name, branch and path
 	NSTextField* _sideNames[2];
 	NSTextField* _sideBranches[2];
@@ -604,7 +635,8 @@ static CGFloat const kStripWidth = 34;
 		_messageLabel.textColor = NSColor.secondaryLabelColor;
 		_messageLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
-		for(NSView* view in @[ header, divider, _sidesHeader, sidesDivider, _body, _messageLabel ])
+		_loadingView = [self makeLoadingView];
+		for(NSView* view in @[ header, divider, _sidesHeader, sidesDivider, _body, _messageLabel, _loadingView ])
 		{
 			view.translatesAutoresizingMaskIntoConstraints = NO;
 			[self addSubview:view];
@@ -632,6 +664,10 @@ static CGFloat const kStripWidth = 34;
 			[_body.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
 			[_body.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
 			[_body.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
+			[_loadingView.topAnchor constraintEqualToAnchor:_body.topAnchor],
+			[_loadingView.bottomAnchor constraintEqualToAnchor:_body.bottomAnchor],
+			[_loadingView.leadingAnchor constraintEqualToAnchor:_body.leadingAnchor],
+			[_loadingView.trailingAnchor constraintEqualToAnchor:_body.trailingAnchor],
 			[_messageLabel.centerXAnchor constraintEqualToAnchor:_body.centerXAnchor],
 			[_messageLabel.centerYAnchor constraintEqualToAnchor:_body.centerYAnchor],
 			[_messageLabel.widthAnchor constraintLessThanOrEqualToAnchor:_body.widthAnchor multiplier:0.8],
@@ -644,7 +680,116 @@ static CGFloat const kStripWidth = 34;
 
 - (void)dealloc
 {
+	[_loadingTimer invalidate];
 	[NSNotificationCenter.defaultCenter removeObserver:self];
+}
+
+// ===========
+// = Loading =
+// ===========
+
+- (CompareFileLoadingView*)makeLoadingView
+{
+	_loadingSpinner = [NSProgressIndicator new];
+	_loadingSpinner.style = NSProgressIndicatorStyleSpinning;
+	_loadingSpinner.controlSize = NSControlSizeRegular;
+	_loadingSpinner.displayedWhenStopped = NO;
+	_loadingSpinner.usesThreadedAnimation = YES; // keeps turning while the text is laid out
+
+	_loadingTitle = [NSTextField labelWithString:@""];
+	_loadingTitle.font = [NSFont systemFontOfSize:15 weight:NSFontWeightMedium];
+	_loadingTitle.textColor = NSColor.secondaryLabelColor;
+	_loadingTitle.alignment = NSTextAlignmentCenter;
+	_loadingTitle.lineBreakMode = NSLineBreakByTruncatingMiddle;
+	[_loadingTitle setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+	_loadingDetail = [NSTextField labelWithString:@""];
+	_loadingDetail.font = [NSFont monospacedDigitSystemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightRegular];
+	_loadingDetail.textColor = NSColor.tertiaryLabelColor;
+	_loadingDetail.alignment = NSTextAlignmentCenter;
+
+	NSStackView* stack = [NSStackView stackViewWithViews:@[ _loadingSpinner, _loadingTitle, _loadingDetail ]];
+	stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+	stack.alignment   = NSLayoutAttributeCenterX;
+	stack.spacing     = 8;
+	[stack setCustomSpacing:14 afterView:_loadingSpinner];
+	stack.translatesAutoresizingMaskIntoConstraints = NO;
+
+	CompareFileLoadingView* view = [CompareFileLoadingView new];
+	view.hidden = YES;
+	[view addSubview:stack];
+	[NSLayoutConstraint activateConstraints:@[
+		[stack.centerXAnchor constraintEqualToAnchor:view.centerXAnchor],
+		[stack.centerYAnchor constraintEqualToAnchor:view.centerYAnchor constant:-20],
+		[stack.widthAnchor constraintLessThanOrEqualToAnchor:view.widthAnchor constant:-40],
+	]];
+	return view;
+}
+
+// Over the empty text area (a new tab, or one showing a message); a tab
+// that already shows the file keeps its text while it reloads.
+- (void)showLoadingTitled:(NSString*)title progress:(std::shared_ptr<load_progress_t>)progress
+{
+	_loadProgress = progress;
+	_message = nil;
+	_messageLabel.hidden = YES;
+	_body.hidden = YES;
+	_loadingTitle.stringValue = title;
+	_loadingView.hidden = NO;
+	[_loadingSpinner startAnimation:self];
+	[self updateLoadingDetail];
+	if(!_loadingTimer)
+	{
+		__weak CompareDiffView* weakSelf = self;
+		_loadingTimer = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer* timer){
+			[weakSelf updateLoadingDetail];
+		}];
+		[NSRunLoop.currentRunLoop addTimer:_loadingTimer forMode:NSRunLoopCommonModes];
+	}
+}
+
+- (void)showLoading:(NSString*)title
+{
+	_loadingSize = nil;
+	[self showLoadingTitled:title progress:nullptr];
+}
+
+- (void)hideLoading
+{
+	[_loadingTimer invalidate];
+	_loadingTimer = nil;
+	[_loadingSpinner stopAnimation:self];
+	_loadingView.hidden = YES;
+}
+
+- (void)updateLoadingDetail
+{
+	auto progress = _loadProgress;
+	auto number = ^NSString*(long value){
+		return [NSNumberFormatter localizedStringFromNumber:@(value) numberStyle:NSNumberFormatterDecimalStyle];
+	};
+	NSString* step = @"Reading the files…";
+	if(!progress)
+		;
+	else if(progress->phase == load_progress_t::reading)
+		step = @"Reading and comparing the files…";
+	else if(progress->phase == load_progress_t::highlighting && progress->total_lines > 0)
+		step = [NSString stringWithFormat:@"Highlighting: %@ of %@ lines", number(MIN(progress->lines.load(), progress->total_lines.load())), number(progress->total_lines)];
+	else if(progress->phase == load_progress_t::building && progress->total_rows > 0)
+		step = [NSString stringWithFormat:@"Building the text: %@ of %@ rows", number(MIN(progress->rows.load(), progress->total_rows.load())), number(progress->total_rows)];
+	else
+		step = @"Laying out the text…";
+	_loadingDetail.stringValue = _loadingSize ? [NSString stringWithFormat:@"%@ · %@", _loadingSize, step] : step;
+}
+
+- (BOOL)isShowingLoading
+{
+	return !_loadingView.hidden;
+}
+
+- (NSString*)loadingText
+{
+	return [NSString stringWithFormat:@"%@|%@", _loadingTitle.stringValue, _loadingDetail.stringValue];
 }
 
 - (void)makeTextViewAtIndex:(size_t)index
@@ -704,6 +849,7 @@ static CGFloat const kStripWidth = 34;
 - (void)showMessage:(NSString*)message
 {
 	++_generation;
+	[self hideLoading];
 	_loading = NO;
 	_message = [message copy];
 	_messageLabel.stringValue = message ?: @"";
@@ -787,16 +933,28 @@ static CGFloat const kStripWidth = 34;
 	NSString* right = node.rightKind == CompareKindFile ? node.rightPath : nil;
 	BOOL darkAppearance = self.darkAppearance;
 	_shownDarkAppearance = darkAppearance;
+	auto progress = std::make_shared<load_progress_t>();
+	if(_body.hidden) // nothing of this file shown yet
+	{
+		long long size = MAX(node.leftStamp.size, node.rightStamp.size);
+		_loadingSize = size > 0 ? [NSByteCountFormatter stringFromByteCount:size countStyle:NSByteCountFormatterCountStyleFile] : nil;
+		[self showLoadingTitled:[NSString stringWithFormat:@"Opening “%@”…", node.name.length ? node.name : (left ?: right).lastPathComponent] progress:progress];
+	}
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		compare::text_diff_t diff = compare::diff_files(left, right);
 		// A side without the file still gets the other file's theme and font.
 		compare::side_syntax_t syntax[2];
 		if(!diff.problem)
 		{
-			syntax[0] = compare::syntax_for_lines(diff.left_lines,  left ?: right, diff.left_data,  darkAppearance);
-			syntax[1] = compare::syntax_for_lines(diff.right_lines, right ?: left, diff.right_data, darkAppearance);
+			progress->total_lines = (long)(diff.left_lines.count + diff.right_lines.count);
+			progress->phase = load_progress_t::highlighting;
+			syntax[0] = compare::syntax_for_lines(diff.left_lines,  left ?: right, diff.left_data,  darkAppearance, &progress->lines);
+			syntax[1] = compare::syntax_for_lines(diff.right_lines, right ?: left, diff.right_data, darkAppearance, &progress->lines);
 		}
-		auto prepared = std::make_shared<prepared_diff_t>(Prepare(diff, syntax));
+		progress->total_rows = (long)diff.rows.size();
+		progress->phase = load_progress_t::building;
+		auto prepared = std::make_shared<prepared_diff_t>(Prepare(diff, syntax, &progress->rows));
+		progress->phase = load_progress_t::laying_out;
 		dispatch_async(dispatch_get_main_queue(), ^{
 			if(generation != _generation)
 				return;
@@ -828,6 +986,13 @@ static CGFloat const kStripWidth = 34;
 	{
 		[self showMessage:prepared.message];
 		return;
+	}
+	// Laying the text out blocks the main thread: say so before it starts.
+	if(!_loadingView.hidden)
+	{
+		[self updateLoadingDetail];
+		[_loadingView displayIfNeeded];
+		[CATransaction flush];
 	}
 	_loading = NO;
 	_message = nil;
@@ -863,6 +1028,7 @@ static CGFloat const kStripWidth = 34;
 		[self updateNavigation];
 	[self.window invalidateCursorRectsForView:_strip];
 	_strip.needsDisplay = YES;
+	[self hideLoading]; // last: the text is laid out and scrolled to its change
 }
 
 // ===================
@@ -952,16 +1118,25 @@ static CGFloat const kStripWidth = 34;
 	[self updateNavigation];
 
 	// Rows have a fixed height and start at the same offset on both sides.
-	// Both sides are laid out in full first: a side still being laid out
-	// changes height as it goes, and its scroll view then pulls the scroll
-	// position back (and the other side with it, as they scroll together).
-	for(NSTextView* side : _textViews)
-		[side.layoutManager ensureLayoutForTextContainer:side.textContainer];
+	// Both sides are laid out first as far as the change and a screenful
+	// below it: a side not laid out that far is still too short to scroll
+	// there, so its scroll view pulls the position back (and the other side
+	// with it, as they scroll together). The rest is laid out later; it only
+	// makes the sides taller, which moves nothing.
+	NSClipView* clip = _scrollViews[0].contentView;
+	long visibleRows = (long)ceil(NSHeight(clip.bounds) / MAX(_rowHeight, 1)) + 2;
+	for(size_t i = 0; i < 2; ++i)
+	{
+		NSTextView* side = _textViews[i];
+		auto const& starts = _rulers[i].rows->starts;
+		size_t end = (size_t)_hunkRows[change] + visibleRows;
+		NSUInteger length = end < starts.size() ? starts[end] : side.textStorage.length;
+		[side.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, MIN(length, side.textStorage.length))];
+	}
 	NSTextView* textView = _textViews[0];
 	NSUInteger index = _rulers[0].rows->starts[_hunkRows[change]];
 	NSRange glyphs = [textView.layoutManager glyphRangeForCharacterRange:NSMakeRange(index, 0) actualCharacterRange:nullptr];
 	NSRect line = [textView.layoutManager lineFragmentRectForGlyphAtIndex:glyphs.location effectiveRange:nullptr];
-	NSClipView* clip = _scrollViews[0].contentView;
 	CGFloat y = MAX(0, NSMinY(line) + textView.textContainerOrigin.y - NSHeight(clip.bounds) / 4);
 	y = MIN(y, MAX(0, NSHeight(textView.frame) - NSHeight(clip.bounds)));
 	[clip scrollToPoint:NSMakePoint(clip.bounds.origin.x, y)];
