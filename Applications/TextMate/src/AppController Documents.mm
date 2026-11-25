@@ -48,6 +48,7 @@
 
 - (BOOL)application:(NSApplication*)theApplication openFile:(NSString*)aPath
 {
+	self.launchOpenedDocuments = YES;
 	if(!DidHandleODBEditorEvent([[NSAppleEventManager.sharedAppleEventManager currentAppleEvent] aeDesc]))
 		OakOpenDocuments(@[ aPath ]);
 	return YES;
@@ -55,21 +56,22 @@
 
 - (void)application:(NSApplication*)sender openFiles:(NSArray*)filenames
 {
+	self.launchOpenedDocuments = YES;
 	if(!DidHandleODBEditorEvent([[NSAppleEventManager.sharedAppleEventManager currentAppleEvent] aeDesc]))
 		OakOpenDocuments(filenames);
 	[sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
 
+// Reached when the app is reactivated without windows.
 - (BOOL)applicationOpenUntitledFile:(NSApplication*)theApplication
 {
-	if([NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsShowFavoritesInsteadOfUntitledKey])
-			[self openFavorites:self];
-	else	[self newDocument:self];
+	[self showProjectsPanel];
 	return YES;
 }
 
 - (void)handleTxMtURL:(NSURL*)aURL
 {
+	self.launchOpenedDocuments = YES;
 	if([[aURL host] isEqualToString:@"open"])
 	{
 		std::map<std::string, std::string> parameters;
@@ -204,9 +206,7 @@
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)theApplication hasVisibleWindows:(BOOL)flag
 {
-	BOOL disableUntitledAtReactivationPrefs = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsDisableNewDocumentAtReactivationKey];
-	BOOL showFavoritesInsteadPrefs          = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsShowFavoritesInsteadOfUntitledKey];
-	return flag || !disableUntitledAtReactivationPrefs || showFavoritesInsteadPrefs;
+	return YES; // Without visible windows AppKit then calls applicationOpenUntitledFile:
 }
 
 // ===========================

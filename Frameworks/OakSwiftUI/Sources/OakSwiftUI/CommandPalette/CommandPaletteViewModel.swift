@@ -103,6 +103,9 @@ public class CommandPaletteViewModel: ObservableObject {
 	public var onDismiss: (() -> Void)?
 	public var onModeSwitch: ((PaletteMode) -> [OakCommandPaletteItem])?
 	public var onSearchDocument: ((String) -> [OakCommandPaletteItem])?
+	public var onNewProject: (() -> Void)?
+	public var onImportProject: (() -> Void)?
+	public var onNewWorktree: ((OakCommandPaletteItem) -> Void)?
 
 	private var itemsByMode: [PaletteMode: [OakCommandPaletteItem]] = [:]
 	public private(set) var frecencyData: [String: FrecencyEntry] = [:]

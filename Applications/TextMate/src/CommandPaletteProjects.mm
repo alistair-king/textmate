@@ -42,6 +42,19 @@ NSString* CommandPaletteRepositoryName(NSString* remoteURL)
 	return name.length ? name : nil;
 }
 
+BOOL CommandPaletteUsesWorktreeLayout(NSDictionary* metadata)
+{
+	NSString* repositoryPath = metadata[@"repositoryPath"];
+	if(!repositoryPath)
+		return NO;
+	if([metadata[@"layout"] isEqual:@"worktrees"])
+		return YES;
+	// Projects laid out by hand: ~/Development/textmate/develop, where the
+	// folder holding the main checkout is named after the repository.
+	NSString* name = metadata[@"repositoryName"];
+	return name && [repositoryPath.stringByDeletingLastPathComponent.lastPathComponent caseInsensitiveCompare:name] == NSOrderedSame;
+}
+
 static NSData* RunGit(NSString* directory, NSString* git, NSArray<NSString*>* arguments)
 {
 	// File-backed output avoids pipe deadlocks, with a deadline for unavailable
@@ -133,10 +146,21 @@ NSDictionary<NSString*, NSDictionary*>* CommandPaletteWorktrees(NSArray<NSString
 		// The project name comes from the origin remote (one lookup per
 		// repository); worktree directories are often named after branches.
 		NSString* repositoryName = nil;
+		NSString* layout = nil;
 		if(repositoryRoots.count && !progress.cancelled)
 		{
-			NSData* remote = RunGit(canonical, git, @[@"config", @"--get", @"remote.origin.url"]);
-			repositoryName = remote ? CommandPaletteRepositoryName([[NSString alloc] initWithData:remote encoding:NSUTF8StringEncoding]) : nil;
+			NSData* config = RunGit(canonical, git, @[@"config", @"-z", @"--get-regexp", @"^(remote\\.origin\\.url|textmate\\.layout)$"]);
+			NSString* text = config ? [[NSString alloc] initWithData:config encoding:NSUTF8StringEncoding] : nil;
+			// With -z each entry is "key\nvalue\0".
+			for(NSString* record in [text componentsSeparatedByString:@"\0"])
+			{
+				NSRange newline = [record rangeOfString:@"\n"];
+				if(newline.location == NSNotFound) continue;
+				NSString* key   = [record substringToIndex:newline.location];
+				NSString* value = [record substringFromIndex:NSMaxRange(newline)];
+				if([key isEqual:@"remote.origin.url"])    repositoryName = CommandPaletteRepositoryName(value);
+				else if([key isEqual:@"textmate.layout"]) layout = value;
+			}
 		}
 		for(NSString* root in repositoryRoots)
 		{
@@ -144,6 +168,7 @@ NSDictionary<NSString*, NSDictionary*>* CommandPaletteWorktrees(NSArray<NSString
 			metadata[@"relatedPaths"] = [repositoryRoots copy];
 			if(repositoryPath) metadata[@"repositoryPath"] = repositoryPath;
 			if(repositoryName) metadata[@"repositoryName"] = repositoryName;
+			if(layout) metadata[@"layout"] = layout;
 			result[root] = metadata;
 		}
 	}

@@ -3064,7 +3064,50 @@ static NSUInteger DisableSessionSavingCount = 0;
 + (void)disableSessionSave { ++DisableSessionSavingCount; }
 + (void)enableSessionSave  { --DisableSessionSavingCount; }
 
+// Identifiers of documents with a backup in the session folder. Backups exist
+// only for unsaved changes; untitled empty documents have none.
+static NSSet<NSUUID*>* BackedUpDocumentIdentifiers (NSString* sessionFolder)
+{
+	NSMutableSet* res = [NSMutableSet set];
+	std::string const dir = to_s(sessionFolder);
+	for(auto dirEntry : path::entries(dir))
+	{
+		std::string const uuid = path::get_attr(path::join(dir, dirEntry->d_name), "com.macromates.backup.identifier");
+		if(uuid != NULL_STR)
+		{
+			if(NSUUID* identifier = [[NSUUID alloc] initWithUUIDString:to_ns(uuid)])
+				[res addObject:identifier];
+		}
+	}
+	return res;
+}
+
++ (NSArray<NSDictionary*>*)sessionProjects:(NSArray<NSDictionary*>*)projects withUnsavedChangesInFolder:(NSString*)sessionFolder
+{
+	NSSet<NSUUID*>* backups = BackedUpDocumentIdentifiers(sessionFolder);
+	NSMutableArray* res = [NSMutableArray array];
+	for(NSDictionary* project in projects)
+	{
+		for(NSDictionary* info in project[@"documents"])
+		{
+			NSString* identifier = info[@"identifier"];
+			NSUUID* uuid = identifier ? [[NSUUID alloc] initWithUUIDString:identifier] : nil;
+			if(uuid && [backups containsObject:uuid])
+			{
+				[res addObject:project];
+				break;
+			}
+		}
+	}
+	return res;
+}
+
 + (BOOL)restoreSession
+{
+	return [self restoreSessionWithUnsavedChangesOnly:NO];
+}
+
++ (BOOL)restoreSessionWithUnsavedChangesOnly:(BOOL)unsavedOnly
 {
 	BOOL res = NO;
 	++DisableSessionSavingCount;
@@ -3073,7 +3116,10 @@ static NSUInteger DisableSessionSavingCount = 0;
 	NSMutableArray<NSWindow*>* fullScreenWindows = [NSMutableArray array];
 
 	NSDictionary* session = [NSDictionary dictionaryWithContentsOfFile:[self sessionPath]];
-	for(NSDictionary* project in session[@"projects"])
+	NSArray* projects = session[@"projects"];
+	if(unsavedOnly)
+		projects = [self sessionProjects:projects withUnsavedChangesInFolder:[self sessionPath].stringByDeletingLastPathComponent];
+	for(NSDictionary* project in projects)
 	{
 		DocumentWindowController* controller = [DocumentWindowController new];
 		[controller setupControllerForProject:project skipMissingFiles:NO];

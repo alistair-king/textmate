@@ -85,16 +85,6 @@ void OakOpenDocuments (NSArray* paths, BOOL treatFilePackageAsFolder)
 	[OakDocumentController.sharedInstance showDocuments:documents];
 }
 
-BOOL HasDocumentWindow (NSArray* windows)
-{
-	for(NSWindow* window in windows)
-	{
-		if([window.delegate isKindOfClass:[DocumentWindowController class]])
-			return YES;
-	}
-	return NO;
-}
-
 @interface AppController () <OakUserDefaultsObserver>
 @property (nonatomic) ContextualBundleMenus* contextualBundleMenus;
 @property (nonatomic) BOOL didFinishLaunching;
@@ -140,6 +130,8 @@ BOOL HasDocumentWindow (NSArray* windows)
 					}
 				},
 				{ @"Open Recent Project…",    @selector(openFavorites:),            @"O"   },
+				{ @"New Project…",            @selector(newProject:)                       },
+				{ @"Import Project…",         @selector(importProject:)                    },
 				{ /* -------- */ },
 				{ @"Close",                   @selector(performClose:),             @"w"   },
 				{ @"Close Window",            @selector(performCloseWindow:),       @"W"   },
@@ -617,7 +609,9 @@ BOOL HasDocumentWindow (NSArray* windows)
 		if(restoreSession)
 		{
 			close(open(prematureTerminationDuringRestore.c_str(), O_CREAT|O_TRUNC|O_WRONLY|O_CLOEXEC));
-			[DocumentWindowController restoreSession];
+			// Only windows with unsaved work come back; projects reopen with
+			// their own saved state when picked from the projects panel.
+			[DocumentWindowController restoreSessionWithUnsavedChangesOnly:YES];
 		}
 		unlink(prematureTerminationDuringRestore.c_str());
 	}
@@ -632,15 +626,17 @@ BOOL HasDocumentWindow (NSArray* windows)
 {
 	NSApp.automaticCustomizeTouchBarMenuItemEnabled = YES;
 
-	if(!HasDocumentWindow([NSApp orderedWindows]))
+	// Documents given at launch are delivered before this point. Without any,
+	// show the projects panel; defer so restored windows settle first.
+	// mate launches with -disableNewDocumentAtStartup 1 and sends its files
+	// over a socket afterwards. Only the launch argument counts here: the saved
+	// preference of the same name predates the projects panel.
+	BOOL fileFollowsLaunch = [[NSUserDefaults.standardUserDefaults volatileDomainForName:NSArgumentDomain][kUserDefaultsDisableNewDocumentAtStartupKey] boolValue];
+	if(!self.launchOpenedDocuments && !fileFollowsLaunch)
 	{
-		BOOL disableUntitledAtStartupPrefs = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsDisableNewDocumentAtStartupKey];
-		BOOL showFavoritesInsteadPrefs     = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsShowFavoritesInsteadOfUntitledKey];
-
-		if(showFavoritesInsteadPrefs)
-			[self openFavorites:self];
-		else if(!disableUntitledAtStartupPrefs)
-			[self newDocument:self];
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[self showProjectsPanel];
+		});
 	}
 
 	[self userDefaultsDidChange:nil]; // setup mate/rmate server
@@ -761,6 +757,15 @@ BOOL HasDocumentWindow (NSArray* windows)
 - (IBAction)showBundleEditor:(id)sender
 {
 	[BundleEditor.sharedInstance showWindow:self];
+}
+
+- (void)showProjectsPanel
+{
+#if HAVE_OAK_SWIFTUI
+	[self showCommandPalette:self];
+#else
+	[self openFavorites:self];
+#endif
 }
 
 - (IBAction)openFavorites:(id)sender
@@ -1018,13 +1023,14 @@ static KVDB* commandPaletteFrecencyDB ()
 		if(repositoryPath)
 		{
 			item.projectGroupIdentifier = repositoryPath;
+			item.canAddWorktree = CommandPaletteUsesWorktreeLayout(metadata);
 			item.projectGroupTitle = metadata[@"repositoryName"] ?: [repositoryPath.lastPathComponent isEqual:@".git"] ? repositoryPath.stringByDeletingLastPathComponent.lastPathComponent : repositoryPath.lastPathComponent;
 			item.projectGroupPath = [repositoryPath stringByAbbreviatingWithTildeInPath];
 			NSMutableArray* workspaceIdentifiers = [NSMutableArray array];
 			for(NSString* related in metadata[@"relatedPaths"]) [workspaceIdentifiers addObject:[@"project:" stringByAppendingString:related]];
 			item.projectWorkspaceIdentifiers = workspaceIdentifiers;
 		}
-		item.searchText = [NSString stringWithFormat:@"%@ %@ %@", path, branch ?: @"", repositoryPath ?: @""];
+		item.searchText = [NSString stringWithFormat:@"%@ %@ %@ %@", path, branch ?: @"", repositoryPath ?: @"", metadata[@"repositoryName"] ?: @""];
 		NSMutableArray* flags = [NSMutableArray array];
 		if([path isEqual:currentWorkspace]) [flags addObject:@"Current"];
 		else if([openPaths containsObject:path]) [flags addObject:@"Open"];
@@ -1039,9 +1045,9 @@ static KVDB* commandPaletteFrecencyDB ()
 - (IBAction)showCommandPalette:(id)sender
 {
 #if HAVE_OAK_SWIFTUI
-	NSWindow* keyWindow = NSApp.keyWindow;
-	if(!keyWindow)
-		return;
+	// Without a window the palette stands alone, centred on the screen. While
+	// it is showing, the palette itself is key, so keep its original parent.
+	NSWindow* keyWindow = sharedCommandPalette.isVisible ? sharedCommandPalette.parentWindow : NSApp.keyWindow;
 
 	if(!sharedThemeEnvironment)
 		sharedThemeEnvironment = [[OakThemeEnvironment alloc] init];
@@ -1249,6 +1255,22 @@ static KVDB* commandPaletteFrecencyDB ()
 - (void)commandPaletteDidDismiss
 {
 	[self.paletteProjectDiscovery cancel];
+}
+
+- (void)commandPaletteRequestNewProject
+{
+	[self newProject:self];
+}
+
+- (void)commandPaletteRequestImportProject
+{
+	[self importProject:self];
+}
+
+- (void)commandPaletteRequestNewWorktree:(OakCommandPaletteItem*)item
+{
+	if(item.projectGroupIdentifier.length)
+		[self newWorktreeForRepository:item.projectGroupIdentifier projectName:item.projectGroupTitle];
 }
 
 - (NSArray<OakCommandPaletteItem*>*)commandPaletteRequestItemsForMode:(NSInteger)mode

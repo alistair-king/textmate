@@ -47,6 +47,15 @@ int main(int argc, char const* argv[])
 		NSDictionary* entries = CommandPaletteWorktrees(@[root, linked, plain], git);
 		Check([entries[root][@"repositoryName"] isEqual:@"palette-project"], @"Project name comes from the origin remote");
 		Check([entries[linked][@"repositoryName"] isEqual:@"palette-project"], @"Linked worktrees share the project name");
+		Check(entries[root][@"layout"] == nil, @"Unmarked repositories have no layout");
+		Check(CommandPaletteUsesWorktreeLayout(@{ @"repositoryPath": @"/Users/me/Development/textmate/develop", @"repositoryName": @"textmate" }), @"A main checkout inside a folder named after the repository uses worktrees");
+		Check(CommandPaletteUsesWorktreeLayout(@{ @"repositoryPath": @"/Users/me/Development/TextMate/develop", @"repositoryName": @"textmate" }), @"Folder name comparison ignores case");
+		Check(!CommandPaletteUsesWorktreeLayout(@{ @"repositoryPath": @"/Users/me/Development/textmate", @"repositoryName": @"textmate" }), @"A repository at the top level does not use worktrees");
+		Check(CommandPaletteUsesWorktreeLayout(@{ @"repositoryPath": @"/tmp/anything/main", @"layout": @"worktrees" }), @"The layout marker enables worktrees");
+		Check(!CommandPaletteUsesWorktreeLayout(@{ @"layout": @"worktrees" }), @"Non-repositories never use worktrees");
+		Git(git, root, @[@"config", @"textmate.layout", @"worktrees"]);
+		Check([CommandPaletteWorktrees(@[linked], git)[linked][@"layout"] isEqual:@"worktrees"], @"Discovery reads the layout marker");
+		Git(git, root, @[@"config", @"--unset", @"textmate.layout"]);
 		Check(entries.count == 3, [@"Discover main and linked worktrees, excluding missing and non-Git directories: " stringByAppendingString:entries.description]);
 		Check([entries[root][@"branchLabel"] isEqual:@"main"], @"Main branch label");
 		Check([entries[linked][@"branchLabel"] isEqual:@"topic/palette"], @"Linked branch and unusual path survive NUL parsing");

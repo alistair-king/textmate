@@ -31,6 +31,11 @@ extern NSNotificationName const DocumentWindowControllerScopeContextDidChangeNot
 @property (nonatomic) NSSize                                     htmlOutputSize;
 
 + (BOOL)restoreSession;
+// Restores only the windows holding a document with unsaved changes (one
+// with a backup), so launching without arguments loses no work.
++ (BOOL)restoreSessionWithUnsavedChangesOnly:(BOOL)unsavedOnly;
+// The session projects restored by the above: those with a document backed up in sessionFolder.
++ (NSArray<NSDictionary*>*)sessionProjects:(NSArray<NSDictionary*>*)projects withUnsavedChangesInFolder:(NSString*)sessionFolder;
 + (void)disableSessionSave;
 + (void)enableSessionSave;
 + (BOOL)saveSessionIncludingUntitledDocuments:(BOOL)includeUntitled;
