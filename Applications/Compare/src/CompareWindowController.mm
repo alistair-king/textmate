@@ -1995,11 +1995,40 @@ static BOOL SetNotComparedError (NSString** error)
 	return NO;
 }
 
+// Edit → Find: the file tab's find bar, or in the Files tab the name filter.
+- (IBAction)findInComparison:(id)sender
+{
+	if(CompareDiffView* diff = self.selectedDiffView)
+		[diff showFindBar:sender];
+	else
+		[self.window makeFirstResponder:_searchField];
+}
+
+- (IBAction)findNextInComparison:(id)sender
+{
+	CompareDiffView* diff = self.selectedDiffView;
+	if(!diff.findBarVisible)
+		[diff showFindBar:sender];
+	[diff findNext:sender];
+}
+
+- (IBAction)findPreviousInComparison:(id)sender
+{
+	CompareDiffView* diff = self.selectedDiffView;
+	if(!diff.findBarVisible)
+		[diff showFindBar:sender];
+	[diff findPrevious:sender];
+}
+
 - (IBAction)nextChange:(id)sender     { [self.selectedDiffView nextChange:sender]; }
 - (IBAction)previousChange:(id)sender { [self.selectedDiffView previousChange:sender]; }
 
 - (BOOL)validateMenuItem:(NSMenuItem*)item
 {
+	if(item.action == @selector(findInComparison:))
+		return !_files || self.selectedDiffView.node != nil; // the Files tab's filter, or a file
+	if(item.action == @selector(findNextInComparison:) || item.action == @selector(findPreviousInComparison:))
+		return self.selectedDiffView.findString.length > 0;
 	if(item.action == @selector(nextChange:) || item.action == @selector(previousChange:))
 		return self.selectedDiffView && [self.selectedDiffView validateMenuItem:item];
 	if(item.action == @selector(copyToRight:) || item.action == @selector(copyToLeft:))

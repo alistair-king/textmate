@@ -34,6 +34,18 @@ namespace compare {
 		return menu;
 	}
 
+	// Edit → Find: in a file tab, the find bar above both sides; in the Files
+	// tab, Find… goes to the name filter. Own selectors, so the text views'
+	// standard find panel never answers them.
+	inline NSMenu* find_menu ()
+	{
+		NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Find"];
+		[menu addItemWithTitle:@"Find…" action:@selector(findInComparison:) keyEquivalent:@"f"];
+		[menu addItemWithTitle:@"Find Next" action:@selector(findNextInComparison:) keyEquivalent:@"g"];
+		[menu addItemWithTitle:@"Find Previous" action:@selector(findPreviousInComparison:) keyEquivalent:@"G"];
+		return menu;
+	}
+
 } /* compare */
 
 #endif /* end of include guard: COMPARE_MENU_H_J7N2PX4D */

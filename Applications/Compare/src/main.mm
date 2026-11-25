@@ -202,6 +202,9 @@ static BOOL IsDirectory (NSString* path)
 	[edit.submenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
 	[edit.submenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
 	[edit.submenu addItem:NSMenuItem.separatorItem];
+	NSMenuItem* find = [edit.submenu addItemWithTitle:@"Find" action:NULL keyEquivalent:@""];
+	find.submenu = compare::find_menu();
+	[edit.submenu addItem:NSMenuItem.separatorItem];
 	for(NSArray* entry in @[ @[ @"Copy to the Right", NSStringFromSelector(@selector(copyToRight:)), @(NSRightArrowFunctionKey) ], @[ @"Copy to the Left", NSStringFromSelector(@selector(copyToLeft:)), @(NSLeftArrowFunctionKey) ] ])
 	{
 		NSMenuItem* item = [edit.submenu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)[entry[2] unsignedShortValue]]];

@@ -4,6 +4,7 @@
 #import "compare_colors.h"
 #import "compare_transfer.h"
 #import "compare_syntax.h"
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -393,6 +394,14 @@ static NSString* MessageForNode (CompareNode* node)
 // = Copy arrows between the two sides, per change =
 // ==============================================
 
+// One match of the find bar's string: a side and a range in its text.
+struct find_match_t
+{
+	size_t side;
+	NSRange range;
+	long row;
+};
+
 @interface CompareDiffView (Strip)
 - (std::vector<std::pair<long, long>>)changeRows; // first row and row count of each change
 - (CGFloat)scrollOffset;
@@ -492,6 +501,9 @@ static CGFloat const kStripWidth = 34;
 }
 @end
 
+@interface CompareDiffView () <NSSearchFieldDelegate>
+@end
+
 @implementation CompareDiffView
 {
 	NSTextField* _pathLabel;
@@ -506,6 +518,15 @@ static CGFloat const kStripWidth = 34;
 	NSTimer* _loadingTimer;
 	std::shared_ptr<load_progress_t> _loadProgress;
 	NSString* _loadingSize;          // “2.4 MB”, for the detail line
+	NSView* _findBar;                // Edit → Find: searches both sides
+	NSLayoutConstraint* _findBarHeight;
+	NSSearchField* _findField;
+	NSTextField* _findCountLabel;
+	NSSegmentedControl* _findNavigation;
+	NSButton* _matchCaseButton;
+	std::vector<find_match_t> _findMatches;
+	NSInteger _findIndex;            // the current match, -1 for none
+	size_t _lastFindSide;            // where the current match is, for focus on closing
 	NSView* _sidesHeader;            // above each side: name, branch and path
 	NSTextField* _sideNames[2];
 	NSTextField* _sideBranches[2];
@@ -636,7 +657,9 @@ static CGFloat const kStripWidth = 34;
 		_messageLabel.translatesAutoresizingMaskIntoConstraints = NO;
 
 		_loadingView = [self makeLoadingView];
-		for(NSView* view in @[ header, divider, _sidesHeader, sidesDivider, _body, _messageLabel, _loadingView ])
+		_findBar = [self makeFindBar];
+		_findIndex = -1;
+		for(NSView* view in @[ header, divider, _findBar, _sidesHeader, sidesDivider, _body, _messageLabel, _loadingView ])
 		{
 			view.translatesAutoresizingMaskIntoConstraints = NO;
 			[self addSubview:view];
@@ -648,7 +671,11 @@ static CGFloat const kStripWidth = 34;
 			[divider.topAnchor constraintEqualToAnchor:header.bottomAnchor],
 			[divider.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
 			[divider.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
-			[_sidesHeader.topAnchor constraintEqualToAnchor:divider.bottomAnchor],
+			[_findBar.topAnchor constraintEqualToAnchor:divider.bottomAnchor],
+			[_findBar.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+			[_findBar.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
+			_findBarHeight = [_findBar.heightAnchor constraintEqualToConstant:0],
+			[_sidesHeader.topAnchor constraintEqualToAnchor:_findBar.bottomAnchor],
 			[_sidesHeader.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
 			[_sidesHeader.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
 			// Each side's header lines up with its text.
@@ -682,6 +709,268 @@ static CGFloat const kStripWidth = 34;
 {
 	[_loadingTimer invalidate];
 	[NSNotificationCenter.defaultCenter removeObserver:self];
+}
+
+// ============
+// = Find bar =
+// ============
+
+static CGFloat const kFindBarHeight = 34;
+
+- (NSView*)makeFindBar
+{
+	_findField = [NSSearchField new];
+	_findField.placeholderString = @"Find in both sides";
+	_findField.controlSize = NSControlSizeSmall;
+	_findField.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+	_findField.delegate = self;
+	_findField.sendsSearchStringImmediately = YES;
+	_findField.accessibilityLabel = @"Find";
+	[_findField.widthAnchor constraintEqualToConstant:240].active = YES;
+
+	_findCountLabel = [NSTextField labelWithString:@""];
+	_findCountLabel.font = [NSFont monospacedDigitSystemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightRegular];
+	_findCountLabel.textColor = NSColor.secondaryLabelColor;
+
+	_findNavigation = [NSSegmentedControl segmentedControlWithImages:@[
+		[NSImage imageWithSystemSymbolName:@"chevron.left" accessibilityDescription:@"Previous Match"],
+		[NSImage imageWithSystemSymbolName:@"chevron.right" accessibilityDescription:@"Next Match"],
+	] trackingMode:NSSegmentSwitchTrackingMomentary target:self action:@selector(findNavigate:)];
+	_findNavigation.controlSize = NSControlSizeSmall;
+	[_findNavigation setToolTip:@"Find Previous (⇧⌘G)" forSegment:0];
+	[_findNavigation setToolTip:@"Find Next (⌘G)" forSegment:1];
+
+	_matchCaseButton = [NSButton checkboxWithTitle:@"Match Case" target:self action:@selector(findOptionsChanged:)];
+	_matchCaseButton.controlSize = NSControlSizeSmall;
+	_matchCaseButton.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+
+	NSButton* done = [NSButton buttonWithTitle:@"Done" target:self action:@selector(hideFindBar:)];
+	done.controlSize = NSControlSizeSmall;
+	done.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+
+	NSStackView* row = [NSStackView new];
+	row.spacing = 8;
+	row.edgeInsets = NSEdgeInsetsMake(0, 10, 0, 10);
+	for(NSView* view in @[ _findField, _findNavigation, _findCountLabel ])
+		[row addView:view inGravity:NSStackViewGravityLeading];
+	[row addView:_matchCaseButton inGravity:NSStackViewGravityTrailing];
+	[row addView:done inGravity:NSStackViewGravityTrailing];
+	row.translatesAutoresizingMaskIntoConstraints = NO;
+
+	CompareSeparatorView* line = [[CompareSeparatorView alloc] initVertical:NO];
+	line.translatesAutoresizingMaskIntoConstraints = NO;
+
+	NSView* bar = [NSView new];
+	bar.hidden = YES;
+	bar.wantsLayer = YES;
+	bar.layer.masksToBounds = YES; // collapsed to no height while hidden
+	[bar addSubview:row];
+	[bar addSubview:line];
+	[NSLayoutConstraint activateConstraints:@[
+		[row.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor],
+		[row.trailingAnchor constraintEqualToAnchor:bar.trailingAnchor],
+		[row.topAnchor constraintEqualToAnchor:bar.topAnchor],
+		[row.heightAnchor constraintEqualToConstant:kFindBarHeight - 1],
+		[line.topAnchor constraintEqualToAnchor:row.bottomAnchor],
+		[line.leadingAnchor constraintEqualToAnchor:bar.leadingAnchor],
+		[line.trailingAnchor constraintEqualToAnchor:bar.trailingAnchor],
+	]];
+	return bar;
+}
+
+- (BOOL)isFindBarVisible
+{
+	return !_findBar.hidden;
+}
+
+- (IBAction)showFindBar:(id)sender
+{
+	if(_findBar.hidden)
+	{
+		_findBar.hidden = NO;
+		_findBarHeight.constant = kFindBarHeight;
+		[self updateFind];
+	}
+	[self.window makeFirstResponder:_findField];
+	[_findField selectText:nil];
+}
+
+- (IBAction)hideFindBar:(id)sender
+{
+	if(_findBar.hidden)
+		return;
+	_findBar.hidden = YES;
+	_findBarHeight.constant = 0;
+	[self clearFindHighlights];
+	_findMatches.clear();
+	_findIndex = -1;
+	// Back to the text, keeping the match selected.
+	[self.window makeFirstResponder:_textViews[_lastFindSide]];
+}
+
+- (NSString*)findString
+{
+	return _findField.stringValue;
+}
+
+- (void)setFindString:(NSString*)string
+{
+	_findField.stringValue = string ?: @"";
+	[self updateFind];
+}
+
+- (BOOL)matchesCase
+{
+	return _matchCaseButton.state == NSControlStateValueOn;
+}
+
+- (void)setMatchesCase:(BOOL)flag
+{
+	_matchCaseButton.state = flag ? NSControlStateValueOn : NSControlStateValueOff;
+	[self updateFind];
+}
+
+- (NSInteger)findMatchCount  { return _findMatches.size(); }
+- (NSInteger)currentFindMatch { return _findIndex; }
+- (BOOL)currentFindMatchIsOnLeft { return _findIndex >= 0 && _findMatches[_findIndex].side == 0; }
+
+- (void)controlTextDidChange:(NSNotification*)notification
+{
+	if(notification.object == _findField)
+		[self updateFind];
+}
+
+// Return finds the next match (⇧Return the previous), Esc closes the bar.
+- (BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)command
+{
+	if(control != _findField)
+		return NO;
+	if(command == @selector(insertNewline:))
+	{
+		BOOL shift = (NSApp.currentEvent.modifierFlags & NSEventModifierFlagShift) != 0;
+		shift ? [self findPrevious:self] : [self findNext:self];
+		return YES;
+	}
+	if(command == @selector(cancelOperation:))
+	{
+		[self hideFindBar:self];
+		return YES;
+	}
+	return NO;
+}
+
+- (void)findOptionsChanged:(id)sender
+{
+	[self updateFind];
+}
+
+- (void)findNavigate:(NSSegmentedControl*)sender
+{
+	sender.selectedSegment == 0 ? [self findPrevious:sender] : [self findNext:sender];
+}
+
+- (IBAction)findNext:(id)sender     { [self moveToFindMatch:_findIndex + 1]; }
+- (IBAction)findPrevious:(id)sender { [self moveToFindMatch:_findIndex - 1]; }
+
+// Every match on both sides, in reading order: row by row, the left side's
+// before the right's. Gaps (blank rows opposite missing lines) match nothing.
+- (void)updateFind
+{
+	[self findMatchesAgain];
+
+	// Start from the first match at or below what is in view.
+	_findIndex = -1;
+	if(!_findMatches.empty())
+	{
+		long top = (long)floor(MAX(0, self.scrollOffset - kTextInset) / MAX(_rowHeight, 1));
+		size_t first = 0;
+		while(first < _findMatches.size() && _findMatches[first].row < top)
+			++first;
+		[self moveToFindMatch:first < _findMatches.size() ? first : 0];
+	}
+	[self updateFindCount];
+}
+
+// After the text was reloaded (a copied change, a live refresh): the
+// matches again, staying on the same match number and not scrolling.
+- (void)findMatchesAgainKeepingPosition
+{
+	if(_findBar.hidden)
+		return;
+	[self findMatchesAgain];
+	_findIndex = _findMatches.empty() ? -1 : MIN(MAX(_findIndex, 0), (NSInteger)_findMatches.size() - 1);
+	[self updateFindCount];
+}
+
+- (void)findMatchesAgain
+{
+	[self clearFindHighlights];
+	_findMatches.clear();
+	NSString* needle = _findField.stringValue;
+	if(!_findBar.hidden && needle.length && !_message && !_loading)
+	{
+		NSStringCompareOptions options = self.matchesCase ? 0 : NSCaseInsensitiveSearch;
+		static size_t const kMaxMatches = 10000;
+		for(size_t side = 0; side < 2; ++side)
+		{
+			NSString* text = _textViews[side].textStorage.string;
+			auto const& starts = _rulers[side].rows ? _rulers[side].rows->starts : std::vector<NSUInteger>();
+			NSRange search = NSMakeRange(0, text.length);
+			while(search.length && _findMatches.size() < kMaxMatches)
+			{
+				NSRange found = [text rangeOfString:needle options:options range:search];
+				if(found.location == NSNotFound)
+					break;
+				long row = std::upper_bound(starts.begin(), starts.end(), found.location) - starts.begin() - 1;
+				_findMatches.push_back({ side, found, row });
+				search = NSMakeRange(NSMaxRange(found), text.length - NSMaxRange(found));
+			}
+		}
+		std::stable_sort(_findMatches.begin(), _findMatches.end(), [](find_match_t const& a, find_match_t const& b){
+			return a.row != b.row ? a.row < b.row : a.side != b.side ? a.side < b.side : a.range.location < b.range.location;
+		});
+		for(auto const& match : _findMatches)
+			[_textViews[match.side].layoutManager addTemporaryAttribute:NSBackgroundColorAttributeName value:[NSColor.systemYellowColor colorWithAlphaComponent:0.35] forCharacterRange:match.range];
+	}
+}
+
+- (void)moveToFindMatch:(NSInteger)index
+{
+	if(_findMatches.empty())
+		return NSBeep();
+	NSInteger count = _findMatches.size();
+	_findIndex = (index % count + count) % count; // wraps around
+	auto const& match = _findMatches[_findIndex];
+	for(size_t side = 0; side < 2; ++side)
+		[_textViews[side] setSelectedRange:NSMakeRange(side == match.side ? match.range.location : 0, 0)];
+	NSTextView* textView = _textViews[match.side];
+	[textView setSelectedRange:match.range];
+	[textView scrollRangeToVisible:match.range];
+	[textView showFindIndicatorForRange:match.range];
+	_lastFindSide = match.side;
+	[self updateFindCount];
+}
+
+- (void)updateFindCount
+{
+	_findField.textColor = _findField.stringValue.length && _findMatches.empty() ? NSColor.systemRedColor : NSColor.controlTextColor;
+	if(!_findField.stringValue.length)
+		_findCountLabel.stringValue = @"";
+	else if(_findMatches.empty())
+		_findCountLabel.stringValue = @"No matches";
+	else
+		_findCountLabel.stringValue = [NSString stringWithFormat:@"%ld of %ld", _findIndex + 1, (long)_findMatches.size()];
+	[_findNavigation setEnabled:_findMatches.size() > 0 forSegment:0];
+	[_findNavigation setEnabled:_findMatches.size() > 0 forSegment:1];
+}
+
+- (void)clearFindHighlights
+{
+	for(size_t side = 0; side < 2; ++side)
+	{
+		NSLayoutManager* layoutManager = _textViews[side].layoutManager;
+		[layoutManager removeTemporaryAttribute:NSBackgroundColorAttributeName forCharacterRange:NSMakeRange(0, _textViews[side].textStorage.length)];
+	}
 }
 
 // ===========
@@ -850,6 +1139,9 @@ static CGFloat const kStripWidth = 34;
 {
 	++_generation;
 	[self hideLoading];
+	_findMatches.clear();
+	_findIndex = -1;
+	[self updateFindCount];
 	_loading = NO;
 	_message = [message copy];
 	_messageLabel.stringValue = message ?: @"";
@@ -1028,6 +1320,7 @@ static CGFloat const kStripWidth = 34;
 		[self updateNavigation];
 	[self.window invalidateCursorRectsForView:_strip];
 	_strip.needsDisplay = YES;
+	[self findMatchesAgainKeepingPosition];
 	[self hideLoading]; // last: the text is laid out and scrolled to its change
 }
 

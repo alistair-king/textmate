@@ -35,6 +35,19 @@
 - (IBAction)nextChange:(id)sender;
 - (IBAction)previousChange:(id)sender;
 
+// Edit → Find: a bar above both sides. Matches on both sides are
+// highlighted; the current one is selected and scrolled to.
+- (IBAction)showFindBar:(id)sender;
+- (IBAction)hideFindBar:(id)sender;
+- (IBAction)findNext:(id)sender;     // wraps around
+- (IBAction)findPrevious:(id)sender;
+@property (nonatomic, readonly, getter = isFindBarVisible) BOOL findBarVisible;
+@property (nonatomic, copy) NSString* findString;
+@property (nonatomic) BOOL matchesCase;
+@property (nonatomic, readonly) NSInteger findMatchCount;
+@property (nonatomic, readonly) NSInteger currentFindMatch; // -1 for none
+@property (nonatomic, readonly) BOOL currentFindMatchIsOnLeft;
+
 // Copying a change: the arrows between the sides call this handler (the
 // window controller writes the file). The view only computes contents.
 @property (nonatomic, copy) void (^changeHandler)(CompareDiffView* view, NSInteger change, BOOL toRight);

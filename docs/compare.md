@@ -66,6 +66,10 @@ Each side is shown as TextMate's editor would show that file: the file type it d
 
 **File → Close Tab** (⌘W) closes the selected file tab; on the Files tab it closes the window. The Files tab cannot be closed and has no close button. **Window → Select Next Tab** (⇧⌘]) and **Select Previous Tab** (⇧⌘[) move between tabs. Tabs for files with the same name show their parent folder.
 
+### Finding text
+
+**Edit → Find → Find…** (⌘F) in a file tab opens a find bar above both sides. Matches on both sides are highlighted as you type, and the current one is selected and scrolled to, with both sides scrolling together. It starts from the first match in view, and goes row by row, the left side's match before the right's. Return or **Find Next** (⌘G) moves to the next match and ⇧Return or **Find Previous** (⇧⌘G) to the previous one; both wrap around. **Match Case** makes the search case-sensitive. **Done** or Esc closes the bar. In the Files tab, ⌘F goes to the name filter instead.
+
 ## Editing in TextMate
 
 **File → Edit in TextMate** (⌘E) opens files in TextMate for editing. In the Files tab it opens the selected files on the side whose tree has focus (the left one unless you clicked the right). Each tree's context menu has the same command for its own side. In a file tab, the command is titled **Edit Left in TextMate** or **Edit Right in TextMate** after the focused side, and opens that side's file at the current change. Folders, and entries missing on that side, are not opened. Compare uses the TextMate it is embedded in, so a development build opens files in the development TextMate.

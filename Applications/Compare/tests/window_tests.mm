@@ -46,6 +46,7 @@
 - (void)searchChanged:(NSSearchField*)sender;
 - (IBAction)swapSides:(id)sender;
 - (BOOL)isShowingLoading;
+- (IBAction)findPreviousInComparison:(id)sender;
 - (void)updateLoadingProgress;
 @end
 
@@ -1495,6 +1496,118 @@ static void TestSelectionFollowsAtOnce (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+// Edit → Find in a file tab: both sides searched as you type, matches
+// highlighted, the current one selected, and next and previous wrap around.
+static void TestFindInFile (compare_fixture_t const& fixture)
+{
+	CompareWindowController* controller = Open(fixture, nil);
+	[controller.window makeKeyAndOrderFront:nil];
+	CompareDiffView* diff = Show(controller, @"multi.txt");
+	CHECK(WaitUntil(^{ return (BOOL)(!diff.loading && diff.changeCount == 2); }));
+	NSMenu* menu = compare::find_menu();
+	NSMenuItem* find = [menu itemWithTitle:@"Find…"];
+	NSMenuItem* next = [menu itemWithTitle:@"Find Next"];
+	CHECK([find.keyEquivalent isEqualToString:@"f"] && [next.keyEquivalent isEqualToString:@"g"] && [[menu itemWithTitle:@"Find Previous"].keyEquivalent isEqualToString:@"G"]);
+	CHECK([controller validateMenuItem:find] && ![controller validateMenuItem:next]);
+
+	// Find… shows the bar with the field focused.
+	[NSApp sendAction:find.action to:controller from:find];
+	NSSearchField* field = [diff valueForKey:@"_findField"];
+	CHECK(diff.findBarVisible);
+	CHECK([controller.window.firstResponder isKindOfClass:NSText.class] && ((NSText*)controller.window.firstResponder).delegate == (id)field);
+
+	// Only the right side has “changed” (lines 3 and 16).
+	diff.findString = @"changed";
+	CHECK(diff.findMatchCount == 2 && diff.currentFindMatch == 0);
+	NSTextView* right = diff.rightTextView;
+	CHECK([[right.string substringWithRange:right.selectedRange] isEqualToString:@"changed"]);
+	CHECK([[right.string substringToIndex:right.selectedRange.location] hasSuffix:@"line 3 "]);
+	CHECK([right.layoutManager temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:right.selectedRange.location effectiveRange:nullptr] != nil);
+	CHECK([controller validateMenuItem:next]);
+	[NSApp sendAction:next.action to:controller from:next];
+	CHECK(diff.currentFindMatch == 1 && [[right.string substringToIndex:right.selectedRange.location] hasSuffix:@"line 16 "]);
+	[NSApp sendAction:next.action to:controller from:next];
+	CHECK(diff.currentFindMatch == 0); // wraps around
+	[controller findPreviousInComparison:nil];
+	CHECK(diff.currentFindMatch == 1);
+	CHECK([[[diff valueForKey:@"_findCountLabel"] stringValue] isEqualToString:@"2 of 2"]);
+
+	// Both sides, in reading order: row by row, left before right. It starts
+	// from the first match in view, as an incremental find does.
+	diff.findString = @"line 1";
+	CHECK(diff.findMatchCount == 22); // line 1 and 10–19, on each side
+	NSTextView* left = diff.leftTextView;
+	auto rowOf = ^NSUInteger(NSTextView* textView){
+		return [[textView.string substringToIndex:textView.selectedRange.location] componentsSeparatedByString:@"\n"].count;
+	};
+	NSUInteger previousRow = 0;
+	BOOL previousLeft = NO, ordered = YES;
+	NSInteger first = diff.currentFindMatch;
+	for(NSInteger step = 0; step < 22; ++step)
+	{
+		NSInteger index = (first + step) % 22;
+		if(index == 0)
+			previousRow = 0;
+		NSTextView* side = diff.currentFindMatchIsOnLeft ? left : right;
+		ordered &= [[side.string substringWithRange:side.selectedRange] isEqualToString:@"line 1"];
+		NSUInteger row = rowOf(side);
+		ordered &= index == 0 || row > previousRow || (row == previousRow && previousLeft && !diff.currentFindMatchIsOnLeft);
+		previousRow = row;
+		previousLeft = diff.currentFindMatchIsOnLeft;
+		[diff findNext:nil];
+	}
+	CHECK(ordered && diff.currentFindMatch == first);
+
+	// Match Case.
+	diff.findString = @"LINE";
+	CHECK(diff.findMatchCount == 40);
+	diff.matchesCase = YES;
+	CHECK(diff.findMatchCount == 0 && [[[diff valueForKey:@"_findCountLabel"] stringValue] isEqualToString:@"No matches"]);
+	diff.matchesCase = NO;
+
+	// Done (or Esc) hides it and its highlights.
+	diff.findString = @"changed";
+	NSUInteger location = right.selectedRange.location;
+	[diff hideFindBar:nil];
+	CHECK(!diff.findBarVisible && diff.findMatchCount == 0);
+	CHECK([right.layoutManager temporaryAttribute:NSBackgroundColorAttributeName atCharacterIndex:location effectiveRange:nullptr] == nil);
+
+	// In the Files tab, Find… goes to the name filter.
+	[controller selectTabAtIndex:0];
+	[NSApp sendAction:find.action to:controller from:find];
+	CHECK([controller.window.firstResponder isKindOfClass:NSText.class] && ((NSText*)controller.window.firstResponder).delegate == [controller valueForKey:@"_searchField"]);
+	[controller close];
+
+	// A match out of view is scrolled to, both sides together.
+	NSString* base = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"compare-find-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+	[NSFileManager.defaultManager createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:nil];
+	NSMutableString* text = [NSMutableString string];
+	for(int i = 1; i <= 400; ++i)
+		[text appendFormat:@"row %d\n", i];
+	NSString* leftFile  = [base stringByAppendingPathComponent:@"left.txt"];
+	NSString* rightFile = [base stringByAppendingPathComponent:@"right.txt"];
+	[text writeToFile:leftFile atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	[[text stringByReplacingOccurrencesOfString:@"row 300\n" withString:@"changed 300\n"] writeToFile:rightFile atomically:NO encoding:NSUTF8StringEncoding error:nil];
+	controller = [[CompareWindowController alloc] initWithLeftPath:leftFile rightPath:rightFile focus:nil];
+	[controller.window setFrame:NSMakeRect(100, 100, 900, 320) display:NO];
+	[controller showWindow:nil];
+	diff = controller.selectedDiffView;
+	CHECK(WaitUntil(^{ return (BOOL)(controller.comparisonCount > 0 && !diff.loading && diff.changeCount == 1); }));
+	[diff showFindBar:nil];
+	diff.findString = @"row 50\n";
+	[controller.window layoutIfNeeded];
+	NSClipView* leftClip  = diff.leftTextView.enclosingScrollView.contentView;
+	NSClipView* rightClip = diff.rightTextView.enclosingScrollView.contentView;
+	CHECK(diff.findMatchCount == 2);
+	NSRect matchRect = [diff.leftTextView firstRectForCharacterRange:diff.leftTextView.selectedRange actualRange:nullptr];
+	matchRect = [diff.leftTextView convertRect:[diff.leftTextView.window convertRectFromScreen:matchRect] fromView:nil];
+	CHECK(NSIntersectsRect(matchRect, leftClip.documentVisibleRect));
+	CHECK(NSMinY(leftClip.bounds) == NSMinY(rightClip.bounds));
+	Snapshot(controller, @"find");
+	[controller close];
+	[NSFileManager.defaultManager removeItemAtPath:base error:nil];
+}
+
 // A first change far down: both sides open scrolled to it, together.
 static void TestScrollToDistantChange ()
 {
@@ -1589,6 +1702,7 @@ int main (int argc, char const* argv[])
 			TestLoadingIndicator(fixture);
 			TestFileLoadingIndicator(fixture);
 			TestSelectionFollowsAtOnce(fixture);
+			TestFindInFile(fixture);
 
 			compare_fixture_t redo = compare_fixture::create(@COMPARE_TEST_GIT);
 			CHECK(redo.error == nil);
