@@ -28,6 +28,8 @@ import AppKit
 	@objc public var projectGroupPath: String = ""
 	@objc public var projectWorkspaceIdentifiers: [String] = []
 	@objc public var workspaceAliases: [String] = []
+	// A new worktree can be added beside this project's main checkout.
+	@objc public var canAddWorktree: Bool = false
 	@objc public weak var sourceMenuItem: NSMenuItem?
 
 	@objc public init(title: String, subtitle: String, keyEquivalent: String,

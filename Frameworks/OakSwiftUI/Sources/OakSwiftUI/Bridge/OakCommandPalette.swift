@@ -20,7 +20,12 @@ private class KeyablePanel: NSPanel {
 		super.init()
 	}
 
-	@objc public func show(in parentWindow: NSWindow, items: [OakCommandPaletteItem]) {
+	// With a parent the palette is attached above it; without one (no windows
+	// open) it stands alone in the upper part of the main screen.
+	@objc public func show(in requestedParent: NSWindow?, items: [OakCommandPaletteItem]) {
+		// Invoked again while the palette is key: keep the original parent.
+		let parentWindow = (requestedParent != nil && requestedParent === panel) ? self.parentWindow : requestedParent
+
 		// Tear down existing panel without notifying delegate
 		if let p = panel {
 			p.parent?.removeChildWindow(p)
@@ -70,6 +75,15 @@ private class KeyablePanel: NSPanel {
 		vm.onSearchDocument = { [weak self] query in
 			self?.delegate?.commandPaletteSearchDocument(query) ?? []
 		}
+		vm.onNewProject = { [weak self] in
+			self?.dismissForProjectAction { $0.commandPaletteRequestNewProject() }
+		}
+		vm.onImportProject = { [weak self] in
+			self?.dismissForProjectAction { $0.commandPaletteRequestImportProject() }
+		}
+		vm.onNewWorktree = { [weak self] item in
+			self?.dismissForProjectAction { $0.commandPaletteRequestNewWorktree(item) }
+		}
 
 		self.viewModel = vm
 
@@ -78,7 +92,7 @@ private class KeyablePanel: NSPanel {
 
 		let hostingView = NSHostingView(rootView: rootView)
 
-		let parentFrame = parentWindow.frame
+		let parentFrame = parentWindow?.frame ?? (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
 		let panelWidth = min(max(parentFrame.width * 0.5, 400), 700)
 		let panelHeight: CGFloat = 400
 
@@ -96,7 +110,7 @@ private class KeyablePanel: NSPanel {
 		p.level = .floating
 		// Match an explicitly themed parent, or follow system appearance when
 		// its appearance is nil. Set this before attaching the hosting view.
-		p.appearance = parentWindow.appearance
+		p.appearance = parentWindow?.appearance
 		p.isOpaque = false
 		p.backgroundColor = .clear
 		p.hasShadow = true
@@ -104,7 +118,7 @@ private class KeyablePanel: NSPanel {
 		p.contentView = hostingView
 		p.delegate = self
 
-		parentWindow.addChildWindow(p, ordered: .above)
+		parentWindow?.addChildWindow(p, ordered: .above)
 		p.makeKeyAndOrderFront(nil)
 
 		self.panel = p
@@ -131,6 +145,17 @@ private class KeyablePanel: NSPanel {
 		panel = nil
 		viewModel = nil
 		cancellables.removeAll()
+	}
+
+	// The actions open dialogs, so the panel goes away first and the request is
+	// sent once the menu that triggered it has finished tracking.
+	private func dismissForProjectAction(_ action: @escaping (OakCommandPaletteDelegate) -> Void) {
+		let parent = parentWindow
+		dismiss()
+		parent?.makeKeyAndOrderFront(nil)
+		DispatchQueue.main.async { [weak self] in
+			if let delegate = self?.delegate { action(delegate) }
+		}
 	}
 
 	@objc public func dismiss() {

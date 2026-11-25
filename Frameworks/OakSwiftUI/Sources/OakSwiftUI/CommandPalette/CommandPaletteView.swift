@@ -39,6 +39,12 @@ struct CommandPaletteView: View {
 				.focused($isSearchFieldFocused)
 			if viewModel.activeMode == .recentProjects {
 				Menu {
+					Button("New Project…") { viewModel.onNewProject?() }
+					Button("Import Existing Folder…") { viewModel.onImportProject?() }
+					if let item = viewModel.selectedItem, item.canAddWorktree {
+						Button("New Worktree in \(item.projectGroupTitle)…") { viewModel.onNewWorktree?(item) }
+					}
+					Divider()
 					if let item = viewModel.selectedItem {
 						projectVisibilityActions(item)
 						Divider()
@@ -51,8 +57,8 @@ struct CommandPaletteView: View {
 				}
 				.menuStyle(.borderlessButton)
 				.fixedSize()
-				.help("Project visibility")
-				.accessibilityLabel("Project visibility")
+				.help("Project actions")
+				.accessibilityLabel("Project actions")
 			}
 		}
 		.padding(.horizontal, 12)
@@ -90,7 +96,10 @@ struct CommandPaletteView: View {
 								Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 1).padding(.leading, 4)
 							}
 						}
-						.contextMenu { projectVisibilityActions(ranked.item) }
+						.contextMenu {
+							newWorktreeAction(ranked.item)
+							projectVisibilityActions(ranked.item)
+						}
 						.id(ranked.id)
 						.contentShape(Rectangle())
 						.onTapGesture {
@@ -140,11 +149,19 @@ struct CommandPaletteView: View {
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isHeader)
 		.contextMenu {
+			newWorktreeAction(item)
 			if viewModel.isProjectGroupHidden(item) {
 				Button("Show Project") { viewModel.showProject(item) }
 			} else {
 				Button("Hide Project") { viewModel.hideProject(item) }
 			}
+		}
+	}
+
+	@ViewBuilder private func newWorktreeAction(_ item: OakCommandPaletteItem) -> some View {
+		if item.canAddWorktree {
+			Button("New Worktree…") { viewModel.onNewWorktree?(item) }
+			Divider()
 		}
 	}
 

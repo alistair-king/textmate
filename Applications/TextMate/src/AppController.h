@@ -33,12 +33,23 @@
 
 - (IBAction)runPageLayout:(id)sender;
 - (IBAction)openFavorites:(id)sender;
+// The projects panel, shown at launch without arguments and when reactivated
+// without windows. It does not need a document window.
+- (void)showProjectsPanel;
+// Set when documents arrive before launch finishes (command line, Finder, URLs).
+@property (nonatomic) BOOL launchOpenedDocuments;
 @end
 
 @interface AppController (Documents)
 - (void)newDocument:(id)sender;
 - (void)openDocument:(id)sender;
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender;
+@end
+
+@interface AppController (Projects)
+- (IBAction)newProject:(id)sender;
+- (IBAction)importProject:(id)sender;
+- (void)newWorktreeForRepository:(NSString*)repositoryPath projectName:(NSString*)projectName;
 @end
 
 @interface AppController (BundlesMenu)

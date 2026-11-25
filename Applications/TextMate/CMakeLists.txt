@@ -137,6 +137,13 @@ if(BUILD_TESTING)
     add_test(NAME command-palette-projects
       COMMAND command-palette-projects ${TEXTMATE_TEST_GIT_EXECUTABLE})
 
+    # New Project / New Worktree / Import from the project palette.
+    add_executable(project-creation tests/project_creation.mm
+      src/ProjectCreation.mm src/CommandPaletteProjects.mm)
+    target_link_libraries(project-creation PRIVATE "-framework Foundation")
+    add_test(NAME project-creation
+      COMMAND project-creation ${TEXTMATE_TEST_GIT_EXECUTABLE})
+
     # Text → Compare To: visibility, entries, the URL opened, and following
     # worktrees added or removed by Git.
     add_executable(worktree-compare-menu tests/worktree_compare_menu.mm
