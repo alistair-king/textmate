@@ -535,6 +535,9 @@ BOOL HasDocumentWindow (NSArray* windows)
 
 - (void)applicationWillFinishLaunching:(NSNotification*)aNotification
 {
+	// Must precede session restore, which creates (and may full-screen) windows before didFinishLaunching
+	NSWindow.allowsAutomaticWindowTabbing = NO;
+
 	if(NSMenu* menu = [self mainMenu])
 		NSApp.mainMenu = menu;
 
@@ -627,8 +630,6 @@ BOOL HasDocumentWindow (NSArray* windows)
 
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification
 {
-	NSWindow.allowsAutomaticWindowTabbing = NO;
-
 	NSApp.automaticCustomizeTouchBarMenuItemEnabled = YES;
 
 	if(!HasDocumentWindow([NSApp orderedWindows]))
