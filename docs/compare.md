@@ -70,6 +70,15 @@ Each side is shown as TextMate's editor would show that file: the file type it d
 
 **Edit → Find → Find…** (⌘F) in a file tab opens a find bar above both sides. Matches on both sides are highlighted as you type, and the current one is selected and scrolled to, with both sides scrolling together. It starts from the first match in view, and goes row by row, the left side's match before the right's. Return or **Find Next** (⌘G) moves to the next match and ⇧Return or **Find Previous** (⇧⌘G) to the previous one; both wrap around. **Match Case** makes the search case-sensitive. **Done** or Esc closes the bar. In the Files tab, ⌘F goes to the name filter instead.
 
+### Going to definitions
+
+When TextMate's editor would use a language server for a file (the `lspCommand` setting, with `lspEnabled` and `lspRootPath`, from `.tm_properties`), its file tab uses one too. Each side asks the server for its own folder: the workspace root is found from the file as in the editor, so two worktrees get a server each, started when a file from that folder is first shown and stopped when Compare quits. The servers see the files on disk.
+
+- **⌘-click** a name, or put the caret on it and choose **Go → Go to Definition** (⌥⌘D), to go to its definition on the same side. A definition in the same file is scrolled to and selected. One in another file of that side's folder opens (or selects) that file's tab, on the same side, at the definition; this works for identical files and files hidden by the View mode too. A definition anywhere else, such as a library header or an ignored file, opens in TextMate at that line and column. Nothing found beeps.
+- **Go → Show Hover Info** shows the server's information about the name at the caret (its signature in the file's font, and its documentation) in a popover.
+
+Without a language server for the file, ⌘-click selects as usual and both commands are disabled. Lines only on the other side (the hatched gaps) have nothing to go to.
+
 ## Editing in TextMate
 
 **File → Edit in TextMate** (⌘E) opens files in TextMate for editing. In the Files tab it opens the selected files on the side whose tree has focus (the left one unless you clicked the right). Each tree's context menu has the same command for its own side. In a file tab, the command is titled **Edit Left in TextMate** or **Edit Right in TextMate** after the focused side, and opens that side's file at the current change. Folders, and entries missing on that side, are not opened. Compare uses the TextMate it is embedded in, so a development build opens files in the development TextMate.
@@ -106,9 +115,10 @@ Every write replaces the file atomically and keeps its permissions. **Edit → U
 | `src/compare_diff.{h,mm}` | Line diff (xdiff histogram) as aligned rows and hunks |
 | `src/compare_transfer.{h,mm}` | Undoable change sets, tree copies and moves to the Trash, applying one change |
 | `src/compare_watch.h` | FSEvents wrapper, also used by TextMate's menu |
+| `src/CompareLanguage.{h,mm}` | Language servers for a file tab's sides, through TextMate's `LSPManager` (the `lsp` framework): each file opened as an `OakDocument` of Compare's process |
 | `src/compare_syntax.{h,mm}` | Syntax highlighting as TextMate's editor chooses it: file type, settings, font, theme, grammar parsed line by line |
 | `src/CompareWindowController.mm` | Window, tabs (`OakTabBarView`), trees (`FileBrowserOutlineView`, `FileItemTableCellView`), transfers and undo |
-| `src/CompareDiffView.mm` | File tab: text views, full-width line tints, line numbers, change arrows |
+| `src/CompareDiffView.mm` | File tab: text views, full-width line tints, line numbers, change arrows, ⌘-click, Go to Definition and hover |
 | `src/CompareSettings.mm` | Settings (stored in Compare's defaults, `compareExcludedNames`) and the Settings window |
 | `src/compare_menu.h` | The View menu, shared with the tests |
 
@@ -120,7 +130,7 @@ Tests (see CLAUDE.md for running them):
 | `compare-tree` | Listing and classification against a repository with a linked worktree, `check-ignore`, branch labels, ignore patterns |
 | `compare-syntax` | Highlighting with a test bundle: file type, theme colors and font traits, parser state across lines, UTF-16 ranges, dark theme, files without a grammar, size limit |
 | `compare-transfer` | Applying changes, change sets and undo, tree copies, type changes, refused copies, the Trash |
-| `compare-window` | The real window: alignment, tints, sync, filters, focus, tabs, transfers with undo, live refresh, search, remembered expansion, the Settings window |
+| `compare-window` | The real window: alignment, tints, sync, filters, focus, tabs, transfers with undo, live refresh, search, remembered expansion, the Settings window, language servers (Go to Definition within a file, into another file's tab and out to TextMate, ⌘-click, hover) with `tests/fake_compare_lsp.py` when `python3` is found |
 | `compare-launch` | The signed app binary starts (library validation) |
 | `tm-compare-help`, `tm-compare-rejects-missing-folder` | The launcher |
 | `worktree-compare-menu` | TextMate's **Compare To** menu: hidden without other worktrees, entries and the URL they open, following worktrees added or removed by Git |

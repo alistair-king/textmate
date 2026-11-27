@@ -7,6 +7,6 @@ Added features:
 - MCP Server allowing agents to interogate the editor.
 - A2A support for inter-agent communication.
 - Wysiwyg theme editor.
-- Folder and file comparison tool.
+- Worktree, Folder and file comparison tool.
 - Reworked projects panel.
 - Surfaced scoped bundles in the top menu for faster access.

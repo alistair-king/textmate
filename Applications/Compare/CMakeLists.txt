@@ -1,4 +1,4 @@
-add_executable(Compare MACOSX_BUNDLE src/main.mm src/CompareSettings.mm src/CompareChooser.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm)
+add_executable(Compare MACOSX_BUNDLE src/main.mm src/CompareSettings.mm src/CompareChooser.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm src/CompareLanguage.mm)
 # Static frameworks cannot carry resources: bundle the tab bar's images and the
 # file-type icons TMFileReference uses, as TextMate's app bundle does.
 file(GLOB _compare_resources CONFIGURE_DEPENDS
@@ -17,8 +17,9 @@ set_source_files_properties(${_compare_resources} PROPERTIES MACOSX_PACKAGE_LOCA
 set_source_files_properties(${_compare_doctypes} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/DocumentTypes")
 # FileBrowser supplies the tree views; the rest mirrors ThemeEditor's setup of
 # TextMate's support folder, settings and preferences.
+# lsp: TextMate's language server client, for Go to Definition and hover.
 target_link_libraries(Compare PRIVATE
-  FileBrowser OakTabBarView OakSystem Preferences bundles file io ns parse plist scm settings text theme xdiff
+  FileBrowser OakTabBarView OakSystem Preferences bundles file io lsp ns parse plist scm settings text theme xdiff
   ${TEXTMATE_DEBUG_LIBS} "-framework Cocoa")
 set_target_properties(Compare PROPERTIES
   OUTPUT_NAME "Compare"
@@ -90,14 +91,21 @@ if(BUILD_TESTING)
 
     # Drives the real window over the fixture; needs a GUI session.
     add_executable(compare_window_tests MACOSX_BUNDLE
-      tests/window_tests.mm src/CompareSettings.mm src/CompareChooser.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm
+      tests/window_tests.mm src/CompareSettings.mm src/CompareChooser.mm src/CompareWindowController.mm src/CompareDiffView.mm src/compare_tree.mm src/compare_diff.mm src/compare_transfer.mm src/compare_syntax.mm src/CompareLanguage.mm
       ${_compare_resources} ${_compare_doctypes})
     set_target_properties(compare_window_tests PROPERTIES
       MACOSX_BUNDLE_GUI_IDENTIFIER "com.macromates.TextMate.Compare.Tests"
       BUILD_RPATH "${CMAKE_BINARY_DIR}/lib")
     target_compile_definitions(compare_window_tests PRIVATE COMPARE_TEST_GIT="${COMPARE_TEST_GIT_EXECUTABLE}")
+    # A fake language server for Go to Definition and hover.
+    find_program(COMPARE_TEST_PYTHON_EXECUTABLE python3)
+    if(COMPARE_TEST_PYTHON_EXECUTABLE)
+      target_compile_definitions(compare_window_tests PRIVATE
+        COMPARE_TEST_PYTHON="${COMPARE_TEST_PYTHON_EXECUTABLE}"
+        COMPARE_FAKE_LSP="${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_compare_lsp.py")
+    endif()
     target_link_libraries(compare_window_tests PRIVATE
-      FileBrowser OakTabBarView OakSystem Preferences bundles file io ns parse plist scm settings text theme xdiff
+      FileBrowser OakTabBarView OakSystem Preferences bundles file io lsp ns parse plist scm settings text theme xdiff
       ${TEXTMATE_DEBUG_LIBS} "-framework Cocoa")
     add_test(NAME compare-window COMMAND $<TARGET_FILE:compare_window_tests>)
     set_tests_properties(compare-window PROPERTIES RUN_SERIAL TRUE TIMEOUT 180)

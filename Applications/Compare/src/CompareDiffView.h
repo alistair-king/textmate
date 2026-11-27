@@ -56,7 +56,26 @@
 // The destination file's contents with `change` copied from the other side.
 - (NSData*)contentsWithChange:(NSInteger)change toRight:(BOOL)toRight;
 
+// Language servers, as TextMate's editor sets them up (the lspCommand
+// setting): ⌘-click or Go to Definition goes to the definition of what is
+// under the click or the caret on that side, Show Hover Info shows its type
+// and documentation. A definition in the same file is shown here; one in
+// another file goes to `definitionHandler`.
+- (IBAction)goToDefinition:(id)sender;
+- (IBAction)showHoverInfo:(id)sender;
+// `line` and `character` are 0-based (`character` in UTF-16 units), as the
+// server reports them.
+@property (nonatomic, copy) void (^definitionHandler)(CompareDiffView* view, NSString* path, NSUInteger line, NSUInteger character, BOOL left);
+// Scrolls to the line on one side and selects the word at `character`. While
+// the file loads, this happens once it is shown.
+- (void)revealLine:(NSUInteger)line character:(NSUInteger)character onLeft:(BOOL)left;
+
 // For tests.
+- (BOOL)hasLanguageServerOnLeft:(BOOL)left;     // one is set up for that side's file
+- (BOOL)isLanguageServerReadyOnLeft:(BOOL)left; // and has answered `initialize`
+- (void)goToDefinitionAtIndex:(NSUInteger)index onLeft:(BOOL)left; // as a ⌘-click there
+- (void)showHoverAtIndex:(NSUInteger)index onLeft:(BOOL)left;
+@property (nonatomic, readonly) NSString* hoverText; // nil while no hover is shown
 @property (nonatomic, readonly) NSTextView* leftTextView;
 @property (nonatomic, readonly) NSTextView* rightTextView;
 @property (nonatomic, readonly) NSString* message;   // nil while showing text

@@ -13,6 +13,7 @@
 #import <lsp/LSPManager.h>
 #import "DocumentWindowController.h"
 #import "ProjectLayoutView.h"
+#import "WorktreeProject.h"
 #import "TerminalPanelViewController.h"
 #import "TerminalEnvironment.h"
 #import "SelectGrammarViewController.h"
@@ -95,6 +96,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 
 	scm::info_ptr                          _projectSCMInfo;
 	std::map<std::string, std::string>     _projectSCMVariables;
+	NSString*                              _worktreeProjectName;
 	std::vector<std::string>               _projectScopeAttributes;  // kSettingsScopeAttributesKey
 	std::vector<std::string>               _externalScopeAttributes; // attr.scm.git, attr.project.ninja
 	NSUInteger                             _externalScopeAttributesGeneration;
@@ -1850,6 +1852,7 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	if(_projectPath != newProjectPath && ![_projectPath isEqualToString:newProjectPath])
 	{
 		_projectPath = newProjectPath;
+		_worktreeProjectName = WorktreeProjectName(_projectPath);
 		if(_projectSCMInfo = scm::info(to_s(_projectPath)))
 		{
 			__weak DocumentWindowController* weakSelf = self;
@@ -2696,6 +2699,8 @@ static NSDictionary* ContextDocument(OakDocument* document)
 	map.insert(scm.begin(), scm.end());
 	if(self.projectPath)
 		map["projectDirectory"] = to_s(self.projectPath);
+	if(_worktreeProjectName)
+		map["projectName"] = to_s(_worktreeProjectName);
 
 	NSString* docDirectory = document.path ? [document.path stringByDeletingLastPathComponent] : self.untitledSavePath;
 	settings_t const settings = settings_for_path(to_s(document.virtualPath ?: document.path), to_s(document.fileType) + " " + to_s(self.scopeAttributes), to_s(docDirectory), map);

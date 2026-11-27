@@ -6,7 +6,7 @@ include  = "{*,.tm_properties,.htaccess}"
 binary   = "{*.{ai,bz2,flv,gif,gz,icns,ico,jpg,jpeg,m4v,nib,o,pdf,png,psd,pyc,rtf,scssc,swf,tar,tbz,tgz,tif,tiff,zip},Icon\r}"
 
 windowTitleSCM     = '${TM_SCM_BRANCH:+ ($TM_SCM_NAME: $TM_SCM_BRANCH)}'
-windowTitleProject = '${projectDirectory:+ — ${projectDirectory/^.*\///}}'
+windowTitleProject = '${projectDirectory:+ — ${projectName:+$projectName }${projectDirectory/^.*\///}}'
 windowTitle        = '$TM_DISPLAYNAME$windowTitleProject$windowTitleSCM'
 
 LANG                 = "en_US.UTF-8"

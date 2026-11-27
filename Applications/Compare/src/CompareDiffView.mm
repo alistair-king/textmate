@@ -4,6 +4,7 @@
 #import "compare_colors.h"
 #import "compare_transfer.h"
 #import "compare_syntax.h"
+#import "CompareLanguage.h"
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -188,6 +189,7 @@ struct prepared_diff_t
 	CGFloat row_height = 0;
 	NSColor* background[2] = { nil, nil }; // the theme's, per side
 	BOOL dark[2] = { NO, NO };
+	NSString* file_type[2] = { nil, nil };   // for choosing a language server
 };
 
 static NSFont* DefaultFont ()
@@ -241,6 +243,7 @@ static prepared_diff_t Prepare (compare::text_diff_t const& diff, compare::side_
 		bases[i] = @{ NSFontAttributeName: fonts[i], NSForegroundColorAttributeName: syntax[i].foreground ?: NSColor.textColor, NSParagraphStyleAttributeName: style };
 		result.background[i] = syntax[i].background;
 		result.dark[i]       = syntax[i].dark;
+		result.file_type[i]  = syntax[i].fileType;
 	}
 
 	NSMutableAttributedString* left  = [[NSMutableAttributedString alloc] init];
@@ -501,7 +504,107 @@ static CGFloat const kStripWidth = 34;
 }
 @end
 
-@interface CompareDiffView () <NSSearchFieldDelegate>
+// ===================
+// = Language server =
+// ===================
+
+// ⌘-click asks the handler first: it returns NO when the side has no
+// language server, and the click selects as usual.
+@interface CompareTextView : NSTextView
+@property (nonatomic, copy) BOOL (^commandClickHandler)(CompareTextView* textView, NSUInteger index);
+@end
+
+@implementation CompareTextView
+- (void)mouseDown:(NSEvent*)event
+{
+	NSEventModifierFlags const modifiers = NSEventModifierFlagCommand|NSEventModifierFlagShift|NSEventModifierFlagOption|NSEventModifierFlagControl;
+	if((event.modifierFlags & modifiers) == NSEventModifierFlagCommand && event.clickCount == 1 && _commandClickHandler)
+	{
+		NSUInteger index = [self characterIndexAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
+		if(index != NSNotFound && _commandClickHandler(self, index))
+			return;
+	}
+	[super mouseDown:event];
+}
+
+// The character under a point in the view, NSNotFound past the end of a line.
+- (NSUInteger)characterIndexAtPoint:(NSPoint)point
+{
+	NSLayoutManager* layoutManager = self.layoutManager;
+	point.x -= self.textContainerOrigin.x;
+	point.y -= self.textContainerOrigin.y;
+	NSUInteger glyph = [layoutManager glyphIndexForPoint:point inTextContainer:self.textContainer fractionOfDistanceThroughGlyph:nullptr];
+	if(glyph >= layoutManager.numberOfGlyphs)
+		return NSNotFound;
+	NSRect rect = [layoutManager boundingRectForGlyphRange:NSMakeRange(glyph, 1) inTextContainer:self.textContainer];
+	if(!NSPointInRect(point, rect))
+		return NSNotFound;
+	return [layoutManager characterIndexForGlyphAtIndex:glyph];
+}
+@end
+
+// A hover's contents: fenced code in the file's font, the rest as inline
+// Markdown (or plain text, as the server sent it).
+static NSAttributedString* HoverText (NSDictionary* hover, NSFont* codeFont)
+{
+	NSString* value = hover[@"value"];
+	if(!value.length)
+		return nil;
+	NSFont* textFont = [NSFont systemFontOfSize:NSFont.systemFontSize];
+	NSDictionary* codeAttributes = @{ NSFontAttributeName: codeFont, NSForegroundColorAttributeName: NSColor.labelColor };
+	NSDictionary* textAttributes = @{ NSFontAttributeName: textFont, NSForegroundColorAttributeName: NSColor.labelColor };
+	NSCharacterSet* whitespace = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+	if(![hover[@"kind"] isEqualToString:@"markdown"])
+		return [[NSAttributedString alloc] initWithString:[value stringByTrimmingCharactersInSet:whitespace] attributes:hover[@"language"] ? codeAttributes : textAttributes];
+
+	NSMutableAttributedString* result = [NSMutableAttributedString new];
+	NSArray<NSString*>* parts = [value componentsSeparatedByString:@"```"];
+	for(NSUInteger i = 0; i < parts.count; ++i)
+	{
+		NSString* part = parts[i];
+		NSAttributedString* text;
+		if(i % 2) // inside a fence: the first line names the language
+		{
+			NSRange newline = [part rangeOfString:@"\n"];
+			part = [(newline.location == NSNotFound ? part : [part substringFromIndex:NSMaxRange(newline)]) stringByTrimmingCharactersInSet:whitespace];
+			text = part.length ? [[NSAttributedString alloc] initWithString:part attributes:codeAttributes] : nil;
+		}
+		else
+		{
+			part = [[part stringByReplacingOccurrencesOfString:@"\n---\n" withString:@"\n\n"] stringByTrimmingCharactersInSet:whitespace];
+			if(!part.length || [part isEqualToString:@"---"])
+				continue;
+			NSAttributedStringMarkdownParsingOptions* options = [NSAttributedStringMarkdownParsingOptions new];
+			options.interpretedSyntax = NSAttributedStringMarkdownInterpretedSyntaxInlineOnlyPreservingWhitespace;
+			NSMutableAttributedString* markdown = [[[NSAttributedString alloc] initWithMarkdownString:part options:options baseURL:nil error:nil] mutableCopy];
+			if(!markdown)
+			{
+				text = [[NSAttributedString alloc] initWithString:part attributes:textAttributes];
+			}
+			else
+			{
+				// AppKit draws fonts, not presentation intents.
+				[markdown addAttributes:textAttributes range:NSMakeRange(0, markdown.length)];
+				[markdown enumerateAttribute:NSInlinePresentationIntentAttributeName inRange:NSMakeRange(0, markdown.length) options:0 usingBlock:^(NSNumber* value, NSRange range, BOOL*){
+					NSUInteger intent = value.unsignedIntegerValue;
+					if(intent & NSInlinePresentationIntentCode)
+						[markdown addAttribute:NSFontAttributeName value:codeFont range:range];
+					else if(intent & (NSInlinePresentationIntentStronglyEmphasized|NSInlinePresentationIntentEmphasized))
+						[markdown addAttribute:NSFontAttributeName value:[NSFontManager.sharedFontManager convertFont:textFont toHaveTrait:(intent & NSInlinePresentationIntentStronglyEmphasized ? NSBoldFontMask : 0)|(intent & NSInlinePresentationIntentEmphasized ? NSItalicFontMask : 0)] range:range];
+				}];
+				text = markdown;
+			}
+		}
+		if(!text.length)
+			continue;
+		if(result.length)
+			[result appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n\n" attributes:textAttributes]];
+		[result appendAttributedString:text];
+	}
+	return result.length ? result : nil;
+}
+
+@interface CompareDiffView () <NSSearchFieldDelegate, NSPopoverDelegate>
 @end
 
 @implementation CompareDiffView
@@ -543,6 +646,10 @@ static CGFloat const kStripWidth = 34;
 	CompareChangeStrip* _strip;
 	NSUInteger _generation;
 	BOOL _synchronizing;
+	CompareLanguageService* _language[2]; // nil without a language server for that side's file
+	struct { BOOL active; NSUInteger line, character; BOOL left; } _pendingReveal; // revealLine: while loading
+	NSPopover* _hoverPopover;
+	NSString* _hoverText;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame
@@ -708,6 +815,8 @@ static CGFloat const kStripWidth = 34;
 - (void)dealloc
 {
 	[_loadingTimer invalidate];
+	[_hoverPopover close];
+	[self closeLanguageServers];
 	[NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
@@ -1091,7 +1200,11 @@ static CGFloat const kFindBarHeight = 34;
 	container.lineFragmentPadding = 4;
 	[layoutManager addTextContainer:container];
 
-	NSTextView* textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100) textContainer:container];
+	CompareTextView* textView = [[CompareTextView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100) textContainer:container];
+	__weak CompareDiffView* weakSelf = self;
+	textView.commandClickHandler = ^BOOL(CompareTextView* view, NSUInteger index){
+		return [weakSelf commandClickedIndex:index onLeft:view == weakSelf.leftTextView];
+	};
 	textView.editable                = NO;
 	textView.selectable              = YES;
 	textView.richText                = NO;
@@ -1139,6 +1252,9 @@ static CGFloat const kFindBarHeight = 34;
 {
 	++_generation;
 	[self hideLoading];
+	[self hideHover];
+	[self closeLanguageServers];
+	_pendingReveal.active = NO;
 	_findMatches.clear();
 	_findIndex = -1;
 	[self updateFindCount];
@@ -1209,6 +1325,7 @@ static CGFloat const kFindBarHeight = 34;
 {
 	_node = node;
 	[self updateSideHeaders];
+	[self hideHover];
 	NSInteger keptChange = keep ? _currentChange : -1;
 	_pathLabel.stringValue  = node.relativePath ?: @"";
 	_statusLabel.stringValue = @"";
@@ -1318,6 +1435,12 @@ static CGFloat const kFindBarHeight = 34;
 		[self goToChange:MIN(MAX(keptChange, 0), (NSInteger)_hunkRows.size() - 1)];
 	else
 		[self updateNavigation];
+	[self updateLanguageServersWithFileTypes:prepared.file_type];
+	if(_pendingReveal.active) // a definition in this file, asked for while it loaded
+	{
+		_pendingReveal.active = NO;
+		[self revealLine:_pendingReveal.line character:_pendingReveal.character onLeft:_pendingReveal.left];
+	}
 	[self.window invalidateCursorRectsForView:_strip];
 	_strip.needsDisplay = YES;
 	[self findMatchesAgainKeepingPosition];
@@ -1409,9 +1532,14 @@ static CGFloat const kFindBarHeight = 34;
 		return;
 	_currentChange = change;
 	[self updateNavigation];
+	[self scrollRowIntoView:_hunkRows[change]];
+}
 
+// Puts the row a quarter of the way down, on both sides.
+- (void)scrollRowIntoView:(long)row
+{
 	// Rows have a fixed height and start at the same offset on both sides.
-	// Both sides are laid out first as far as the change and a screenful
+	// Both sides are laid out first as far as the row and a screenful
 	// below it: a side not laid out that far is still too short to scroll
 	// there, so its scroll view pulls the position back (and the other side
 	// with it, as they scroll together). The rest is laid out later; it only
@@ -1422,12 +1550,12 @@ static CGFloat const kFindBarHeight = 34;
 	{
 		NSTextView* side = _textViews[i];
 		auto const& starts = _rulers[i].rows->starts;
-		size_t end = (size_t)_hunkRows[change] + visibleRows;
+		size_t end = (size_t)row + visibleRows;
 		NSUInteger length = end < starts.size() ? starts[end] : side.textStorage.length;
 		[side.layoutManager ensureLayoutForCharacterRange:NSMakeRange(0, MIN(length, side.textStorage.length))];
 	}
 	NSTextView* textView = _textViews[0];
-	NSUInteger index = _rulers[0].rows->starts[_hunkRows[change]];
+	NSUInteger index = _rulers[0].rows->starts[row];
 	NSRange glyphs = [textView.layoutManager glyphRangeForCharacterRange:NSMakeRange(index, 0) actualCharacterRange:nullptr];
 	NSRect line = [textView.layoutManager lineFragmentRectForGlyphAtIndex:glyphs.location effectiveRange:nullptr];
 	CGFloat y = MAX(0, NSMinY(line) + textView.textContainerOrigin.y - NSHeight(clip.bounds) / 4);
@@ -1448,6 +1576,8 @@ static CGFloat const kFindBarHeight = 34;
 
 - (BOOL)validateMenuItem:(NSMenuItem*)item
 {
+	if(item.action == @selector(goToDefinition:) || item.action == @selector(showHoverInfo:))
+		return !_loading && !_message && _language[self.focusedSide].available;
 	if(item.action == @selector(nextChange:))
 		return _currentChange + 1 < self.changeCount;
 	if(item.action == @selector(previousChange:))
@@ -1473,5 +1603,218 @@ static CGFloat const kFindBarHeight = 34;
 	_synchronizing = NO;
 	_strip.needsDisplay = YES;
 	[self.window invalidateCursorRectsForView:_strip];
+}
+
+// ===================
+// = Language server =
+// ===================
+
+- (void)closeLanguageServers
+{
+	for(size_t i = 0; i < 2; ++i)
+	{
+		[_language[i] close];
+		_language[i] = nil;
+	}
+}
+
+// Once a file is shown: a server for each side's file, kept while it stays
+// the same file (reloads after changes on disk keep the document).
+- (void)updateLanguageServersWithFileTypes:(NSString* const*)fileTypes
+{
+	NSString* paths[2] = {
+		_node.leftKind  == CompareKindFile ? _node.leftPath  : nil,
+		_node.rightKind == CompareKindFile ? _node.rightPath : nil,
+	};
+	for(size_t i = 0; i < 2; ++i)
+	{
+		if(_language[i] && [_language[i].path isEqualToString:paths[i]])
+			continue;
+		[_language[i] close];
+		_language[i] = [CompareLanguageService serviceForPath:paths[i] fileType:fileTypes[i]];
+	}
+}
+
+- (BOOL)hasLanguageServerOnLeft:(BOOL)left     { return _language[left ? 0 : 1].available; }
+- (BOOL)isLanguageServerReadyOnLeft:(BOOL)left { return _language[left ? 0 : 1].ready; }
+
+// The side with the focus, else the left.
+- (size_t)focusedSide
+{
+	return self.window.firstResponder == _textViews[1] ? 1 : 0;
+}
+
+// The 0-based line and UTF-16 character shown at a character index of one
+// side. NO on a gap.
+- (BOOL)position:(NSUInteger)index onSide:(size_t)side line:(NSUInteger*)line character:(NSUInteger*)character
+{
+	std::shared_ptr<side_rows_t> const& rows = _rulers[side].rows;
+	if(!rows || rows->starts.empty())
+		return NO;
+	size_t row = std::upper_bound(rows->starts.begin(), rows->starts.end(), index) - rows->starts.begin() - 1; // starts[0] is 0
+	if(rows->lines[row] < 0)
+		return NO;
+	*line      = rows->lines[row];
+	*character = index - rows->starts[row];
+	return YES;
+}
+
+- (void)revealLine:(NSUInteger)line character:(NSUInteger)character onLeft:(BOOL)left
+{
+	if(_loading)
+	{
+		_pendingReveal = { YES, line, character, left };
+		return;
+	}
+	size_t side = left ? 0 : 1;
+	std::shared_ptr<side_rows_t> const rows = _rulers[side].rows;
+	if(!rows || rows->starts.empty())
+		return;
+	// Lines go up down the rows, with gaps (-1) between them.
+	auto found = std::find(rows->lines.begin(), rows->lines.end(), (long)line);
+	if(found == rows->lines.end())
+		return;
+	long row = found - rows->lines.begin();
+	[self scrollRowIntoView:row];
+
+	NSTextView* textView = _textViews[side];
+	NSUInteger start = rows->starts[row];
+	NSUInteger end   = (row + 1 < (long)rows->starts.size() ? rows->starts[row + 1] : textView.textStorage.length) - 1; // before the newline
+	NSUInteger index = MIN(start + character, end);
+	NSRange word = NSIntersectionRange([textView selectionRangeForProposedRange:NSMakeRange(index, 0) granularity:NSSelectByWord], NSMakeRange(start, end - start));
+	[self.window makeFirstResponder:textView];
+	textView.selectedRange = word.length ? word : NSMakeRange(index, 0);
+	if(word.length && self.window)
+		[textView showFindIndicatorForRange:word];
+}
+
+- (BOOL)commandClickedIndex:(NSUInteger)index onLeft:(BOOL)left
+{
+	size_t side = left ? 0 : 1;
+	if(!_language[side].available)
+		return NO;
+	[self.window makeFirstResponder:_textViews[side]];
+	_textViews[side].selectedRange = NSMakeRange(index, 0);
+	[self goToDefinitionAtIndex:index onLeft:left];
+	return YES;
+}
+
+- (IBAction)goToDefinition:(id)sender
+{
+	size_t side = self.focusedSide;
+	[self goToDefinitionAtIndex:_textViews[side].selectedRange.location onLeft:side == 0];
+}
+
+- (void)goToDefinitionAtIndex:(NSUInteger)index onLeft:(BOOL)left
+{
+	size_t side = left ? 0 : 1;
+	CompareLanguageService* service = _language[side];
+	NSUInteger line, character;
+	if(_loading || !service.available || ![self position:index onSide:side line:&line character:&character])
+		return NSBeep();
+
+	__weak CompareDiffView* weakSelf = self;
+	[service definitionAtLine:line character:character completion:^(NSArray<NSDictionary*>* locations){
+		CompareDiffView* strongSelf = weakSelf;
+		if(!strongSelf || strongSelf->_language[side] != service) // another file, or sides swapped, since
+			return;
+		NSDictionary* location = CompareBestDefinition(locations, service.path, line);
+		NSString* path = location ? [NSURL URLWithString:location[@"uri"]].path : nil;
+		if(!path)
+			return NSBeep();
+		NSUInteger targetLine      = [location[@"line"] unsignedIntegerValue];
+		NSUInteger targetCharacter = [location[@"character"] unsignedIntegerValue];
+		if([CompareCanonicalPath(path) isEqualToString:CompareCanonicalPath(service.path)])
+			[strongSelf revealLine:targetLine character:targetCharacter onLeft:left];
+		else if(strongSelf.definitionHandler)
+			strongSelf.definitionHandler(strongSelf, path, targetLine, targetCharacter, left);
+	}];
+}
+
+- (IBAction)showHoverInfo:(id)sender
+{
+	size_t side = self.focusedSide;
+	[self showHoverAtIndex:_textViews[side].selectedRange.location onLeft:side == 0];
+}
+
+- (void)showHoverAtIndex:(NSUInteger)index onLeft:(BOOL)left
+{
+	[self hideHover];
+	size_t side = left ? 0 : 1;
+	CompareLanguageService* service = _language[side];
+	NSUInteger line, character;
+	if(_loading || !service.available || ![self position:index onSide:side line:&line character:&character])
+		return NSBeep();
+
+	// `index` is into the text shown now: a reload (same file, same service)
+	// may have replaced it by the time the answer comes.
+	NSUInteger generation = _generation;
+	__weak CompareDiffView* weakSelf = self;
+	[service hoverAtLine:line character:character completion:^(NSDictionary* hover){
+		CompareDiffView* strongSelf = weakSelf;
+		if(!strongSelf || strongSelf->_language[side] != service || strongSelf->_generation != generation)
+			return;
+		NSTextView* textView = strongSelf->_textViews[side];
+		NSFont* font = index < textView.textStorage.length ? [textView.textStorage attribute:NSFontAttributeName atIndex:index effectiveRange:nullptr] : nil;
+		NSAttributedString* text = HoverText(hover, font ?: DefaultFont());
+		if(!text)
+			return NSBeep();
+		[strongSelf showHover:text atIndex:index side:side];
+	}];
+}
+
+- (void)showHover:(NSAttributedString*)text atIndex:(NSUInteger)index side:(size_t)side
+{
+	NSTextView* textView = _textViews[side];
+	NSUInteger length = textView.textStorage.length;
+	NSRange word = [textView selectionRangeForProposedRange:NSMakeRange(index, 0) granularity:NSSelectByWord];
+	if(!word.length)
+		word = NSMakeRange(MIN(index, length), index < length ? 1 : 0);
+	NSLayoutManager* layoutManager = textView.layoutManager;
+	NSRect rect = [layoutManager boundingRectForGlyphRange:[layoutManager glyphRangeForCharacterRange:word actualCharacterRange:nullptr] inTextContainer:textView.textContainer];
+	rect = NSOffsetRect(rect, textView.textContainerOrigin.x, textView.textContainerOrigin.y);
+
+	CGFloat const maxWidth = 560, maxHeight = 320, inset = 10;
+	NSRect bounds = [text boundingRectWithSize:NSMakeSize(maxWidth - 2 * inset, CGFLOAT_MAX) options:NSStringDrawingUsesLineFragmentOrigin|NSStringDrawingUsesFontLeading];
+	NSSize size = NSMakeSize(MIN(maxWidth, ceil(NSWidth(bounds)) + 2 * inset + 10), MIN(maxHeight, ceil(NSHeight(bounds)) + 2 * inset));
+
+	NSTextView* contents = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, size.width, size.height)];
+	contents.editable           = NO;
+	contents.selectable         = YES;
+	contents.drawsBackground    = NO;
+	contents.textContainerInset = NSMakeSize(inset, inset);
+	contents.autoresizingMask   = NSViewWidthSizable;
+	[contents.textStorage setAttributedString:text];
+	NSScrollView* scrollView = [[NSScrollView alloc] initWithFrame:contents.frame];
+	scrollView.drawsBackground     = NO;
+	scrollView.hasVerticalScroller = NSHeight(bounds) + 2 * inset > maxHeight;
+	scrollView.documentView        = contents;
+	NSViewController* controller = [NSViewController new];
+	controller.view = scrollView;
+
+	_hoverPopover = [NSPopover new];
+	_hoverPopover.behavior = NSPopoverBehaviorTransient;
+	_hoverPopover.contentViewController = controller;
+	_hoverPopover.contentSize = size;
+	_hoverPopover.delegate = self;
+	_hoverText = text.string;
+	if(textView.window)
+		[_hoverPopover showRelativeToRect:rect ofView:textView preferredEdge:NSRectEdgeMaxY];
+}
+
+- (void)hideHover
+{
+	[_hoverPopover close];
+	_hoverPopover = nil;
+	_hoverText = nil;
+}
+
+- (void)popoverDidClose:(NSNotification*)notification
+{
+	if(notification.object == _hoverPopover)
+	{
+		_hoverPopover = nil;
+		_hoverText = nil;
+	}
 }
 @end
