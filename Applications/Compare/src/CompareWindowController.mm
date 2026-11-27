@@ -6,6 +6,7 @@
 #import "compare_watch.h"
 #import "CompareSettings.h"
 #import "compare_url.h"
+#import "CompareLanguage.h"
 #include <stdlib.h>
 #include <utility>
 #import <FileBrowser/FileItem.h>
@@ -1554,6 +1555,9 @@ static NSURL* TextMateApplicationURL ()
 	tab.diffView.changeHandler = ^(CompareDiffView* view, NSInteger change, BOOL toRight){
 		[weakSelf copyChange:change inView:view toRight:toRight];
 	};
+	tab.diffView.definitionHandler = ^(CompareDiffView* view, NSString* path, NSUInteger line, NSUInteger character, BOOL left){
+		[weakSelf showDefinitionAtPath:path line:line character:character left:left];
+	};
 	tab.view         = tab.diffView;
 	[tab.diffView setBranch:_branches[0] onLeft:YES];
 	[tab.diffView setBranch:_branches[1] onLeft:NO];
@@ -1630,6 +1634,27 @@ static NSURL* TextMateApplicationURL ()
 
 - (IBAction)selectNextTab:(id)sender     { [self selectTabAtIndex:(_selectedTab + 1) % _tabs.count]; }
 - (IBAction)selectPreviousTab:(id)sender { [self selectTabAtIndex:(_selectedTab + _tabs.count - 1) % _tabs.count]; }
+
+// A definition in another file, found by the server of one side: its file
+// tab when the file is a file on that side of this comparison, else TextMate.
+- (void)showDefinitionAtPath:(NSString*)path line:(NSUInteger)line character:(NSUInteger)character left:(BOOL)left
+{
+	NSString* root = CompareCanonicalPath(left ? _leftPath : _rightPath);
+	NSString* target = CompareCanonicalPath(path);
+	if(!self.isFileComparison && _root && [target hasPrefix:[root stringByAppendingString:@"/"]])
+	{
+		CompareNode* node = [_root nodeAtRelativePath:[target substringFromIndex:root.length + 1]];
+		if(node && (left ? node.leftKind : node.rightKind) == CompareKindFile)
+		{
+			NSUInteger index = [self indexOfTabForNode:node];
+			[self selectTabAtIndex:index];
+			[_tabs[index].diffView revealLine:line character:character onLeft:left];
+			return;
+		}
+	}
+	if(NSURL* url = compare::textmate_url(path, line + 1, CompareUTF8Column(path, line, character) + 1))
+		[self openInTextMate:@[ url ]];
+}
 
 - (CompareDiffView*)selectedDiffView
 {

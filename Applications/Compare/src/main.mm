@@ -222,6 +222,11 @@ static BOOL IsDirectory (NSString* path)
 	next.keyEquivalentModifierMask = NSEventModifierFlagCommand|NSEventModifierFlagControl;
 	NSMenuItem* previous = [go.submenu addItemWithTitle:@"Previous Change" action:@selector(previousChange:) keyEquivalent:[NSString stringWithFormat:@"%C", (unichar)NSUpArrowFunctionKey]];
 	previous.keyEquivalentModifierMask = NSEventModifierFlagCommand|NSEventModifierFlagControl;
+	[go.submenu addItem:NSMenuItem.separatorItem];
+	// The shortcut TextMate uses for Go to Definition.
+	NSMenuItem* definition = [go.submenu addItemWithTitle:@"Go to Definition" action:@selector(goToDefinition:) keyEquivalent:@"d"];
+	definition.keyEquivalentModifierMask = NSEventModifierFlagCommand|NSEventModifierFlagOption;
+	[go.submenu addItemWithTitle:@"Show Hover Info" action:@selector(showHoverInfo:) keyEquivalent:@""];
 	[menu addItem:go];
 
 	NSMenuItem* window = [NSMenuItem new];

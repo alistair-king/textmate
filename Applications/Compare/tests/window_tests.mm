@@ -11,6 +11,7 @@
 #import "../src/compare_menu.h"
 #import "../src/CompareSettings.h"
 #import "../src/CompareChooser.h"
+#import "../src/CompareLanguage.h"
 
 // Drives the real CompareWindowController over the shared fixture. Failures
 // print `file:line: Assertion failed: …` and make the process exit non-zero.
@@ -1653,6 +1654,128 @@ static void TestFocus (compare_fixture_t const& fixture)
 	[controller close];
 }
 
+// Language servers set up with TextMate's lspCommand setting (here a fake
+// one, tests/fake_compare_lsp.py): each side's file gets the server for its
+// own folder; definitions go to the same file, another file's tab or TextMate.
+#if defined(COMPARE_TEST_PYTHON)
+static NSRange RangeAfter (NSString* string, NSString* prefix, NSString* word)
+{
+	NSRange found = [string rangeOfString:[prefix stringByAppendingString:word]];
+	return found.location == NSNotFound ? found : NSMakeRange(found.location + prefix.length, word.length);
+}
+
+static void TestLanguageServer ()
+{
+	compare_fixture_t folders;
+	NSString* base = CompareCanonicalPath(NSTemporaryDirectory());
+	base = [base stringByAppendingPathComponent:[@"compare-lsp-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+	folders.left  = [base stringByAppendingPathComponent:@"left"];
+	folders.right = [base stringByAppendingPathComponent:@"right"];
+	NSString* outside = [base stringByAppendingPathComponent:@"outside"];
+	NSString* properties = [NSString stringWithFormat:@"lspCommand = \"%@ %@ %@\"\n", @COMPARE_TEST_PYTHON, @COMPARE_FAKE_LSP, outside];
+	for(NSString* folder in @[ folders.left, folders.right ])
+	{
+		CHECK(compare_fixture::write(folder, @".tm_properties", properties) == nil);
+		CHECK(compare_fixture::write(folder, @".clangd", @"") == nil); // the workspace root marker
+		CHECK(compare_fixture::write(folder, @"lib.cmpt", @"// shared\nfunc shared\n") == nil);
+	}
+	CHECK(compare_fixture::write(folders.left,  @"main.cmpt", @"func helper\ncall helper\ncall shared\ncall external\n") == nil);
+	CHECK(compare_fixture::write(folders.right, @"main.cmpt", @"// right\nfunc helper\ncall helper\ncall shared\ncall external\n") == nil);
+	CHECK(compare_fixture::write(outside, @"ext.cmpt", @"// outside\n/* é */ func external\n") == nil);
+
+	NSMutableArray<NSURL*>* opened = [NSMutableArray array];
+	CompareWindowController.editHandler = ^(NSArray<NSURL*>* urls){ [opened addObjectsFromArray:urls]; };
+	CompareWindowController* controller = Open(folders, nil);
+	[controller.window setFrame:NSMakeRect(100, 100, 1000, 600) display:NO];
+	[controller.window makeKeyAndOrderFront:nil];
+	CompareDiffView* diff = Show(controller, @"main.cmpt");
+	CHECK(WaitUntil(^{ return (BOOL)([diff isLanguageServerReadyOnLeft:YES] && [diff isLanguageServerReadyOnLeft:NO]); }));
+	NSMenuItem* goToDefinition = [[NSMenuItem alloc] initWithTitle:@"" action:@selector(goToDefinition:) keyEquivalent:@""];
+	CHECK([diff validateMenuItem:goToDefinition]);
+
+	// In the same file: selects the definition on that side.
+	NSTextView* left = diff.leftTextView;
+	[diff goToDefinitionAtIndex:RangeAfter(left.string, @"call ", @"helper").location + 2 onLeft:YES];
+	NSRange expected = RangeAfter(left.string, @"func ", @"helper");
+	CHECK(WaitUntil(^{ return NSEqualRanges(left.selectedRange, expected); }));
+
+	// ⌘-click does the same, on the right.
+	NSTextView* right = diff.rightTextView;
+	NSUInteger call = RangeAfter(right.string, @"call ", @"helper").location;
+	NSRect glyph = [right.layoutManager boundingRectForGlyphRange:[right.layoutManager glyphRangeForCharacterRange:NSMakeRange(call + 1, 1) actualCharacterRange:nullptr] inTextContainer:right.textContainer];
+	NSPoint point = [right convertPoint:NSMakePoint(NSMidX(glyph) + right.textContainerOrigin.x, NSMidY(glyph) + right.textContainerOrigin.y) toView:nil];
+	NSEvent* click = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:point modifierFlags:NSEventModifierFlagCommand timestamp:0 windowNumber:controller.window.windowNumber context:nil eventNumber:0 clickCount:1 pressure:1];
+	[right mouseDown:click];
+	NSRange expectedRight = RangeAfter(right.string, @"func ", @"helper");
+	CHECK(WaitUntil(^{ return NSEqualRanges(right.selectedRange, expectedRight); }));
+	CHECK(controller.window.firstResponder == right);
+
+	// Hover: the signature and the documentation.
+	[diff showHoverAtIndex:call onLeft:NO];
+	CHECK(WaitUntil(^{ return (BOOL)(diff.hoverText != nil); }));
+	CHECK([diff.hoverText isEqualToString:@"func helper\n\nDocs for helper."]);
+
+	// In another file of the right folder (identical on both sides): its
+	// tab opens, on the right, at the definition.
+	NSUInteger tabs = controller.tabCount;
+	[diff goToDefinitionAtIndex:RangeAfter(right.string, @"call ", @"shared").location onLeft:NO];
+	CHECK(WaitUntil(^{ return (BOOL)(controller.tabCount == tabs + 1 && !controller.selectedDiffView.loading && controller.selectedDiffView.rightTextView.selectedRange.length); }));
+	CompareDiffView* lib = controller.selectedDiffView;
+	CHECK([lib.node.relativePath isEqualToString:@"lib.cmpt"]);
+	CHECK(NSEqualRanges(lib.rightTextView.selectedRange, RangeAfter(lib.rightTextView.string, @"func ", @"shared")));
+	CHECK(controller.window.firstResponder == lib.rightTextView);
+	CHECK(opened.count == 0);
+
+	// Outside the compared folders: TextMate opens it at the definition.
+	[controller selectTabAtIndex:1];
+	[diff goToDefinitionAtIndex:RangeAfter(left.string, @"call ", @"external").location onLeft:YES];
+	CHECK(WaitUntil(^{ return (BOOL)(opened.count == 1); }));
+	NSInteger line = 0;
+	CHECK([CompareCanonicalPath(EditedPath(opened.firstObject, &line)) isEqualToString:[outside stringByAppendingPathComponent:@"ext.cmpt"]]);
+	CHECK(line == 2);
+	// TextMate counts columns in UTF-8 bytes: “é” is one UTF-16 unit, two bytes.
+	CHECK([opened.firstObject.query hasSuffix:@"&line=2&column=15"]);
+	CHECK(controller.tabCount == tabs + 1);
+
+	// Nothing to go to: nothing changes.
+	NSRange before = left.selectedRange;
+	[diff goToDefinitionAtIndex:0 onLeft:YES]; // “func” itself
+	Spin(0.5);
+	CHECK(NSEqualRanges(left.selectedRange, before) && opened.count == 1);
+
+	// A hover answered after the file was shown again (same file, same
+	// server) is not shown: it was for the text shown before.
+	[controller selectTabAtIndex:1];
+	[diff showHoverAtIndex:call onLeft:NO];
+	[diff showNode:diff.node keepingChange:YES]; // the answer can only come once the run loop runs
+	CHECK(WaitUntil(^{ return (BOOL)!diff.loading; }));
+	Spin(0.5);
+	CHECK(diff.hoverText == nil);
+
+	// Another comparison showing the same file shares its document; when it
+	// stops using it, this one keeps its server.
+	NSString* third = [base stringByAppendingPathComponent:@"third"];
+	CHECK(compare_fixture::write(third, @".tm_properties", properties) == nil);
+	CHECK(compare_fixture::write(third, @".clangd", @"") == nil);
+	CHECK(compare_fixture::write(third, @"main.cmpt", @"// third\nfunc helper\ncall helper\n") == nil);
+	compare_fixture_t others = folders;
+	others.right = third;
+	CompareWindowController* other = Open(others, nil);
+	CompareDiffView* otherDiff = Show(other, @"main.cmpt");
+	CHECK(WaitUntil(^{ return [otherDiff isLanguageServerReadyOnLeft:YES]; }));
+	[otherDiff showMessage:@"Closed"]; // as when its tab or window closes
+	CHECK([otherDiff hasLanguageServerOnLeft:YES] == NO);
+	CHECK([diff hasLanguageServerOnLeft:YES]);
+	left.selectedRange = NSMakeRange(0, 0);
+	[diff goToDefinitionAtIndex:RangeAfter(left.string, @"call ", @"helper").location onLeft:YES];
+	CHECK(WaitUntil(^{ return NSEqualRanges(left.selectedRange, expected); }));
+	[other close];
+
+	CompareWindowController.editHandler = nil;
+	[controller close];
+}
+#endif
+
 int main (int argc, char const* argv[])
 {
 	@autoreleasepool
@@ -1675,6 +1798,9 @@ int main (int argc, char const* argv[])
 			TestChangedFilter(fixture);
 			TestFileTabs(fixture);
 			TestSyntaxHighlighting();
+#if defined(COMPARE_TEST_PYTHON)
+			TestLanguageServer();
+#endif
 			TestViewMenuShortcuts();
 			TestDisplayModeAcrossWindows(fixture);
 			TestExpandAndCollapseAll(fixture);
